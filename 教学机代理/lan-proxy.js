@@ -3,32 +3,32 @@
  * lan-proxy.js —— 教学机上的「局域网 → 公网」正向代理（反向代理）
  *
  * 场景：教学机有两块网卡 —— 一块连学生机的局域网，一块通公网。
- *       项目部署在公网的地址（例如 https://your-public-host:45600）
- *       学生机在局域网里直接访问不稳 / 不通 / 想走教学机中转，
+ *       项目部署在公网上，学生机在局域网里直接访问不稳 / 不通，
  *       就在教学机上跑这个脚本：监听一个本地端口，把请求原样转给公网地址。
  *
- *   学生机  ──(局域网)──▶  教学机 :18799  ──(公网)──▶  https://your-public-host:45600
+ *   学生机  ──(局域网)──▶  教学机 :<listen.port>  ──(公网)──▶  <target>
  *
- * ★ 实时流量走本地（新增）
- *   投屏、点名心跳、在线状态这些是「实时流量」，走公网绕一圈又慢又占带宽
+ * ★ 实时流量走本地
+ *   投屏画面帧、点名心跳、在线状态这些是「实时流量」，走公网绕一圈又慢又占带宽
  *   （投屏的画面帧尤其致命）。所以按路径分流：
  *
- *     /ws、/api/cast/*、/api/presence/*、/api/clock/*   →  本机课堂系统（127.0.0.1:18730）
- *     其它（页面、静态资源、作业、名单、接口…）          →  公网地址
+ *     local.paths 里列出的（/ws、/api/cast/*、/api/presence/*…） → 本机课堂系统
+ *     其它（页面、静态资源、作业、名单、接口…）                    → target（公网）
  *
- *   分流清单用 --local-paths 改；不想分流就加 --no-local。
+ * ★ 所有信息都在配置文件里，脚本本身不含任何地址
+ *   配置文件：同目录的 proxy.conf（首次使用：把 proxy.example.conf 复制一份改名）
+ *   改完配置 → 重新双击 启动代理.bat 生效
  *
  * 特点：
- *   · 零依赖，只用 Node 内置模块（http/https/net/tls/url/os）——Win7 上不用装任何东西
+ *   · 零 npm 依赖，只用 Node 内置模块（http/https/net/tls/url/os/fs/path）
  *   · 兼容 Node 6 ~ 12（Win7 能装的最后一个大版本是 Node 12.22 LTS）
  *   · 透传 WebSocket（课堂系统的投屏 / 同步走 /ws，必须能代理）
  *   · 透传流式响应、压缩、分块；上游的 Location 会改写成本地地址，避免跳到公网去
- *   · 上游证书自签时可加 --insecure 跳过校验
  *
- * 用法：
- *   node lan-proxy.js --port 18799 --target https://your-public-host:45600
- *   node lan-proxy.js --port 18799 --target https://… --local-target http://127.0.0.1:18730
- *   node lan-proxy.js --port 18799 --target https://… --host 192.0.2.21 --verbose
+ * 用法（一般用 启动代理.bat 就行）：
+ *   node lan-proxy.js                       # 读同目录的 proxy.conf
+ *   node lan-proxy.js --config D:\proxy.conf
+ *   node lan-proxy.js --port 18800 --verbose   # 命令行临时覆盖配置
  */
 
 'use strict'
@@ -40,7 +40,16 @@ var tls = require('tls')
 var url = require('url')
 var os = require('os')
 
-/* ---------------- 参数 ---------------- */
+/* ---------------- 配置 ----------------
+ * 配置文件是一份纯文本（# 开头是注释）：
+ *     listen.port = 18799
+ *     target = https://example.com:45600
+ *     local.target = http://127.0.0.1:18730
+ * 命令行参数可以临时覆盖配置里的值。
+ */
+var fs = require('fs')
+var path = require('path')
+
 function arg(name, def) {
   var i = process.argv.indexOf('--' + name)
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : def
@@ -48,28 +57,80 @@ function arg(name, def) {
 function has(name) {
   return process.argv.indexOf('--' + name) >= 0
 }
+function bool(v, def) {
+  if (v === undefined || v === null || v === '') return def
+  return /^(1|y|yes|true|on|是|开)$/i.test(String(v).trim())
+}
 
-var LISTEN_PORT = parseInt(arg('port', '18799'), 10)
-var LISTEN_HOST = arg('host', '0.0.0.0')
-var TARGET = arg('target', 'http://127.0.0.1:18730') // 默认转本机的课堂系统；要转发到公网就在命令行里传 --target
-var TIMEOUT = parseInt(arg('timeout', '120000'), 10)
-var INSECURE = has('insecure')
-var VERBOSE = has('verbose')
+/** 读 .conf：key = value，# 与 ; 开头是注释 */
+function readConf(file) {
+  var out = {}
+  var text
+  try {
+    text = fs.readFileSync(file, 'utf8')
+  } catch (e) {
+    return null
+  }
+  var lines = text.split(/\r?\n/)
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i].replace(/^\s+|\s+$/g, '')
+    if (!line || line.charAt(0) === '#' || line.charAt(0) === ';') continue
+    var eq = line.indexOf('=')
+    if (eq < 0) continue
+    var k = line.slice(0, eq).replace(/\s+$/g, '').toLowerCase()
+    var v = line.slice(eq + 1).replace(/^\s+|\s+$/g, '')
+    out[k] = v
+  }
+  return out
+}
+
+var HERE = path.dirname(path.resolve(process.argv[1] || '.'))
+var CONF_NAME = 'proxy.conf'
+var confPath = arg('config', path.join(HERE, CONF_NAME))
+var conf = readConf(confPath)
+var confFound = !!conf
+if (!confFound) {
+  // 没配置文件：还能用内置默认值，但 target 必须给
+  conf = {}
+}
+
+function confGet(key, def) {
+  var v = conf[key]
+  if (v === undefined || v === null || v === '') return def
+  return v
+}
+
+var LISTEN_PORT = parseInt(arg('port', confGet('listen.port', '18799')), 10)
+var LISTEN_HOST = arg('host', confGet('listen.host', '0.0.0.0'))
+var TARGET = arg('target', confGet('target', ''))
+var TIMEOUT = parseInt(arg('timeout', confGet('timeout.ms', '120000')), 10)
+var INSECURE = has('insecure') || bool(confGet('tls.insecure', 'no'), false)
+var VERBOSE = has('verbose') || bool(confGet('log.verbose', 'no'), false)
 var REWRITE = !has('no-redirect-rewrite')
-var QUIET = has('quiet')
+var QUIET = has('quiet') || bool(confGet('log.quiet', 'no'), false)
 
 /* 实时流量分流：走本机课堂系统，不出公网 */
-var USE_LOCAL = !has('no-local')
-var LOCAL_TARGET = arg('local-target', 'http://127.0.0.1:18730')
-var LOCAL_PATHS = arg('local-paths', '/ws,/api/cast,/api/presence,/api/clock')
+var USE_LOCAL = has('no-local') ? false : bool(confGet('local.enabled', 'yes'), true)
+var LOCAL_TARGET = arg('local-target', confGet('local.target', 'http://127.0.0.1:18730'))
+var LOCAL_PATHS = arg('local-paths', confGet('local.paths', '/ws,/api/cast,/api/presence,/api/clock'))
   .split(',')
   .map(function (x) {
     return x.trim()
   })
   .filter(Boolean)
 
+if (!confFound) {
+  console.error('没找到配置文件：' + confPath)
+  console.error('First run: copy proxy.example.conf to proxy.conf (same folder), then fill in the addresses.')
+  process.exit(1)
+}
+if (!TARGET) {
+  console.error('配置里没有 target（公网上游地址）。')
+  console.error('Edit ' + confPath + ' and set: target = https://your-public-host:port')
+  process.exit(1)
+}
 if (!LISTEN_PORT) {
-  console.error('端口不对：--port 要一个数字')
+  console.error('端口不对：listen.port 要一个数字')
   process.exit(1)
 }
 
@@ -380,8 +441,9 @@ server.listen(LISTEN_PORT, LISTEN_HOST, function () {
     console.log('  实时流量 → ' + LOCAL.raw + '（本机，不出公网）')
     console.log('    本地路径：' + LOCAL_PATHS.join(' '))
   } else {
-    console.log('  实时流量 → 跟页面一样走公网（--no-local）')
+    console.log('  实时流量 → 跟页面一样走公网（local.enabled = no）')
   }
+  console.log('  配置文件：' + confPath + '（改完重启生效）')
   console.log('  自检：' + (LISTEN_HOST === '0.0.0.0' ? '127.0.0.1' : LISTEN_HOST) + ':' + LISTEN_PORT + '/__proxy_health')
   if (ips.length) {
     console.log('  教学机各网卡（学生用「局域网」那个）：')

@@ -28,6 +28,9 @@ downloads/
 # 服务器地址（每台机器不一样）
 teacher-url.txt
 
+# 教学机代理的实际配置（含教学机 IP / 公网地址，不入库）
+教学机代理/proxy.conf
+
 # ===== 临时文件 =====
 *.tmp
 *.bak
