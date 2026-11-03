@@ -4,12 +4,12 @@ title LAN proxy for the classroom system
 cd /d "%~dp0"
 
 rem ==============================================================
-rem  LAN -> public proxy for the classroom system.
+rem  LAN -> public proxy for the classroom system (Python).
 rem
-rem  1) needs Node.js (12.22 LTS is the last one that runs on Win7).
-rem     Install it, or drop a portable node.exe into this folder.
-rem  2) needs a config file: copy proxy.example.conf to proxy.conf
-rem     (same folder) and fill in the addresses.
+rem  1) python: uses runtime\python\python.exe (embedded 3.8, works
+rem     on Windows 7) when present; otherwise the system python.
+rem  2) config: copy proxy.example.conf to proxy.conf (same folder)
+rem     and fill in the addresses.
 rem  3) double-click this file to start; Ctrl+C to stop.
 rem
 rem  ASCII only on purpose: cmd.exe mis-parses non-ASCII .bat files
@@ -18,25 +18,43 @@ rem ==============================================================
 
 set "CONF=%~dp0proxy.conf"
 
-rem ---------- 1) node ----------
-set "NODEEXE="
-where node >nul 2>nul
-if not errorlevel 1 set "NODEEXE=node"
-if not defined NODEEXE if exist "%~dp0node.exe" set "NODEEXE=%~dp0node.exe"
+rem ---------- 1) find python ----------
+set "PYEXE="
+set "PYARGS="
 
-if not defined NODEEXE (
-  echo.
-  echo   [ERROR] node.exe not found.
-  echo.
-  echo   Install Node.js first. On Windows 7 use the last version that
-  echo   still supports it:
-  echo       https://nodejs.org/dist/v12.22.12/node-v12.22.12-win-x64.zip
-  echo   Unpack it (e.g. to C:\node12), add that folder to PATH, or copy
-  echo   node.exe into this folder.
-  echo.
-  pause
-  exit /b 1
+if exist "%~dp0runtime\python\python.exe" (
+  set "PYEXE=%~dp0runtime\python\python.exe"
+  goto :have_python
 )
+
+where py >nul 2>nul
+if not errorlevel 1 (
+  set "PYEXE=py"
+  set "PYARGS=-3"
+  goto :have_python
+)
+
+where python >nul 2>nul
+if not errorlevel 1 (
+  set "PYEXE=python"
+  goto :have_python
+)
+
+echo.
+echo   [ERROR] python not found.
+echo.
+echo   Put an embedded Python into this folder:
+echo       runtime\python\python.exe
+echo   (Python 3.8 is the last version that runs on Windows 7;
+echo    the embedded build is ~8 MB, no installation needed)
+echo.
+echo   Or install Python and add it to PATH:
+echo       https://www.python.org/downloads/release/python-3810/
+echo.
+pause
+exit /b 1
+
+:have_python
 
 rem ---------- 2) config ----------
 if not exist "%CONF%" (
@@ -55,7 +73,7 @@ rem ---------- 3) run ----------
 echo.
 echo   Starting the proxy with: %CONF%
 echo.
-"%NODEEXE%" "%~dp0lan-proxy.js" --config "%CONF%"
+"%PYEXE%" %PYARGS% "%~dp0lan-proxy.py" --config "%CONF%"
 echo.
 echo   (proxy exited)
 pause
