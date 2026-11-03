@@ -239,8 +239,10 @@ def cache_policy(path):
         # 讲义里的图片
         return TTL_STATIC, TTL_STATIC
     if p.startswith('/api/content/doc'):
-        # 讲义 / 材料正文：老师改完要尽快生效，短一点
-        return TTL_CONTENT, 0
+        # 课程材料（学生讲义）是公开内容 → 可缓存；讲义（教师讲稿）明确不缓存
+        if 'type=lecture' in (path or ''):
+            return 0, 0
+        return TTL_CONTENT, TTL_CONTENT
     return 0, 0
 
 if not CONF_FOUND:
@@ -475,12 +477,17 @@ class Handler(BaseHTTPRequestHandler):
         return self.command + ' ' + self.path
 
     def cacheable(self):
-        """只有公开的 GET/HEAD 才缓存：带令牌的（教师端/学生端数据）一律不进缓存"""
+        """能不能缓存：看路径是不是「公开内容」
+
+        教学公开的原则：
+          · 课程材料（学生讲义）公开 → 可缓存（即使请求带了令牌，内容与身份无关）
+          · 讲义（教师讲稿）不公开 → 路径上就排除掉
+          · 其它接口（教师端 / 学生端数据）→ 一律不缓存
+        另外还有一道保险：上游回 no-store / private 的响应也不进缓存。
+        """
         if not CACHE_ENABLED:
             return 0, 0
         if self.command not in ('GET', 'HEAD'):
-            return 0, 0
-        if self.headers.get('Authorization') or self.headers.get('Cookie'):
             return 0, 0
         return cache_policy(self.path)
 
@@ -555,7 +562,10 @@ class Handler(BaseHTTPRequestHandler):
                 conn.endheaders(body)
 
             resp = conn.getresponse()
-            if ttl > 0 and resp.status == 200:
+            # 上游明确说「不要缓存」（no-store / private）→ 尊重它，不进缓存
+            up_cc = (resp.getheader('Cache-Control') or '').lower()
+            may_cache = ('no-store' not in up_cc) and ('private' not in up_cc)
+            if ttl > 0 and resp.status == 200 and may_cache:
                 # 可缓存的：整包读进来 → 存一份 → 回给浏览器
                 buf = self.read_all(resp)
                 cc = 'public, max-age=%d' % browser_ttl if browser_ttl else 'no-cache'

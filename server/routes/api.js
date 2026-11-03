@@ -32,7 +32,7 @@ const schemeIO = require('../lib/schemeio')
 const compat = require('../lib/compat')
 const sheetLib = require('../lib/sheet')
 const { stringifyGrid } = require('../lib/csv')
-const { Router, ok, fail, readJson, readBuffer, readToFile, sendFile, HttpError } = require('../lib/http')
+const { Router, ok, fail, json, readJson, readBuffer, readToFile, sendFile, HttpError } = require('../lib/http')
 
 /**
  * 收一个大文件到临时文件，跑完自动删。
@@ -171,7 +171,15 @@ module.exports = function createApi(db, cast) {
 
   /* ---------------- 启动信息 / 登录 ---------------- */
 
-  r.get('/api/bootstrap', async (req) => ({
+  r.get('/api/bootstrap', async (req) => {
+    // 先按「当前课程」激活方案：游客/学生看到的项与教师看到的一致
+    try {
+      const cur = currentCourse(req, auth.fromRequest(req) || null)
+      if (cur) scoring.scheme.activate(cur.schemeId)
+    } catch (e) {
+      /* 课程表还没建好时不阻塞 */
+    }
+    return ({
     lessons: content.listLessons(contentRoot(req, null)).map((x) => ({
       id: x.id,
       no: x.no,
@@ -193,7 +201,8 @@ module.exports = function createApi(db, cast) {
     scheme: scoring.scheme.publicInfo(),
     passwordIsDefault: config.passwordIsDefault,
     cast: cast ? cast.state() : null,
-  }))
+    })
+  })
 
   r.post('/api/login/teacher', async (req) => {
     const body = await readJson(req)
@@ -3094,7 +3103,7 @@ module.exports = function createApi(db, cast) {
     if (t.role !== 'teacher' && !(t.role === 'student' && mine)) throw new HttpError(403, '无权查看这个文件')
     const file = submissions.attachmentPath(sub.classId, sub.sid, a.id, sub.id, p.name)
     if (!file) throw new HttpError(404, '文件不存在')
-    sendFile(res, file, { cache: 'private, max-age=300' })
+    sendFile(res, file, { cache: 'public, max-age=86400' })
     return undefined
   }
 
@@ -3519,18 +3528,22 @@ module.exports = function createApi(db, cast) {
     }
   })
 
-  r.get('/api/content/doc', async (req) => {
-    const t = need(req)
+  // 教学公开：**课程材料（学生讲义）不需要登录**；讲义（教师讲稿）只有教师能看。
+  // 缓存策略也跟着身份走：材料是公开内容 → public（代理与浏览器都能缓存）；
+  // 讲义是教师内部内容 → private, no-store（谁都不许缓存）。
+  r.get('/api/content/doc', async (req, p, res) => {
     const url = new URL(req.url, 'http://x')
     const type = url.searchParams.get('type') === 'lecture' ? 'lecture' : 'materials'
     const id = url.searchParams.get('id') || ''
-    if (type === 'lecture' && t.role !== 'teacher') throw new HttpError(403, '讲义仅教师可见')
+    const t = auth.fromRequest(req) || null
+    if (type === 'lecture' && (!t || t.role !== 'teacher')) throw new HttpError(403, '讲义仅教师可见')
     const doc = content.getDoc(type, id, contentRoot(req, t))
     if (!doc) throw new HttpError(404, '没有这篇文档')
     // 里面的图片（../assets/…）换成能直接打开的地址
     const c0 = currentCourse(req, t)
     if (doc.markdown) doc.markdown = content.rewriteAssets(doc.markdown, (c0 || {}).id || '')
-    return doc
+    const cc = type === 'lecture' ? 'private, no-store' : 'public, max-age=60'
+    return json(res, 200, doc, { 'Cache-Control': cc })
   })
 
   /** 课程内容里的图片：<img> 不带令牌，所以地址里带课程 id；只开放 assets/ 目录 */

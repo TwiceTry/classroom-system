@@ -675,6 +675,21 @@ async function testApi() {
       'status=' + materials.status + ' len=' + ((materials.json && materials.json.markdown) || '').length)
   }
 
+  // 教学公开：课程材料（学生讲义）不需要登录；讲义（教师讲稿）仍然只有教师能看
+  const matGuest = await request('GET', '/api/content/doc?type=materials&id=4')
+  check('未登录也能读课程材料（教学公开）',
+    matGuest.status === 200 && !!(matGuest.json && matGuest.json.markdown),
+    'status=' + matGuest.status)
+  check('课程材料是公开可缓存的（public, max-age）',
+    /public/.test(String((matGuest.headers || {})['cache-control'] || '')),
+    'cc=' + ((matGuest.headers || {})['cache-control'] || '(无)'))
+  const lecGuest = await request('GET', '/api/content/doc?type=lecture&id=4')
+  check('未登录读讲义 -> 403', lecGuest.status === 403, 'status=' + lecGuest.status)
+  const lecTeacher = await request('GET', '/api/content/doc?type=lecture&id=4', undefined, tt)
+  check('讲义明确不许缓存（private, no-store）',
+    /no-store/.test(String((lecTeacher.headers || {})['cache-control'] || '')),
+    'cc=' + ((lecTeacher.headers || {})['cache-control'] || '(无)'))
+
   const lecture = await request('GET', '/api/content/doc?type=lecture&id=4', undefined, tt)
   if (NO_CONTENT) {
     skip('teacher can read lecture', '没有课程内容')

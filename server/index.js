@@ -80,7 +80,14 @@ function serveSpa(req, res) {
   }
 
   const file = path.join(config.webDist, pathname)
-  if (isInside(config.webDist, file) && sendFile(res, file)) return
+  // 前端产物文件名带内容哈希（index-xxxx.js）→ 内容变了就换名，可以长期缓存；
+  // /vendor 里的第三方库很少变 → 缓存一天。
+  const cacheOpt = /^\/assets\//.test(pathname)
+    ? { cache: 'public, max-age=31536000, immutable' }
+    : /^\/vendor\//.test(pathname)
+      ? { cache: 'public, max-age=86400' }
+      : {}
+  if (isInside(config.webDist, file) && sendFile(res, file, cacheOpt)) return
 
   // SPA 回退：/teacher/xxx、/watch 之类的路由都交给 index.html
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' })
@@ -143,7 +150,8 @@ const server = http.createServer(async (req, res) => {
       for (const root of roots) {
         if (!root) continue
         const file = path.join(root, rel)
-        if (isInside(root, file) && sendFile(res, file)) return
+        // 示例运行时库（vue.global.js 等）很少变 → 缓存一天
+        if (isInside(root, file) && sendFile(res, file, { cache: 'public, max-age=86400' })) return
       }
       return fail(res, 404, '示例文件不存在')
     }
