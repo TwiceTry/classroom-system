@@ -1,0 +1,28 @@
+# 构建镜像时不要带进去的东西（本地有、但镜像里要么重新生成、要么不该进）
+
+# 数据与用户内容
+data/
+downloads/
+content/
+
+# 依赖与构建产物（镜像里自己装、自己构建）
+node_modules/
+web/node_modules/
+web/dist/
+web/dist-build/
+server/templates/**/node_modules/
+
+# 版本库与工具
+.git/
+.gitignore
+tools/
+
+# 本地/临时
+**/.DS_Store
+**/Thumbs.db
+*.log
+*.tmp
+.playwright-cli/
+
+# Windows 双击脚本（容器里用不上）
+*.bat

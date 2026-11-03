@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>课堂系统 · 示例课程</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- Markdown 渲染：本地 marked，无 CDN（机房无外网） -->
+    <script src="/vendor/marked.min.js"></script>
+
+    <!--
+      浏览器兼容性检测（必须在任何 module / 框架代码之前跑）
+
+      为什么不用第三方包（bowser / ua-parser-js）：
+        1) 本项目「零第三方依赖、机房无外网」，多一个包就多一处要过 Chrome 109 的语法关；
+        2) UA 判断并不可靠：360/QQ/2345 极速模式、Edge、以及 Chrome 从 110 起对 UA 做的冻结，
+           都会让「版本号」与实际能力对不上。真正决定能不能跑的是**特性**，所以这里测特性；
+        3) 这段必须是 ES5（var / function / 没有箭头函数和模板字符串）——
+           因为浏览器如果连这些都不支持，它根本执行不到这段代码，页面就白屏了。
+
+      结果挂在 window.__compat 上，供 main.js 与兜底页使用。
+      基线：Chrome 109（Win7 上最后能装的 Chrome），与 tools/check-compat.mjs 的 build.target 一致。
+    -->
+    <script>
+      (function () {
+        var MIN_CHROME = 109
+        var ua = navigator.userAgent || ''
+        var m = /(Chrome|Chromium|Edg|CriOS)\/(\d+)/.exec(ua)
+        var major = m ? parseInt(m[2], 10) : 0
+        var family = m ? m[1] : ''
+        var isIE = /MSIE |Trident\//.test(ua)
+
+        // 缺了就直接打不开的（必需）
+        var REQUIRED = [
+          ['模块脚本（type="module"）', function () { return 'noModule' in HTMLScriptElement.prototype }],
+          ['网络请求 fetch', function () { return typeof fetch === 'function' }],
+          ['Promise', function () { return typeof Promise === 'function' }],
+          ['requestAnimationFrame', function () { return typeof requestAnimationFrame === 'function' }],
+          ['WebSocket（课堂状态同步 / 投屏）', function () { return typeof WebSocket === 'function' }],
+          ['Canvas 2D（投屏画面）', function () { return !!document.createElement('canvas').getContext('2d') }],
+          ['ResizeObserver（自适应布局）', function () { return typeof ResizeObserver === 'function' }],
+          ['IntersectionObserver', function () { return typeof IntersectionObserver === 'function' }],
+          ['CSS Grid 布局', function () { return !!window.CSS && CSS.supports && CSS.supports('display', 'grid') }],
+          ['CSS 变量', function () { return !!window.CSS && CSS.supports && CSS.supports('color', 'var(--x)') }],
+          ['本地存储 localStorage', function () { return !!window.localStorage }],
+          ['Map / Set（ES6）', function () { return typeof Map === 'function' && typeof Set === 'function' }],
+          ['Object.assign', function () { return typeof Object.assign === 'function' }],
+          ['String.prototype.padStart', function () { return typeof ''.padStart === 'function' }],
+          ['Array.prototype.includes', function () { return typeof [].includes === 'function' }],
+          ['Element.closest', function () { return typeof Element.prototype.closest === 'function' }]
+        ]
+
+        // 缺了只是某个功能不能用的（降级，不拦）
+        var OPTIONAL = [
+          ['屏幕共享 getDisplayMedia（老师投屏画面）', function () { return !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) }],
+          ['全屏 API（投屏全屏）', function () { return !!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen) }],
+          ['BroadcastChannel（多窗口消息）', function () { return typeof BroadcastChannel === 'function' }],
+          ['clipboard（复制报错信息）', function () { return !!(navigator.clipboard && navigator.clipboard.writeText) }]
+        ]
+
+        function probe(list) {
+          var missing = []
+          for (var i = 0; i < list.length; i++) {
+            var row = list[i]
+            var ok = false
+            try {
+              ok = !!row[1]()
+            } catch (e) {
+              ok = false
+            }
+            if (!ok) missing.push(row[0])
+          }
+          return missing
+        }
+
+        var missing = probe(REQUIRED)
+        var degraded = probe(OPTIONAL)
+        var level = 'ok'
+        var reasons = []
+
+        if (isIE) {
+          level = 'block'
+          reasons.push('这是 IE 内核浏览器，本系统不支持')
+        } else if (missing.length) {
+          level = 'block'
+          reasons.push('缺少 ' + missing.length + ' 项必要的浏览器能力')
+        } else if (!major) {
+          // 认不出内核（国产壳 / 太老）：特性都过了就不拦，只记一笔
+          level = 'ok'
+        } else if (major < MIN_CHROME) {
+          // 特性齐全、只是版本偏低：放进来，但在页面顶部挂一条提示（可以点「仍然使用」关掉），
+          // 因为「能不能打开」由特性决定，版本只是我们给的基线参考
+          level = 'warn'
+          reasons.push('浏览器内核 ' + family + ' ' + major + '，低于课堂基线 ' + MIN_CHROME)
+        }
+
+        window.__compat = {
+          level: level,
+          reasons: reasons,
+          missing: missing,
+          degraded: degraded,
+          browser: family ? family + ' ' + major : ua.slice(0, 60),
+          major: major,
+          minChrome: MIN_CHROME,
+          ua: ua
+        };
+        try {
+          document.documentElement.className += level === 'ok' ? ' cok' : ' cblock'
+        } catch (e) {}
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <!--
+      兜底页：两种触发方式
+        1) nomodule —— 浏览器根本不支持 module（Chrome < 61、IE），module 脚本不会执行，走到这里；
+        2) 下面这段 classic script 在 module 之前执行，检测结果为 block 时把 #app 换成提示页。
+      样式全部内联（此时外部 CSS 还没加载/可能加载不出来），并且只用老浏览器也认的属性。
+    -->
+    <script nomodule>
+      (function () {
+        window.__compat = window.__compat || {}
+        window.__compat.level = 'block'
+        window.__compat.reasons = ['浏览器不支持 module 脚本（太旧了）']
+      })()
+    </script>
+
+    <script>
+      (function () {
+        var c = window.__compat || { level: 'ok' }
+        if (c.level !== 'block') return
+
+        var MIN = c.minChrome || 109
+        var missing = c.missing || []
+        var degraded = c.degraded || []
+
+        var rows = ''
+        for (var i = 0; i < missing.length; i++) {
+          rows += '<li>' + missing[i] + '</li>'
+        }
+
+        var html =
+          '<div id="cfb">' +
+          '<div class="cfb-card">' +
+          '<div class="cfb-head"><span class="cfb-ico">!</span>' +
+          '<div><h1>这台电脑的浏览器太旧，打不开课堂系统</h1>' +
+          '<p>本系统按 <b>Chrome ' + MIN + '</b>（Win7 上最后一个能装的 Chrome 版本）设计，' +
+          '低于这个版本的浏览器缺少必要能力，页面会白屏或错位。</p></div></div>' +
+          (c.reasons && c.reasons.length ? '<p class="cfb-why">' + c.reasons.join('；') + '</p>' : '') +
+          (rows ? '<p class="cfb-sub">缺少这些能力：</p><ul class="cfb-list">' + rows + '</ul>' : '') +
+          '<p class="cfb-sub">现在用的浏览器</p>' +
+          '<p class="cfb-browser">' + (c.browser || '未知') + '</p>' +
+          '<div class="cfb-actions">' +
+          '<a class="cfb-btn" href="/download/chrome109" id="cfb-dl">下载 Chrome ' + MIN + '（绿色版）</a>' +
+          '<button class="cfb-btn ghost" id="cfb-more">看详细信息</button>' +
+          '</div>' +
+          '<p class="cfb-tip" id="cfb-tip">下载后解压到任意目录，双击 <code>chrome.exe</code> 打开本系统即可；' +
+          '不需要安装，也不影响电脑上原有的浏览器。</p>' +
+          '<div class="cfb-more" id="cfb-more-box" style="display:none">' +
+          '<p><b>把这段发给老师，方便排查：</b></p>' +
+          '<textarea readonly rows="4">' +
+          ('浏览器：' + (c.browser || '未知') + '\n需要：Chrome ' + MIN + '+\n缺少：' + (missing.join('、') || '(无)') + '\n降级：' + (degraded.join('、') || '(无)') + '\nUA：' + (c.ua || '')) +
+          '</textarea></div>' +
+          (degraded.length ? '<p class="cfb-tip">另外这几项不支持，对应功能会用不了：' + degraded.join('、') + '</p>' : '') +
+          '</div></div>'
+
+        var style =
+          'html,body{margin:0;padding:0;background:#f2f4f7;}' +
+          '#cfb{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;' +
+          'font-family:"Microsoft YaHei","PingFang SC",Arial,sans-serif;color:#26313d;}' +
+          '.cfb-card{background:#fff;border:1px solid #dde3ea;border-radius:10px;box-shadow:0 6px 24px rgba(20,40,70,.08);' +
+          'max-width:640px;width:100%;padding:22px 24px 18px;}' +
+          '.cfb-head{display:flex;gap:12px;align-items:flex-start;}' +
+          '.cfb-ico{flex:0 0 26px;width:26px;height:26px;line-height:26px;text-align:center;border-radius:50%;' +
+          'background:#fdecea;color:#b3261e;font-weight:700;font-size:15px;}' +
+          '.cfb-card h1{font-size:17px;margin:2px 0 6px;}' +
+          '.cfb-card p{margin:4px 0;font-size:13px;line-height:1.7;color:#40505f;}' +
+          '.cfb-why{background:#fff8e6;border-left:3px solid #e0a300;padding:6px 10px;border-radius:3px;margin-top:10px !important;}' +
+          '.cfb-sub{margin-top:14px !important;color:#6b7785 !important;font-size:12px !important;}' +
+          '.cfb-list{margin:4px 0 0 18px;padding:0;font-size:13px;color:#40505f;}' +
+          '.cfb-list li{margin:2px 0;}' +
+          '.cfb-browser{font-family:Consolas,monospace;font-size:12.5px;color:#26313d !important;}' +
+          '.cfb-actions{display:flex;gap:10px;margin:16px 0 6px;flex-wrap:wrap;}' +
+          '.cfb-btn{display:inline-block;background:#1a6fa8;color:#fff;text-decoration:none;border:none;cursor:pointer;' +
+          'padding:9px 16px;border-radius:5px;font-size:13.5px;font-family:inherit;}' +
+          '.cfb-btn:hover{background:#155a8a;}' +
+          '.cfb-btn.ghost{background:#fff;color:#1a6fa8;border:1px solid #b9cfe0;}' +
+          '.cfb-btn.ghost:hover{background:#f4f9fd;}' +
+          '.cfb-tip{color:#6b7785 !important;font-size:12px !important;}' +
+          '.cfb-tip code{background:#f2f5f8;padding:1px 4px;border-radius:3px;}' +
+          '.cfb-more{margin-top:10px;}' +
+          '.cfb-more textarea{width:100%;box-sizing:border-box;font-family:Consolas,monospace;font-size:11.5px;' +
+          'border:1px solid #dde3ea;border-radius:4px;padding:8px;color:#40505f;}'
+
+        var st = document.createElement('style')
+        st.type = 'text/css'
+        if (st.styleSheet) st.styleSheet.cssText = style
+        else st.appendChild(document.createTextNode(style))
+        document.getElementsByTagName('head')[0].appendChild(st)
+
+        document.body.innerHTML = html
+
+        var more = document.getElementById('cfb-more')
+        if (more) {
+          more.onclick = function () {
+            var box = document.getElementById('cfb-more-box')
+            box.style.display = box.style.display === 'none' ? 'block' : 'none'
+          }
+        }
+
+        // 下载链接：优先问服务端有没有本机绿色版，没有就用配置里的外链
+        try {
+          if (typeof fetch === 'function') {
+            fetch('/api/compat')
+              .then(function (r) { return r.json() })
+              .then(function (j) {
+                var a = document.getElementById('cfb-dl')
+                if (!a || !j) return
+                if (j.downloadUrl) a.setAttribute('href', j.downloadUrl)
+                // 按钮上带体积、title 上是真实文件名（带 109 版本号），老师能核对
+                if (j.filename) {
+                  a.innerHTML = '下载 Chrome ' + MIN + '（绿色版' + (j.sizeMB ? ' · ' + j.sizeMB + 'MB' : '') + '）'
+                  a.setAttribute('title', j.filename)
+                }
+                if (!j.available && !j.downloadUrl) {
+                  a.style.display = 'none'
+                  var tip = document.getElementById('cfb-tip')
+                  if (tip) tip.innerHTML = j.contact || '请向任课老师索取 Chrome ' + MIN + ' 绿色版。'
+                } else if (j.tip) {
+                  // exe：双击运行；zip：解压后双击 chrome.exe —— 由服务端按实际文件类型给
+                  var tip2 = document.getElementById('cfb-tip')
+                  if (tip2) tip2.innerHTML = j.tip
+                }
+              })
+              .catch(function () {})
+          }
+        } catch (e) {}
+      })()
+    </script>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

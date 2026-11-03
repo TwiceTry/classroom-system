@@ -1,0 +1,20 @@
+{
+  "name": "teach-system",
+  "private": true,
+  "version": "1.0.0",
+  "description": "课堂系统（教师端 / 学生端 / 投屏 / 计分 / 点名 / 代码练习 / 作业批阅）",
+  "scripts": {
+    "start": "node server/index.js",
+    "build": "npm --prefix web install && npm --prefix web run build",
+    "dev:web": "npm --prefix web run dev",
+    "check:sections": "node server/check-sections.js",
+    "test": "node server/selftest.js"
+  },
+  "engines": {
+    "node": ">=13.6.0"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "yauzl": "^3.4.0"
+  }
+}

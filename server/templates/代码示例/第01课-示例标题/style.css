@@ -1,0 +1,27 @@
+body {
+  font-family: system-ui, 'Microsoft YaHei', sans-serif;
+  margin: 40px;
+  line-height: 1.7;
+  color: #26313d;
+}
+
+h1 {
+  font-size: 20px;
+}
+
+.hint {
+  color: #5b6773;
+  font-size: 13px;
+}
+
+button {
+  padding: 6px 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #eef2f7;
+}

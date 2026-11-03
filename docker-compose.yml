@@ -1,0 +1,53 @@
+# 课堂系统 · docker compose
+#
+#   起：docker compose up -d
+#   看日志：docker compose logs -f
+#   停：docker compose down          （数据在 ./data 里，不会被删）
+#   升级：docker compose pull && docker compose up -d
+#
+# 数据都在 ./data（和裸机部署完全一样的那套 CSV / 学生目录），
+# 所以「容器跑一段时间后想换回裸机」直接把 ./data 拷走就行。
+
+name: classroom-system
+
+services:
+  teach:
+    image: ghcr.io/twicetry/classroom-system:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: classroom-system
+    restart: unless-stopped
+
+    ports:
+      # 宿主机端口:容器端口（容器里固定 18730）
+      - "${TS_PUBLISH_PORT:-18730}:18730"
+
+    environment:
+      TZ: Asia/Shanghai
+      # 教师口令（第一次起就设好，别用默认的）
+      TS_PASSWORD: ${TS_PASSWORD:-teacher}
+      # 多实例/负载均衡时必须是同一个值；单机留空即可（会自动生成并存进 data/config.json）
+      TS_SECRET: ${TS_SECRET:-}
+
+    volumes:
+      # 数据卷：CSV、学生提交、上传、回收站、证书以外的一切
+      - ./data:/data
+      # 兜底页要发 Chrome 109 绿色版时，把本地那份挂进来（可选）
+      # - ./downloads:/app/downloads:ro
+      # 老部署的课程内容（讲义/材料/代码示例）还在系统目录外面时，挂进来当只读（可选）
+      # - ./content:/course:ro
+
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:18730/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
+    # 让容器内的进程能收到 SIGTERM（默认 10s 后强杀；这里的服务是同步落盘，够用）
+    stop_grace_period: 15s

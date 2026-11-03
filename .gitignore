@@ -1,0 +1,37 @@
+# ===== 依赖 =====
+node_modules/
+web/node_modules/
+
+# ===== 前端构建产物（Dockerfile 里现构建，不入库）=====
+web/dist/
+web/.vite/
+web/dist-build/
+
+# ===== 数据目录 =====
+# 这里是**运行数据**：课程、班级、名单、计分、学生提交、上传、回收站…
+# 一律不入库（含学生姓名学号、口令与密钥、运行时状态）。
+# 首次启动会自动生成全部 CSV；备份就是把整个 data/ 拷走。
+# 注意：写 data/* 而不是 data/ —— 整个目录被排除后，
+# 再用 !data/README.md 是拉不回来的（父目录被排除时无法再包含子文件）
+data/*
+!data/README.md
+
+# 口令与密钥（即使有人手滑把 data/ 加回来，也拦住）
+data/config.json
+data/state.csv
+data/uploads/
+data/.trash/
+
+# ===== 绿色版 Chrome 等分发文件（85MB，不入库）=====
+downloads/
+
+# 服务器地址（每台机器不一样）
+teacher-url.txt
+
+# ===== 临时文件 =====
+*.tmp
+*.bak
+_commit_msg.txt
+.playwright-cli/
+Thumbs.db
+.DS_Store
