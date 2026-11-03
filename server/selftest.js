@@ -590,6 +590,13 @@ async function testApi() {
   if (row) for (const r of row.rows) got[r.item.key] = r.score
   // 期望值**从当前方案算**（分值、扣分、等级系数都是老师可配的，写死数字会让自检跟着挂）
   const scLib = require('./lib/scheme')
+  // 服务器按「当前课程」激活方案；自检进程里也要激活同一份，
+  // 否则「按方案算期望值」会拿默认方案去比，数字对不上。
+  {
+    const cur = await request('GET', '/api/teacher/courses', undefined, tt)
+    const first = ((cur.json && cur.json.courses) || [])[0]
+    if (first && first.schemeId) scLib.activate(first.schemeId)
+  }
   const n1 = (v, d) => (v === undefined || v === null || v === '' ? d : Number(v) || 0)
   const clampN = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
   const r1 = (v) => Math.round(v * 10) / 10
@@ -678,10 +685,15 @@ async function testApi() {
   // 示例运行时库要能按相对路径取到（<script src="../vue.global.js">）
   // —— 容器里没有「课程目录旁边的 代码示例/」，只能从课程内容根取；之前这里 404，
   //    页面就报「资源加载失败：<script> …/examples/vue.global.js」
+  // 当前课程（服务器按它激活方案、按它取内容）；没有课程时相关用例跳过
+  const coursesNow = await request('GET', '/api/teacher/courses', undefined, tt)
+  const currentCourse = ((coursesNow.json && coursesNow.json.courses) || [])[0] || null
+  const courseDir = currentCourse
+    ? path.join(require('./config').dataDir, 'courses', currentCourse.id, 'content', '代码示例')
+    : ''
   {
-    const courseDir = path.join(require('./config').dataDir, 'courses', 'example-course', 'content', '代码示例')
     const runtime = path.join(courseDir, 'vue.global.js')
-    if (fs.existsSync(runtime)) {
+    if (currentCourse && fs.existsSync(runtime)) {
       const lib = await request('GET', '/examples/vue.global.js')
       check('示例运行时库能按相对路径取到（/examples/vue.global.js）', lib.status === 200, 'status=' + lib.status)
       const boot = await request('GET', '/examples/playground/sfc-boot.js')
@@ -709,8 +721,12 @@ async function testApi() {
     check('讲义图片地址已改写且能取到（svg）',
       img.status === 200 && /image\//.test(String(img.headers && img.headers['content-type'])),
       'status=' + img.status)
-    const bad = await request('GET', '/api/content/asset?course=' + encodeURIComponent('example-course') + '&path=lecture%2F00-%E8%AF%BE%E7%A8%8B%E5%B0%81%E9%9D%A2.md')
-    check('课程图片接口只放 assets 目录（其它路径 -> 400）', bad.status === 400, 'status=' + bad.status)
+    if (currentCourse) {
+      const bad = await request('GET', '/api/content/asset?course=' + encodeURIComponent(currentCourse.id) + '&path=lecture%2F00-%E8%AF%BE%E7%A8%8B%E5%B0%81%E9%9D%A2.md')
+      check('课程图片接口只放 assets 目录（其它路径 -> 400）', bad.status === 400, 'status=' + bad.status)
+    } else {
+      skip('课程图片接口只放 assets 目录', '还没有课程')
+    }
   } else {
     console.log('  · 这门课还没有 assets 图片，跳过图片用例')
   }

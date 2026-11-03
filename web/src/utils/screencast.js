@@ -402,12 +402,12 @@ function createScreenCast() {
     ensureDom()
     // 投屏是教师的权限，这里不按地址设卡：能不能抓屏交给浏览器裁决，抓不了就把原因说成人话。
     // 唯一会「抓不了」的情形是 http + 非 localhost 的源（浏览器收走 getDisplayMedia），
-    // 用「双击打开-教师端.bat」把该地址加过白名单后照样能投 —— 不是权限被我们拦掉。
+    // 用「打开教师端.bat」把该地址加过白名单后照样能投 —— 不是权限被我们拦掉。
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
       setMsg(
         '浏览器没有给这个地址屏幕接口（http 下只有 localhost 算安全上下文）。两条路都对：' +
           '① 用 http://localhost:' + (location.port || '80') + ' 打开教师端；' +
-          '② 用「双击打开-教师端.bat」启动，它会先把这个地址加进 Chrome 白名单。' +
+          '② 用「打开教师端.bat」启动，它会先把这个地址加进 Chrome 白名单。' +
           '当前地址 ' + location.host + ' 的讲义 / 计分 / 点名不受影响。',
         'err'
       )
