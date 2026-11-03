@@ -94,11 +94,16 @@ if errorlevel 1 (
   ping -n 6 127.0.0.1 >nul
 )
 
-rem ---------- 6) find a browser ----------
-rem     portable Chrome first (it sits under ..\<some folder>\Chrome\App\),
-rem     then installed Chrome / Edge. Wildcards keep non-ASCII paths out.
+rem ---------- find a browser ----------
+rem     Portable (green) Chrome first: it unpacks to <folder>\Chrome\App\Chrome.exe.
+rem     We check the likely spots with literal paths, then every folder next to
+rem     this one. (dir cannot expand a wildcard inside a path, so the older
+rem     "dir /b /s ..\*Chrome\App\Chrome.exe" never matched anything.)
 set "CHROME="
-for /f "delims=" %%p in ('dir /b /s "%HERE%..\*Chrome\App\Chrome.exe" 2^>nul') do if not defined CHROME set "CHROME=%%p"
+if not defined CHROME if exist "%HERE%downloads\Chrome\App\Chrome.exe" set "CHROME=%HERE%downloads\Chrome\App\Chrome.exe"
+if not defined CHROME if exist "%HERE%..\Chrome\App\Chrome.exe" set "CHROME=%HERE%..\Chrome\App\Chrome.exe"
+if not defined CHROME if exist "%HERE%..\..\Chrome\App\Chrome.exe" set "CHROME=%HERE%..\..\Chrome\App\Chrome.exe"
+if not defined CHROME for /f "delims=" %%d in ('dir /b /ad "%HERE%.." 2^>nul') do if not defined CHROME if exist "%HERE%\..\%%d\Chrome\App\Chrome.exe" set "CHROME=%HERE%\..\%%d\Chrome\App\Chrome.exe"
 if not defined CHROME if exist "%ProgramFiles%\Google\Chrome\Application\chrome.exe" set "CHROME=%ProgramFiles%\Google\Chrome\Application\chrome.exe"
 if not defined CHROME if exist "%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe" set "CHROME=%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"
 if not defined CHROME if exist "%LocalAppData%\Google\Chrome\Application\chrome.exe" set "CHROME=%LocalAppData%\Google\Chrome\Application\chrome.exe"
