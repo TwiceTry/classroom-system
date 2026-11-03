@@ -35,7 +35,8 @@ const routes = [
     meta: { role: 'student' },
     children: [
       { path: '', redirect: '/student/materials' },
-      { path: 'materials', component: () => import('./views/student/Materials.vue') },
+      // 课程材料是公开内容：游客（不登录）也能看
+      { path: 'materials', component: () => import('./views/student/Materials.vue'), meta: { public: true } },
       { path: 'score', component: () => import('./views/student/MyScore.vue') },
       // 模块入口（跟教师端同构：由考核方案决定有哪些模块）
       { path: 'modules/:itemKey', component: () => import('./views/student/ModuleHost.vue') },

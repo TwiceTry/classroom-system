@@ -63,7 +63,14 @@
         <template v-if="collapsed">
           <button class="minibtn" :title="whoLine" @click="toggleSide"><Icon name="users" /></button>
           <p class="live" title="在线"><i class="dot"></i></p>
-          <button class="minibtn" title="退出登录" @click="onLogout"><Icon name="logout" /></button>
+          <button v-if="!isGuest" class="minibtn" title="退出登录" @click="onLogout"><Icon name="logout" /></button>
+          <button v-else class="minibtn" title="登录" @click="onLogin"><Icon name="user" /></button>
+        </template>
+        <template v-else-if="isGuest">
+          <b>游客浏览</b>
+          <span>课程材料公开可看</span>
+          <p class="live"><i class="dot"></i>未登录</p>
+          <button @click="onLogin">登录</button>
         </template>
         <template v-else>
           <b>{{ student ? student.name : '' }}</b>
@@ -133,8 +140,12 @@ const whoLine = computed(() => {
 /* 课程名：登录时记在 state 里；刷新页面后从本地存的 courseId 兜一下 */
 const courseName = computed(() => {
   if (state.student && state.student.courseName) return state.student.courseName
-  return ''
+  // 游客：课程名从公开接口拿
+  return state.courseName || ''
 })
+
+/* 游客浏览：没登录也能看课程材料（教学公开）。只留「课程材料」一个入口。 */
+const isGuest = computed(() => !state.role && !state.student)
 /* 名称下面那行时钟：周几 时间 · 第几节 */
 const clockLine = computed(() => {
   const c = clock.value
@@ -156,6 +167,10 @@ const courseLabel = computed(() => courseName.value || '未选课程')
  * 老师一改，服务端广播 stuvis，这里立刻重新取一遍，菜单随之增减。
  */
 const navGroups = computed(() => {
+  // 游客：只有课程材料能看（其它都要登录）
+  if (isGuest.value) {
+    return [{ title: '讲课', items: [{ to: '/student/materials', label: '课程材料', icon: 'book' }] }]
+  }
   const mods = scheme.modules
     .filter((m) => m.studentRoute && m.studentVisible !== false)
     .map((m) => ({ to: m.studentRoute, label: m.title, icon: moduleIcon(m) }))
@@ -251,8 +266,10 @@ function onVisMessage(msg) {
 
 // 进入学生端 = 到场：开始心跳；离开这个布局（退出/关页）自动报离
 onMounted(async () => {
-  startPresence()
+  // 游客：只看看课程材料（下面那些都要登录）
+  if (isGuest.value) return
   startClock()
+  startPresence()
   startCastWatch()
   await loadScheme(true) // 导航按最新方案渲染
   offVis = onPresenceMessage(onPresenceMsg)
@@ -281,6 +298,11 @@ async function onLogout() {
   stopPresence()
   await logout()
   router.replace('/login')
+}
+
+/** 游客点「登录」→ 去登录页（登录完还能回来继续看材料） */
+function onLogin() {
+  router.push({ path: '/login', query: { next: route.fullPath } })
 }
 </script>
 

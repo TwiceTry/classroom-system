@@ -675,6 +675,19 @@ async function testApi() {
       'status=' + materials.status + ' len=' + ((materials.json && materials.json.markdown) || '').length)
   }
 
+  // 教学公开：游客也能拿到课程名与课次清单（不含班级、不含名单、不含讲义）
+  const pub = await request('GET', '/api/public/course')
+  check('游客能拿到课程名与课次清单',
+    pub.status === 200 && !!(pub.json && pub.json.course && pub.json.course.name) &&
+      Array.isArray(pub.json.lessons) && pub.json.lessons.length > 0,
+    'status=' + pub.status + ' lessons=' + ((pub.json && pub.json.lessons && pub.json.lessons.length) || 0))
+  check('游客拿到的清单里没有班级信息',
+    !!(pub.json && pub.json.course) && !('classes' in (pub.json || {})) && !('students' in (pub.json || {})),
+    JSON.stringify(Object.keys(pub.json || {})))
+  check('公开课程信息可缓存',
+    /public/.test(String((pub.headers || {})['cache-control'] || '')),
+    'cc=' + ((pub.headers || {})['cache-control'] || '(无)'))
+
   // 教学公开：课程材料（学生讲义）不需要登录；讲义（教师讲稿）仍然只有教师能看
   const matGuest = await request('GET', '/api/content/doc?type=materials&id=4')
   check('未登录也能读课程材料（教学公开）',

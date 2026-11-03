@@ -3531,6 +3531,25 @@ module.exports = function createApi(db, cast) {
   // 教学公开：**课程材料（学生讲义）不需要登录**；讲义（教师讲稿）只有教师能看。
   // 缓存策略也跟着身份走：材料是公开内容 → public（代理与浏览器都能缓存）；
   // 讲义是教师内部内容 → private, no-store（谁都不许缓存）。
+  // 教学公开：给「游客」的课程信息 —— 只要课程名与课次清单，
+  // 不含班级、不含名单、不含讲义正文（讲义仍然只有教师能看）
+  r.get('/api/public/course', async (req, p, res) => {
+    const c = currentCourse(req, null)
+    const body = {
+      course: c ? { id: c.id, name: c.name } : null,
+      lessons: content.listLessons(contentRoot(req, null)).map((x) => ({
+        id: x.id,
+        no: x.no,
+        title: x.title,
+        kind: x.kind,
+        hasLecture: !!x.lecture,
+        hasMaterials: !!x.materials,
+      })),
+    }
+    // 公开信息（课程名 + 课次清单）→ 可缓存
+    return json(res, 200, body, { 'Cache-Control': 'public, max-age=60' })
+  })
+
   r.get('/api/content/doc', async (req, p, res) => {
     const url = new URL(req.url, 'http://x')
     const type = url.searchParams.get('type') === 'lecture' ? 'lecture' : 'materials'

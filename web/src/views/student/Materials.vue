@@ -49,7 +49,7 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import MdView from '../../components/MdView.vue'
-import { api } from '../../api'
+import { api, getToken } from '../../api'
 import { state } from '../../store'
 import { onPresenceMessage } from '../../utils/presence'
 import PageHead from '../../components/PageHead.vue'
@@ -130,11 +130,14 @@ onMounted(async () => {
   if (activeId.value) await open(activeId.value, { keepScroll: true })
 
   // 进页面时先对齐老师当前所在的小节（老师可能已经讲到一半）
+  // 游客没有令牌，这个接口会 401 —— 直接跳过，别在控制台刷红
+  if (getToken()) {
   try {
     const f = await api.get('/api/follow')
     if (f && f.lessonId) await applyFollow(f, false)
   } catch (e) {
     /* 还没开始讲，忽略 */
+  }
   }
 })
 

@@ -23,6 +23,7 @@ export const state = reactive({
   ready: false,
   bootError: '',
   role: '', // 'teacher' | 'student'
+  courseName: '', // 课程名（游客也拿得到）
   student: null, // { sid, name, classId, className }
   lessons: [],
   classes: [],
@@ -33,6 +34,14 @@ export const state = reactive({
 
 export async function bootstrap() {
   if (!getToken()) {
+    // 游客：只拉公开的那部分（课程名 + 课次清单）——教学公开，材料谁都能看
+    try {
+      const pub = await api.get('/api/public/course')
+      state.lessons = pub.lessons || []
+      state.courseName = (pub.course && pub.course.name) || ''
+    } catch (e) {
+      /* 还没建课程就空着 */
+    }
     state.ready = true
     return
   }
@@ -51,6 +60,7 @@ export async function bootstrap() {
       }
     }
     state.student = me.student || null
+    state.courseName = (me.student && me.student.courseName) || state.courseName
     state.lessons = data.lessons || []
     state.classes = data.classes || []
     state.items = data.items || []

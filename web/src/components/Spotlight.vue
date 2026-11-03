@@ -31,6 +31,7 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { getToken } from '../api'
 import { api } from '../api'
 import { onPresenceMessage } from '../utils/presence'
 import { state } from '../store'
@@ -174,6 +175,7 @@ function onMsg(msg) {
 }
 
 onMounted(() => {
+  if (!getToken()) return // 游客：这个组件用不到（点名信息要登录）
   off = onPresenceMessage(onMsg)
   // 刷新 / 晚进教室：问一次服务端「这一班现在点到谁」，有就接着显示
   api
