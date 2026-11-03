@@ -32,6 +32,7 @@ lan-proxy.py —— 教学机上的「局域网 → 公网」反向代理（Pyth
   python lan-proxy.py --port 18800 --verbose   # 命令行临时覆盖配置
 """
 
+import hashlib
 import json
 import os
 import select
@@ -52,6 +53,10 @@ HOP = {
     'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
     'te', 'trailer', 'transfer-encoding', 'upgrade',
 }
+
+# 我们自己要设的头：先从客户端那份里剔掉，免得出现两个同名头
+# （浏览器发来的头名常是小写 content-length，再补一个 Content-Length 上游会判 400）
+OURS = ('host', 'content-length', 'x-forwarded-for', 'x-forwarded-proto', 'x-forwarded-host')
 
 
 # ---------------------------------------------------------------- 配置
@@ -148,6 +153,95 @@ LOCAL_PATHS = [
     for x in str(cli('local-paths', 'local.paths', '/ws,/api/cast,/api/presence,/api/clock')).split(',')
     if x.strip()
 ]
+
+# ---------------- 缓存 ----------------
+# 为什么需要缓存：走公网隧道的下行带宽是瓶颈，而系统所有响应都是 no-cache，
+# 浏览器每次都重下 —— 打开一次代码练习页就是 2.5MB（vue.global.js + sfc-loader）。
+# 代理在教学机上把公开的静态资源缓存下来：第一个学生出公网，后面都本地命中。
+CACHE_ENABLED = as_bool(conf_get('cache.enabled'), True)
+CACHE_MAX_BYTES = int(float(conf_get('cache.maxbytes', str(64 * 1024 * 1024))))
+CACHE_MAX_ENTRIES = int(conf_get('cache.maxentries', '500'))
+TTL_ASSETS = int(float(conf_get('cache.ttl.assets', str(365 * 24 * 3600))))
+TTL_STATIC = int(float(conf_get('cache.ttl.static', str(24 * 3600))))
+TTL_CONTENT = int(float(conf_get('cache.ttl.content', '60')))
+
+
+class CacheStore(object):
+    """内存 LRU：按字节数与条数封顶，先进先出淘汰"""
+
+    def __init__(self, max_bytes, max_entries):
+        self.max_bytes = max_bytes
+        self.max_entries = max_entries
+        self.items = {}
+        self.bytes = 0
+        self.hits = 0
+        self.misses = 0
+        self.lock = threading.Lock()
+
+    def get(self, key):
+        with self.lock:
+            e = self.items.get(key)
+            if e is None:
+                self.misses += 1
+                return None
+            if e['expires'] < time.time():
+                self.items.pop(key, None)
+                self.bytes -= e['size']
+                self.misses += 1
+                return None
+            self.hits += 1
+            # 重新插到末尾 → 最近用过的留到最后淘汰
+            self.items.pop(key, None)
+            self.items[key] = e
+            e['age'] = int(time.time() - e['stored'])
+            return e
+
+    def put(self, key, entry):
+        with self.lock:
+            old = self.items.pop(key, None)
+            if old:
+                self.bytes -= old['size']
+            self.items[key] = entry
+            self.bytes += entry['size']
+            while self.items and (self.bytes > self.max_bytes or len(self.items) > self.max_entries):
+                k = next(iter(self.items))
+                v = self.items.pop(k)
+                self.bytes -= v['size']
+
+    def stats(self):
+        with self.lock:
+            return {
+                'entries': len(self.items),
+                'bytes': self.bytes,
+                'maxBytes': self.max_bytes,
+                'hits': self.hits,
+                'misses': self.misses,
+                'hitRate': (round(self.hits / float(self.hits + self.misses), 3) if (self.hits + self.misses) else 0),
+            }
+
+
+CACHE = CacheStore(CACHE_MAX_BYTES, CACHE_MAX_ENTRIES)
+
+
+def cache_policy(path):
+    """这个路径能不能缓存、缓存多久、给浏览器什么 Cache-Control
+    返回 (ttl 秒, 浏览器缓存秒数)；ttl=0 表示不缓存"""
+    p = (path or '').split('?')[0]
+    if p.startswith('/assets/'):
+        # 文件名带内容哈希 → 内容变了就换名，可以永久缓存
+        return TTL_ASSETS, TTL_ASSETS
+    if p.startswith('/vendor/') or p == '/favicon.svg':
+        return TTL_STATIC, TTL_STATIC
+    if p.startswith('/examples/'):
+        # 示例运行时库（名字不带哈希，但极少变）
+        return TTL_STATIC, TTL_STATIC
+    if p.startswith('/api/content/asset'):
+        # 讲义里的图片
+        return TTL_STATIC, TTL_STATIC
+    if p.startswith('/api/content/doc'):
+        # 讲义 / 材料正文：老师改完要尽快生效，短一点
+        return TTL_CONTENT, 0
+    return 0, 0
 
 if not CONF_FOUND:
     sys.stderr.write('没找到配置文件：%s\n' % CONF_PATH)
@@ -347,7 +441,7 @@ class Handler(BaseHTTPRequestHandler):
         headers = {}
         for k, v in self.headers.items():
             lk = k.lower()
-            if lk in HOP or lk == 'host':
+            if lk in HOP or lk in OURS:
                 continue
             headers[k] = v
         headers['Host'] = target.host_header
@@ -376,12 +470,63 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             pass
 
+    # ---------- 缓存 ----------
+    def cache_key(self):
+        return self.command + ' ' + self.path
+
+    def cacheable(self):
+        """只有公开的 GET/HEAD 才缓存：带令牌的（教师端/学生端数据）一律不进缓存"""
+        if not CACHE_ENABLED:
+            return 0, 0
+        if self.command not in ('GET', 'HEAD'):
+            return 0, 0
+        if self.headers.get('Authorization') or self.headers.get('Cookie'):
+            return 0, 0
+        return cache_policy(self.path)
+
+    def send_cached(self, entry, hit):
+        """把缓存里的内容回给浏览器；顺便把 Cache-Control 改成我们自己的，
+        让浏览器也能存下来（第二次连代理都不用问）"""
+        inm = self.headers.get('If-None-Match')
+        if inm and entry['etag'] and inm.strip() == entry['etag']:
+            self.send_response(304)
+            self.send_header('ETag', entry['etag'])
+            self.send_header('Cache-Control', entry['cache_control'])
+            self.send_header('X-Cache', 'HIT')
+            self.send_header('Age', str(entry['age']))
+            self.end_headers()
+            return
+        self.send_response(entry['status'])
+        for k, v in entry['headers']:
+            self.send_header(k, v)
+        self.send_header('Content-Length', str(entry['size']))
+        self.send_header('Cache-Control', entry['cache_control'])
+        self.send_header('ETag', entry['etag'])
+        self.send_header('X-Cache', 'HIT' if hit else 'MISS')
+        self.send_header('Age', str(entry['age']))
+        self.end_headers()
+        if self.command != 'HEAD' and entry['body']:
+            self.wfile.write(entry['body'])
+
     # ---------- 主流程 ----------
     def proxy_request(self):
         upgrade = (self.headers.get('Upgrade') or '').lower()
         if upgrade:
             self.handle_upgrade()
             return
+
+        # 缓存：命中就直接回，不出公网
+        ttl, browser_ttl = self.cacheable()
+        key = self.cache_key()
+        if ttl > 0:
+            entry = CACHE.get(key)
+            if entry is not None:
+                verbose('缓存命中 %s' % self.path)
+                try:
+                    self.send_cached(entry, True)
+                except Exception as e:
+                    verbose('回缓存失败：%s' % e)
+                return
 
         target, tag = pick_target(self.path)
         body = self.read_body()
@@ -410,8 +555,37 @@ class Handler(BaseHTTPRequestHandler):
                 conn.endheaders(body)
 
             resp = conn.getresponse()
-            self.send_upstream_response(resp, target)
-            self.stream_body(resp)
+            if ttl > 0 and resp.status == 200:
+                # 可缓存的：整包读进来 → 存一份 → 回给浏览器
+                buf = self.read_all(resp)
+                cc = 'public, max-age=%d' % browser_ttl if browser_ttl else 'no-cache'
+                entry = {
+                    'status': resp.status,
+                    'headers': [(k, v) for k, v in resp.getheaders()
+                                if k.lower() not in HOP and k.lower() not in ('content-length', 'cache-control', 'etag')],
+                    'body': buf,
+                    'size': len(buf),
+                    'etag': '"%s"' % hashlib.md5(buf).hexdigest(),
+                    'cache_control': cc,
+                    'expires': time.time() + ttl,
+                    'stored': time.time(),
+                    'age': 0,
+                }
+                CACHE.put(key, entry)
+                self.send_response(entry['status'])
+                for k, v in entry['headers']:
+                    self.send_header(k, v)
+                self.send_header('Content-Length', str(len(buf)))
+                self.send_header('Cache-Control', cc)
+                self.send_header('ETag', entry['etag'])
+                self.send_header('X-Cache', 'MISS')
+                self.send_header('Age', '0')
+                self.end_headers()
+                if self.command != 'HEAD':
+                    self.wfile.write(buf)
+            else:
+                self.send_upstream_response(resp, target)
+                self.stream_body(resp)
             verbose('%s %s %s → %s · %dms · %s' % (
                 tag, self.command, self.path, resp.status,
                 int((time.time() - started) * 1000),
@@ -428,7 +602,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
-    def send_upstream_response(self, resp, target):
+    def send_upstream_response(self, resp, target, cache_control=None, extra=None):
         self.send_response(resp.status)
         has_len = False
         for k, v in resp.getheaders():
@@ -442,6 +616,11 @@ class Handler(BaseHTTPRequestHandler):
             elif lk == 'content-length':
                 has_len = True
             self.send_header(k, v)
+        if cache_control:
+            self.send_header('Cache-Control', cache_control)
+        if extra:
+            for k, v in extra.items():
+                self.send_header(k, v)
         if not has_len:
             # 长度不明（分块 / 流式）：用「连接关闭」表示结束
             self.send_header('Connection', 'close')
@@ -460,6 +639,15 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
         except Exception:
             pass
+
+    def read_all(self, resp):
+        buf = b''
+        while True:
+            chunk = resp.read(65536)
+            if not chunk:
+                break
+            buf += chunk
+        return buf
 
     # ---------- WebSocket / 投屏 ----------
     def handle_upgrade(self):
@@ -570,6 +758,22 @@ class Server(ThreadingHTTPServer):
     allow_reuse_address = True
 
 
+def fmt_bytes(n):
+    if n >= 1048576:
+        return '%.0f MB' % (n / 1048576.0)
+    if n >= 1024:
+        return '%.0f KB' % (n / 1024.0)
+    return '%d B' % n
+
+
+def fmt_ttl(sec):
+    if sec >= 86400:
+        return '%d 天' % (sec // 86400)
+    if sec >= 3600:
+        return '%d 小时' % (sec // 3600)
+    return '%d 秒' % sec
+
+
 def print_banner():
     print('=' * 64)
     print('  课堂系统 · 局域网代理')
@@ -582,6 +786,11 @@ def print_banner():
     else:
         print('  实时流量 → 跟页面一样走公网（local.enabled = no）')
     print('  配置文件：%s（改完重启生效）' % CONF_PATH)
+    if CACHE_ENABLED:
+        print('  缓存：开 · 上限 %s · 静态 %s / 示例 %s / 讲义 %s' % (
+            fmt_bytes(CACHE_MAX_BYTES), fmt_ttl(TTL_ASSETS), fmt_ttl(TTL_STATIC), fmt_ttl(TTL_CONTENT)))
+    else:
+        print('  缓存：关（cache.enabled = no）')
     print('  自检：%s:%d/__proxy_health' % ('127.0.0.1' if LISTEN_HOST == '0.0.0.0' else LISTEN_HOST, LISTEN_PORT))
     try:
         host_name = socket.gethostname()
@@ -599,6 +808,22 @@ def main():
     # 自检页
     class HealthHandler(Handler):
         def do_GET(self):
+            if self.path == '/__proxy_stats':
+                st = CACHE.stats()
+                body = json.dumps({
+                    'ok': True,
+                    'role': 'lan-proxy',
+                    'cacheEnabled': CACHE_ENABLED,
+                    'cache': st,
+                    'uptimeSec': int(time.time() - START),
+                }, ensure_ascii=False).encode('utf-8')
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Content-Length', str(len(body)))
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if self.path != '/__proxy_health':
                 return Handler.do_GET(self)
             target, tag = pick_target('/api/health')
