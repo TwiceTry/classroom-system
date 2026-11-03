@@ -10,9 +10,29 @@
 </template>
 
 <script setup>
-import { onMounted } from 'vue'
+import { onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import ErrorBoundary from './components/ErrorBoundary.vue'
 import { state, bootstrap } from './store'
+
+const router = useRouter()
+const route = useRoute()
+
+/**
+ * 登录状态失效（令牌过期 / 服务端不认了）→ 立刻去登录页。
+ * 课程材料页对游客开放，所以光靠路由守卫不够：已经在页面上时守卫不会再跑，
+ * 这里补一刀；登录完会回到刚才那一页（?next=）。
+ */
+watch(
+  () => state.tokenExpired,
+  (v) => {
+    if (!v) return
+    // next 只在「有意义的页面」时带：'/' 会把登录后的人又弹回登录页
+    const cur = route.fullPath || ''
+    const next = cur && cur !== '/' && cur.indexOf('/login') !== 0 ? cur : ''
+    router.replace({ path: '/login', query: next ? { next } : {} })
+  }
+)
 
 onMounted(() => {
   bootstrap()

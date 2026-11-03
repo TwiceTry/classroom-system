@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { getToken } from './api'
+import { state } from './store'
 
 const routes = [
   { path: '/login', component: () => import('./views/Login.vue'), meta: { public: true } },
@@ -63,7 +64,17 @@ router.beforeEach((to) => {
   const token = getToken()
   const role = localStorage.getItem('teach-system-role') || ''
 
-  if (to.meta.public) return true
+  // 登录页自己不要再拦一次（否则「没令牌 → 跳登录页 → 又跳登录页」会绕圈）
+  if (to.path === '/login') return true
+  if (to.meta.public) {
+    // 课程材料对游客开放；但「登录已失效」的学生不该被当成游客 →
+    // 去登录页（登录完回到原来那一页）
+    if (state.tokenExpired) {
+      const next = to.fullPath && to.fullPath !== '/' ? to.fullPath : ''
+      return { path: '/login', query: next ? { next } : {} }
+    }
+    return true
+  }
   if (!token) return { path: '/login', query: { next: to.fullPath } }
   if (to.meta.role && role && to.meta.role !== role) {
     return role === 'teacher' ? '/teacher/lecture' : '/student/materials'

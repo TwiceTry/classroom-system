@@ -67,9 +67,9 @@
           <button v-else class="minibtn" title="登录" @click="onLogin"><Icon name="user" /></button>
         </template>
         <template v-else-if="isGuest">
-          <b>游客浏览</b>
-          <span>课程材料公开可看</span>
-          <p class="live"><i class="dot"></i>未登录</p>
+          <b>{{ state.tokenExpired ? '登录已失效' : '游客浏览' }}</b>
+          <span>{{ state.tokenExpired ? '请重新登录后继续' : '课程材料公开可看' }}</span>
+          <p class="live"><i class="dot"></i>{{ state.tokenExpired ? '未登录' : '未登录' }}</p>
           <button @click="onLogin">登录</button>
         </template>
         <template v-else>
@@ -82,6 +82,10 @@
     </aside>
 
     <main class="main">
+      <p v-if="state.tokenExpired" class="vis-notice">
+        登录已失效，请重新登录。
+        <button class="btn mini" @click="onLogin">去登录</button>
+      </p>
       <p v-if="visNotice" class="vis-notice">{{ visNotice }}</p>
       <router-view />
     </main>

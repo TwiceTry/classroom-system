@@ -52,6 +52,16 @@ function withCourse(path) {
 
 export const unauthorized = { handler: null }
 
+/** 给错误对象挂上 HTTP 状态码（判断「登录失效」要用） */
+function withStatus(err, status) {
+  try {
+    err.status = status
+  } catch (e) {
+    /* ignore */
+  }
+  return err
+}
+
 async function request(path, opts) {
   const o = opts || {}
   const headers = Object.assign({}, o.headers || {})
@@ -71,13 +81,13 @@ async function request(path, opts) {
 
   const ct = res.headers.get('content-type') || ''
   if (ct.indexOf('application/json') < 0) {
-    if (!res.ok) throw new Error('请求失败（' + res.status + '）')
+    if (!res.ok) throw withStatus(new Error('请求失败（' + res.status + '）'), res.status)
     return res.text()
   }
 
   const data = await res.json()
   if (res.status === 401 && unauthorized.handler) unauthorized.handler()
-  if (!res.ok) throw new Error(data.error || '请求失败（' + res.status + '）')
+  if (!res.ok) throw withStatus(new Error(data.error || '请求失败（' + res.status + '）'), res.status)
   return data
 }
 

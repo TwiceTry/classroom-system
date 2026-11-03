@@ -24,6 +24,8 @@ export const state = reactive({
   bootError: '',
   role: '', // 'teacher' | 'student'
   courseName: '', // 课程名（游客也拿得到）
+  // 登录状态失效过（令牌过期 / 服务端不认了）→ 要提示重新登录，不能当成游客
+  tokenExpired: false,
   student: null, // { sid, name, classId, className }
   lessons: [],
   classes: [],
@@ -60,6 +62,7 @@ export async function bootstrap() {
       }
     }
     state.student = me.student || null
+    state.tokenExpired = false
     state.courseName = (me.student && me.student.courseName) || state.courseName
     state.lessons = data.lessons || []
     state.classes = data.classes || []
@@ -73,6 +76,9 @@ export async function bootstrap() {
     saveRole('')
     state.role = ''
     state.student = null
+    // 401 = 服务端不认这个令牌了 → 记下来，页面要提示「重新登录」，
+    // 不能把他当成游客（游客是「从来没登录过」的人）
+    if (e && e.status === 401) state.tokenExpired = true
     state.bootError = e.message
     state.ready = true
   }
@@ -91,6 +97,7 @@ export async function refresh() {
 export function applyLogin(res) {
   setToken(res.token)
   saveRole(res.role)
+  state.tokenExpired = false
   state.role = res.role
   state.student = res.student || null
   // 学生一登录就锁定到自己那门课：之后所有 /api 请求都带这个 courseId
@@ -114,13 +121,17 @@ export async function logout() {
   saveRole('')
   state.role = ''
   state.student = null
+  state.tokenExpired = false // 主动退出不是「失效」
 }
 
 unauthorized.handler = () => {
+  // 收到 401 时令牌还在（api.js 还没清）→ 说明是「本来登录过、现在失效了」
+  const had = !!getToken()
   setToken('')
   saveRole('')
   state.role = ''
   state.student = null
+  if (had) state.tokenExpired = true
 }
 
 /** 班级名（用于教师端顶栏） */

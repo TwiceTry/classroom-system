@@ -36,6 +36,9 @@ teacher-url.txt
 # 第三方依赖（一般用不到；真要装就放这里，已在 python38._pth 的搜索路径里）
 教学机代理/deps/
 
+# ===== 前端测试的临时目录 =====
+web/.tmp-test/
+
 # ===== Python 缓存 =====
 __pycache__/
 *.pyc

@@ -11,6 +11,10 @@
         <button :class="{ on: tab === 'teacher' }" @click="switchTab('teacher')">教师</button>
       </div>
 
+      <p v-if="state.tokenExpired" class="note warn">
+        登录已失效，请重新登录。登录后会自动回到刚才那一页。
+      </p>
+
       <form v-if="tab === 'student'" class="form" @submit.prevent="loginStudent">
         <label class="field">
           <span>课程</span>
