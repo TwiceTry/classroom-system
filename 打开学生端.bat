@@ -1,70 +1,53 @@
 @echo off
 rem ============================================================
-rem  Student console launcher.
+rem  Student console launcher  (classroom-system)
 rem
 rem  ASCII only on purpose: cmd.exe mis-parses non-ASCII .bat
 rem  files (it walks the file byte by byte in the active code
 rem  page and can split multi-byte characters).
 rem
-rem  WHAT YOU EDIT (near the bottom of this header):
-rem    BASE_URL - address of the classroom system (ask your teacher).
-rem               http://192.0.2.10:18730       LAN address of the teacher PC
-rem               http://192.0.2.10:18799       through the teacher's LAN proxy
-rem               http://127.0.0.1:18730       on the teacher PC itself
-rem              Leave it EMPTY and the script reads teacher-url.txt next
-rem              to it; if that file has no address yet, it asks once and
-rem              saves it there.
-rem    PAGE      - which page to open (default: course material)
+rem  ==========================================================
+rem   1) FILL IN THE ADDRESS  <- the only thing you normally touch
+rem  ==========================================================
+rem  Put it in the two lines marked "EDIT HERE" below.
+rem  Common addresses (ask your teacher which one to use):
+rem      http://192.0.2.10:18730       the teacher PC on the LAN
+rem      http://192.0.2.10:18799       through the teacher's LAN proxy
+rem      http://127.0.0.1:18730       on the teacher PC itself
+rem
+rem  Which page to open (you rarely need to change it):
+rem      /student/materials   course material (default)
+rem      /student/             student home
 rem
 rem  WHAT IT DOES:
-rem    1) works out the address (variable -> teacher-url.txt -> ask)
-rem    2) checks the server answers /api/health
-rem    3) finds a browser: our portable Chrome 109 first, then the
+rem    1) pings /api/health on that address and warns if it is down
+rem    2) finds a browser: our portable Chrome 109 first, then the
 rem       installed Chrome, then Edge
-rem    4) opens the student page in it (your own browser profile, so
+rem    3) opens the student page in it (your own browser profile, so
 rem       it just opens a new tab if Chrome is already running)
 rem
-rem  Test without launching anything:  set TS_BAT_DRYRUN=1  then run.
+rem  This script creates NO files. Nothing is written anywhere.
+rem
+rem  To see what it would do without opening a browser:
+rem      set TS_BAT_DRYRUN=1
+rem      then run this file
 rem ============================================================
 setlocal EnableExtensions
 set "HERE=%~dp0"
-set "CFG=%HERE%teacher-url.txt"
 
-rem ---------- edit these two lines ----------
-set "BASE_URL="
+rem ################ EDIT HERE ################
+rem  1) the classroom server address:
+set "BASE_URL=http://192.0.2.10:18730"
+rem  2) which page to open:
 set "PAGE=/student/materials"
-rem ----------------------------------
+rem ############################################
 
-rem ---------- 1) target address ----------
-rem     1) the variable above, if the student filled it in
-rem     2) teacher-url.txt (a full URL first, then a bare host:port)
-rem     3) ask once and remember it
-set "ADDR="
-if defined BASE_URL set "ADDR=%BASE_URL%"
-if not defined ADDR if exist "%CFG%" for /f "usebackq delims=" %%L in (`findstr /r /i /c:"^[ ]*http" "%CFG%"`) do if not defined ADDR set "ADDR=%%L"
-if not defined ADDR if exist "%CFG%" for /f "usebackq delims=" %%L in (`findstr /r /c:"^[ ]*[0-9][0-9.]*:[0-9]" "%CFG%"`) do if not defined ADDR set "ADDR=%%L"
+if "%BASE_URL%"=="" goto :no_url
 
-if not defined ADDR (
-  echo.
-  echo   Ask your teacher for the classroom address, then type it here.
-  echo   Examples:
-  echo       http://192.0.2.10:18730
-  echo.
-  set /p "ADDR=  Server address: "
-)
-if not defined ADDR goto :no_addr
-
-if not defined BASE_URL (
-  >"%CFG%" echo rem Classroom server address - one line, full base URL.
-  >>"%CFG%" echo %ADDR%
-  echo.
-  echo   Saved to teacher-url.txt
-)
-
-rem ---------- 2) tidy up the address ----------
+rem ---------- tidy up the address ----------
 rem     strip spaces / quotes / trailing slashes, add http:// when the
-rem     student typed a bare host
-set "ADDR=%ADDR: =%"
+rem     address was typed as a bare host
+set "ADDR=%BASE_URL: =%"
 set "ADDR=%ADDR:"=%"
 :trim_slash
 if "%ADDR:~-1%"=="/" (
@@ -75,9 +58,10 @@ echo %ADDR%|findstr /r /i /c:"^http://" /c:"^https://" >nul
 if not errorlevel 1 goto :scheme_ok
 set "ADDR=http://%ADDR%"
 :scheme_ok
+
 set "URL=%ADDR%%PAGE%"
 
-rem ---------- 3) is the server alive? ----------
+rem ---------- is the server alive? ----------
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; try { [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; [Net.ServicePointManager]::ServerCertificateValidationCallback={$true}; $r=[Net.HttpWebRequest]::Create('%ADDR%/api/health'); $r.Timeout=3000; $r.Method='GET'; $resp=$r.GetResponse(); $resp.Close(); exit 0 } catch { exit 1 }"
 if errorlevel 1 (
   echo.
@@ -89,7 +73,7 @@ if errorlevel 1 (
   ping -n 6 127.0.0.1 >nul
 )
 
-rem ---------- 4) find a browser ----------
+rem ---------- find a browser ----------
 rem     Portable (green) Chrome first: it unpacks to <folder>\Chrome\App\Chrome.exe.
 rem     We check the likely spots with literal paths, then every folder next to
 rem     this one. (dir cannot expand a wildcard inside a path, so the older
@@ -108,8 +92,9 @@ if not defined CHROME goto :no_browser
 
 echo.
 echo   [OK] opening the student console
-echo        url    : %URL%
-echo        browser: %CHROME%
+echo        address : %ADDR%
+echo        url     : %URL%
+echo        browser : %CHROME%
 echo.
 echo   Log in with your student number and name (the teacher told you the
 echo   class). Keep this window open while you work.
@@ -126,11 +111,15 @@ echo   Browser launched. This window closes in 5 seconds.
 ping -n 6 127.0.0.1 >nul
 exit /b 0
 
-:no_addr
+:no_url
 echo.
-echo   [ERROR] No server address.
-echo           Type it in when asked, or put one line into teacher-url.txt
-echo           next to this file, then run it again.
+echo   [ERROR] BASE_URL is empty.
+echo           Open this file in a text editor and fill in the line
+echo           marked "EDIT HERE":
+echo.
+echo               set "BASE_URL=http://192.0.2.10:18730"
+echo.
+echo           Ask your teacher for the address if you are not sure.
 echo.
 pause
 exit /b 1

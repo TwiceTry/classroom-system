@@ -102,7 +102,7 @@
 
 ### 教师机 / 学生机（零安装）
 
-- **教师端**：把 `打开教师端.bat` 与 `teacher-url.txt` 放到教师机，在 `teacher-url.txt` 里写一行服务器地址（第一次双击它会问你要地址并自动存进那个文件）
+- **教师端**：把 `打开教师端.bat` 拷到教师机，用记事本打开，把里面 `EDIT HERE` 那段的 `BASE_URL` 改成服务器地址（脚本不生成任何文件）
   （如 `http://192.0.2.10:18730`），之后双击 `.bat` 即可。它会探活、挑浏览器、并用白名单启动 Chrome，
   让**纯 http 下「开始投屏」也能用**（详见 `服务器部署.md` §7）
 - **学生端**：浏览器打开 `<服务器地址>/` → 选课程 + 学号 + 姓名，不需要任何参数
@@ -807,11 +807,9 @@ classroom-system/
   data/exams/           机试试卷 / 题库源文件（老师导入的那份 JSON + _template.json）
   tools/                工具脚本（check-compat.mjs：Chrome 109 / Node 18 两条基线体检；pack-course.mjs：打课程包；lan-proxy.js：教学机「局域网→公网」代理，Win7 可用）
   开发调试.bat          一键起后端 18730 + vite dev 5173（改前端时用它，带 HMR）
-  teacher-url.txt       教师机启动器要读的服务器地址（一行）
-  打开教师端.bat       教师机上双击它：探活 + 带抓屏白名单开 Chrome（地址写 teacher-url.txt，见 服务器部署.md §7）
-打开学生端.bat       学生机上双击它：问一次地址后打开学生端
-打开教师端.bat         简化版启动器：改一行 BASE_URL 就能开教师端（自动找绿色版 Chrome 109 / 安装的 Chrome / Edge）
-打开学生端.bat         同上，开学生端（学生机上双击即可）
+  打开教师端.bat         教师机上双击它：改一行 BASE_URL 就能开教师端
+                        （探活 + 带抓屏白名单开 Chrome，自动找绿色版 Chrome 109 / 安装的 Chrome / Edge；不生成任何文件）
+  打开学生端.bat         学生机上双击它：改一行 BASE_URL 就能开学生端（同样不生成任何文件）
   机试试卷格式规范.md   老师出卷的格式说明（模板见 data/exams/_template.json）
   课程包格式规范.md     一门课打包成一个 zip 的规范（课程 / 方案 / 班级名单 / 内容目录，配置与文件分开）
 ```
@@ -846,7 +844,7 @@ node tools/check-compat.mjs --frontend # 只查浏览器基线
 
 后端改为**服务器部署**后，`package-win7/`（便携 Node 13.6.0 + 绿色 Chrome + 三个启动器）不再需要，
 `tools/win7-package/export-win7.mjs` 与 `check-node-pe.mjs` 已删除（需要时从 git 历史取回）。
-现在教师机只需要 `打开教师端.bat` + `teacher-url.txt`，见 `服务器部署.md` §7。
+现在教师机只需要 `打开教师端.bat` 一个文件（地址写在脚本里），见 `服务器部署.md` §7。
 
 ---
 
