@@ -156,6 +156,13 @@ LISTEN_HOST = cli('host', 'listen.host', '0.0.0.0')
 TARGET = cli('target', 'target', '')
 TIMEOUT = float(cli('timeout', 'timeout.ms', '120000')) / 1000.0
 INSECURE = 'insecure' in ARGS or as_bool(conf_get('tls.insecure'), False)
+# 出口网卡：教学机有两块网时（有线 + 随身 WiFi 的 RNDIS），填本地 IP 就能指定走哪块出去。
+# 留空 = 交给系统路由决定。
+BIND_SOURCE = str(conf_get('bind.source', '') or '').strip()
+# 上游连接池：keep-alive 复用，省掉每个请求一次 TLS 握手
+# （随身 WiFi 上一次握手要 600ms，40 个学生同时开页就是 40 次握手，
+#   手机热点的并发连接数直接被打爆 → 连接被踢、页面转圈）
+POOL_MAX = int(conf_get('upstream.pool', '8'))
 CA_FILE = conf_get('tls.cafile', '') or ''
 VERBOSE = 'verbose' in ARGS or as_bool(conf_get('log.verbose'), False)
 QUIET = 'quiet' in ARGS or as_bool(conf_get('log.quiet'), False)
@@ -178,6 +185,7 @@ CACHE_MAX_ENTRIES = int(conf_get('cache.maxentries', '500'))
 TTL_ASSETS = int(float(conf_get('cache.ttl.assets', str(365 * 24 * 3600))))
 TTL_STATIC = int(float(conf_get('cache.ttl.static', str(24 * 3600))))
 TTL_CONTENT = int(float(conf_get('cache.ttl.content', '60')))
+TTL_HTML = int(float(conf_get('cache.ttl.html', '300')))
 
 
 class CacheStore(object):
@@ -252,6 +260,14 @@ def cache_policy(path):
     if p.startswith('/api/content/asset'):
         # 讲义里的图片
         return TTL_STATIC, TTL_STATIC
+    # SPA 的任何路由（/student/materials、/teacher/lecture…）返回的都是同一个入口页：
+    # 内容只在重新构建时变（引用的 js/css 都带哈希）。
+    # 不缓存的话每个学生开页都要出公网拉一次 —— 40 个学生 = 40 条并发连接，
+    # 弱网（随身 WiFi）上会被连接跟踪表打爆。
+    # 判据：路径最后一段没有扩展名（不是 .js/.css/.png…）→ 就是 SPA 路由。
+    last = p.rsplit('/', 1)[-1]
+    if '.' not in last:
+        return TTL_HTML, TTL_HTML
     if p.startswith('/api/content/doc'):
         # 课程材料（学生讲义）是公开内容 → 可缓存；讲义（教师讲稿）明确不缓存
         if 'type=lecture' in (path or ''):
@@ -296,6 +312,89 @@ try:
 except ValueError as e:
     sys.stderr.write('target 不对：%s\n' % e)
     sys.exit(1)
+
+def src_addr():
+    """上游连接要绑定的源地址（bind.source），没配就返回 None（交给系统路由）。"""
+    if not BIND_SOURCE:
+        return None
+    return (BIND_SOURCE, 0)
+
+
+class UpstreamPool(object):
+    """上游 keep-alive 连接池。
+
+    只给 GET / HEAD 复用（幂等，重试安全）；POST 每次新建。
+    """
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.free = {}
+
+    def take(self, target):
+        key = id(target)
+        with self.lock:
+            lst = self.free.get(key) or []
+            while lst:
+                conn = lst.pop()
+                try:
+                    if conn.sock is not None and conn.sock.fileno() != -1:
+                        self.free[key] = lst
+                        return conn, True
+                except Exception:
+                    pass
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self.free[key] = lst
+        return None, False
+
+    def put(self, target, conn):
+        key = id(target)
+        with self.lock:
+            lst = self.free.setdefault(key, [])
+            if len(lst) >= POOL_MAX:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                return
+            lst.append(conn)
+
+    def drop(self, target, conn):
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    def size(self):
+        with self.lock:
+            return sum(len(v) for v in self.free.values())
+
+
+POOL = UpstreamPool()
+
+
+def connect_out(host, port, timeout):
+    """连上游；配了 bind.source 就从那块网卡出去。
+
+    自己 socket + bind + connect，不用 create_connection 的 source_address 参数 ——
+    那个在 Windows 上并发时会报 WinError 10049（地址在其上下文中无效）。
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.settimeout(timeout)
+        if BIND_SOURCE:
+            s.bind((BIND_SOURCE, 0))
+        s.connect((host, port))
+        return s
+    except Exception:
+        try:
+            s.close()
+        except Exception:
+            pass
+        raise
+
 
 def tls_hint(e):
     """证书类错误给一句人能看懂的话（别把 Python 的原文甩给用户）"""
@@ -349,10 +448,15 @@ def probe_upstream():
     这里就会暴露出来 —— 明文 HTTP 打到 TLS 端口，上游会回 501。
     """
     try:
+        raw = connect_out(UP.host, UP.port, 6)
         if is_https(UP):
-            conn = HTTPSConnection(UP.host, UP.port, timeout=6, context=make_tls_context())
+            ctx = make_tls_context()
+            conn = HTTPSConnection(UP.host, UP.port, timeout=6, context=ctx)
+            conn.sock = ctx.wrap_socket(raw, server_hostname=UP.host)
         else:
             conn = HTTPConnection(UP.host, UP.port, timeout=6)
+            conn.sock = raw
+        conn.auto_open = False
         conn.request('GET', (UP.base_path or '') + '/api/health')
         resp = conn.getresponse()
         body = resp.read(200)
@@ -421,7 +525,8 @@ def fail_page(code, msg):
     body = (
         '<!doctype html><meta charset="utf-8"><title>%d</title>'
         '<body style="font:16px/1.7 system-ui;padding:40px"><h2>代理没能转发出去（%d）</h2><p>%s</p>'
-        '<p style="color:#666">检查：上游/本机课堂系统能不能访问？端口对不对？</p>'
+        '<p style="color:#666">检查：target 地址与端口对不对？隧道/防火墙通不通？'
+        '如果是证书问题，在 proxy.conf 里加 tls.insecure = yes。</p>'
     ) % (code, code, str(msg).replace('<', '&lt;').replace('>', '&gt;'))
     return body.encode('utf-8')
 
@@ -500,13 +605,23 @@ class Handler(BaseHTTPRequestHandler):
             self.rfile.read(2)  # CRLF
         return data
 
-    def open_upstream(self, target):
+    def open_upstream(self, target, reuse=False):
+        """拿一条到上游的连接。reuse=True 时优先用池子里的空闲连接（省一次 TLS 握手）。"""
+        if reuse:
+            conn, got = POOL.take(target)
+            if got:
+                return conn, True
+        raw = connect_out(target.host, target.port, TIMEOUT)
         if target.scheme == 'https':
-            conn = HTTPSConnection(target.host, target.port, timeout=TIMEOUT, context=make_tls_context())
+            ctx = make_tls_context()
+            sock = ctx.wrap_socket(raw, server_hostname=target.host)
+            conn = HTTPSConnection(target.host, target.port, timeout=TIMEOUT, context=ctx)
         else:
+            sock = raw
             conn = HTTPConnection(target.host, target.port, timeout=TIMEOUT)
-        conn.connect()
-        return conn
+        conn.sock = sock          # 接管我们已经绑好源地址的 socket
+        conn.auto_open = False     # 别让它自己再 connect 一次
+        return conn, False
 
     def build_upstream_headers(self, target):
         headers = {}
@@ -607,27 +722,27 @@ class Handler(BaseHTTPRequestHandler):
         target, tag = UP, '公网'
         body = self.read_body()
         started = time.time()
+        reusable = self.command in ('GET', 'HEAD')
+        reused = False
+        resp = None
         try:
-            conn = self.open_upstream(target)
+            conn, reused = self.open_upstream(target, reuse=reusable)
         except Exception as e:
             verbose('连不上 %s %s：%s' % (tag, target.raw, e))
             self.fail(502, '连不上%s：%s%s' % (target.raw, e, tls_hint(e)))
             return
 
         try:
-            headers = self.build_upstream_headers(target)
-            if body is not None:
-                headers['Content-Length'] = str(len(body))
-            path = target.base_path + self.path
-            conn.putrequest(self.command, path, skip_host=True, skip_accept_encoding=True)
-            for k, v in headers.items():
-                conn.putheader(k, v)
-            if body is None:
-                conn.endheaders()
-            else:
-                conn.endheaders(body)
-
-            resp = conn.getresponse()
+            resp = self.send_upstream_request(conn, target, body)
+            if resp is None and reused:
+                # 池里的空闲连接可能已被对端悄悄关掉了 → 新建一条重试一次（只对幂等请求）
+                verbose('复用的连接失败，重建后重试：%s' % self.path)
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                conn, reused = self.open_upstream(target, reuse=False)
+                resp = self.send_upstream_request(conn, target, body)
             # 上游明确说「不要缓存」（no-store / private）→ 尊重它，不进缓存
             up_cc = (resp.getheader('Cache-Control') or '').lower()
             may_cache = ('no-store' not in up_cc) and ('private' not in up_cc)
@@ -673,10 +788,39 @@ class Handler(BaseHTTPRequestHandler):
             verbose('转发出错 %s %s：%s' % (tag, self.path, e))
             self.fail(502, '%s' % e)
         finally:
+            # 上游 keep-alive 且响应体读完了 → 放回池子给下一个请求用（省一次 TLS 握手）
+            keep = False
             try:
-                conn.close()
+                if reusable and resp is not None:
+                    try:
+                        cc = (resp.getheader('Connection') or '').lower()
+                        keep = (cc != 'close') and resp.isclosed()
+                    except Exception:
+                        keep = False
+            except Exception:
+                keep = False
+            try:
+                if keep:
+                    POOL.put(target, conn)
+                else:
+                    conn.close()
             except Exception:
                 pass
+
+    def send_upstream_request(self, conn, target, body):
+        """把请求发给上游，返回响应对象。"""
+        headers = self.build_upstream_headers(target)
+        if body is not None:
+            headers['Content-Length'] = str(len(body))
+        path = target.base_path + self.path
+        conn.putrequest(self.command, path, skip_host=True, skip_accept_encoding=True)
+        for k, v in headers.items():
+            conn.putheader(k, v)
+        if body is None:
+            conn.endheaders()
+        else:
+            conn.endheaders(body)
+        return conn.getresponse()
 
     def send_upstream_response(self, resp, target, cache_control=None, extra=None):
         self.send_response(resp.status)
@@ -744,7 +888,7 @@ class Handler(BaseHTTPRequestHandler):
     def handle_upgrade_raw(self):
         target, tag = UP, '公网'
         try:
-            raw = socket.create_connection((target.host, target.port), timeout=TIMEOUT)
+            raw = connect_out(target.host, target.port, TIMEOUT)
             if target.scheme == 'https':
                 raw = make_tls_context().wrap_socket(raw, server_hostname=target.host)
         except Exception as e:
@@ -1119,7 +1263,7 @@ def encode_ws_frame(opcode, payload, mask):
 def open_upstream_ws(path):
     """连到上游的 WebSocket，返回 socket（握手已完成）"""
     target = UP
-    sock = socket.create_connection((target.host, target.port), timeout=TIMEOUT)
+    sock = connect_out(target.host, target.port, TIMEOUT)
     if target.scheme == 'https':
         sock = make_tls_context().wrap_socket(sock, server_hostname=target.host)
     key = base64.b64encode(os.urandom(16)).decode()
@@ -1154,10 +1298,15 @@ def verify_student(token):
     也要过一道身份校验（一次小请求，只在连接时做一次）。
     """
     try:
+        raw = connect_out(UP.host, UP.port, 5)
         if is_https(UP):
-            conn = HTTPSConnection(UP.host, UP.port, timeout=5, context=make_tls_context())
+            ctx = make_tls_context()
+            conn = HTTPSConnection(UP.host, UP.port, timeout=5, context=ctx)
+            conn.sock = ctx.wrap_socket(raw, server_hostname=UP.host)
         else:
             conn = HTTPConnection(UP.host, UP.port, timeout=5)
+            conn.sock = raw
+        conn.auto_open = False
         conn.request('GET', '/api/me', headers={'Authorization': 'Bearer ' + token})
         resp = conn.getresponse()
         data = resp.read()
@@ -1412,12 +1561,15 @@ def print_banner():
     else:
         print('  投屏扇出：关（每个学生一条连接直连服务器，公网下行 N 份）')
     print('  配置文件：%s（改完重启生效）' % CONF_PATH)
+    print('  出口网卡：%s' % (BIND_SOURCE or '(由系统路由决定)'))
+    print('  上游连接池：%d 条（keep-alive 复用，省 TLS 握手）' % POOL_MAX)
     print('    读到：port=%s · target=%s · tls.insecure=%s · cache=%s · 扇出=%s' % (
         LISTEN_PORT, TARGET or '(空)', 'yes' if INSECURE else 'no',
         'yes' if CACHE_ENABLED else 'no', 'yes' if FANOUT_ENABLED else 'no'))
     if CACHE_ENABLED:
-        print('  缓存：开 · 上限 %s · 静态 %s / 示例 %s / 讲义 %s' % (
-            fmt_bytes(CACHE_MAX_BYTES), fmt_ttl(TTL_ASSETS), fmt_ttl(TTL_STATIC), fmt_ttl(TTL_CONTENT)))
+        print('  缓存：开 · 上限 %s · 静态 %s / 示例 %s / 讲义 %s / 入口页 %s' % (
+            fmt_bytes(CACHE_MAX_BYTES), fmt_ttl(TTL_ASSETS), fmt_ttl(TTL_STATIC),
+            fmt_ttl(TTL_CONTENT), fmt_ttl(TTL_HTML)))
     if is_https(UP):
         print('  上游证书：%s' % ('已忽略校验（tls.insecure = yes）' if INSECURE else '严格校验（自签证书要加 tls.insecure = yes）'))
     else:
@@ -1454,6 +1606,7 @@ def main():
                     'ok': True,
                     'role': 'lan-proxy',
                     'cacheEnabled': CACHE_ENABLED,
+                'upstreamPool': {'size': POOL.size(), 'max': POOL_MAX},
                 'cast': FANOUT.stats(),
                     'cache': st,
                     'uptimeSec': int(time.time() - START),
