@@ -700,9 +700,22 @@ class Handler(BaseHTTPRequestHandler):
         self.relay(self.connection, raw)
 
     def relay(self, client_sock, upstream_sock):
-        """双向转发（各一个线程，谁先断就结束）"""
+        """双向转发（各一个线程，谁先断就结束）
+
+        投屏的画面帧是 WebSocket 二进制帧，最怕攒包（Nagle）：
+        关掉 Nagle、把接收缓冲调大，帧才能「发出去就到」。
+        """
         client_sock.settimeout(None)
         upstream_sock.settimeout(None)
+        for s in (client_sock, upstream_sock):
+            try:
+                s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except Exception:
+                pass
+            try:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
+            except Exception:
+                pass
 
         def pump(src, dst):
             try:
