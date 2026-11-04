@@ -146,7 +146,24 @@ VERBOSE = 'verbose' in ARGS or as_bool(conf_get('log.verbose'), False)
 QUIET = 'quiet' in ARGS or as_bool(conf_get('log.quiet'), False)
 REWRITE = 'no-redirect-rewrite' not in ARGS
 
-USE_LOCAL = as_bool(conf_get('local.enabled'), True) and 'no-local' not in ARGS
+# local.enabled 三态：
+#   auto（默认）—— 启动时探一下本机有没有课堂系统；有就分流，没有就整条走公网
+#   yes           —— 强制走本机（本机确实跑着课堂系统时用）
+#   no            —— 一律走公网（教学机与局域网都不部署课堂系统时用）
+# 命令行：--no-local 等于 no，--local 强制等于 yes
+LOCAL_MODE = 'auto'
+if 'no-local' in ARGS:
+    LOCAL_MODE = 'no'
+elif 'local' in ARGS:
+    LOCAL_MODE = 'yes'
+else:
+    _lv = str(conf_get('local.enabled', 'auto')).strip().lower()
+    if _lv in ('yes', 'y', '1', 'true', 'on', '是', '开'):
+        LOCAL_MODE = 'yes'
+    elif _lv in ('no', 'n', '0', 'false', 'off', '否', '关'):
+        LOCAL_MODE = 'no'
+    else:
+        LOCAL_MODE = 'auto'
 LOCAL_TARGET = cli('local-target', 'local.target', 'http://127.0.0.1:18730')
 LOCAL_PATHS = [
     x.strip()
@@ -280,17 +297,46 @@ except ValueError as e:
     sys.exit(1)
 
 LOCAL = None
-if USE_LOCAL:
+if LOCAL_MODE != 'no':
     try:
         LOCAL = Target(LOCAL_TARGET)
     except ValueError as e:
         sys.stderr.write('local.target 不对：%s\n' % e)
         sys.exit(1)
 
+# 本机课堂系统在不在？—— 教学机与局域网通常**不部署**课堂系统（只有公网那一份），
+# 这时实时流量也必须走公网，否则 /ws、/api/cast 等会 502（投屏、点名全废）。
+LOCAL_AVAILABLE = False
+LOCAL_NOTE = ''
+
+
+def probe_local():
+    """探一下本机的课堂系统（短超时，探不到就当没有）"""
+    if LOCAL is None:
+        return False, '未启用本地分流（local.enabled = no）'
+    try:
+        if LOCAL.scheme == 'https:':
+            conn = HTTPSConnection(LOCAL.host, LOCAL.port, timeout=1.5)
+        else:
+            conn = HTTPConnection(LOCAL.host, LOCAL.port, timeout=1.5)
+        conn.request('GET', '/api/health')
+        resp = conn.getresponse()
+        resp.read(64)
+        conn.close()
+        if resp.status == 200:
+            return True, '已探测到本机课堂系统（实时流量走本机）'
+        return False, '本机课堂系统返回 %d（改走公网）' % resp.status
+    except Exception as e:
+        return False, '本机没有课堂系统（%s），实时流量改走公网' % (str(e)[:60])
+
+
+def local_available():
+    return LOCAL_AVAILABLE
+
 
 def pick_target(path):
-    """这个请求走哪一边：实时流量走本地，别的走公网"""
-    if LOCAL is None:
+    """这个请求走哪一边：实时流量走本地（前提是本机确实有课堂系统），别的走公网"""
+    if LOCAL is None or not LOCAL_AVAILABLE:
         return UP, '公网'
     p = (path or '').split('?')[0]
     for pre in LOCAL_PATHS:
@@ -541,12 +587,27 @@ class Handler(BaseHTTPRequestHandler):
         try:
             conn = self.open_upstream(target)
         except Exception as e:
-            verbose('连不上 %s %s：%s' % (tag, target.raw, e))
-            self.fail(502, '连不上%s：%s%s' % (
-                target.raw, e,
-                ' —— 确认课堂系统在本机跑着' if tag == '本地' else ''
-            ))
-            return
+            # 本机课堂系统临时不在（没起 / 关了 / 换机器了）→ 自动改走公网，
+            # 别让投屏、点名这些直接 502
+            if tag == '本地' and UP is not target:
+                global LOCAL_AVAILABLE, LOCAL_NOTE
+                LOCAL_AVAILABLE = False
+                LOCAL_NOTE = '本机课堂系统连不上（%s），已自动改走公网' % str(e)[:60]
+                verbose(LOCAL_NOTE)
+                target, tag = UP, '公网'
+                body = self.read_body()  # 刚才那次可能没读全，重读一次
+                try:
+                    conn = self.open_upstream(target)
+                except Exception as e2:
+                    self.fail(502, '连不上%s：%s' % (target.raw, e2))
+                    return
+            else:
+                verbose('连不上 %s %s：%s' % (tag, target.raw, e))
+                self.fail(502, '连不上%s：%s%s' % (
+                    target.raw, e,
+                    ' —— 确认课堂系统在本机跑着' if tag == '本地' else ''
+                ))
+                return
 
         try:
             headers = self.build_upstream_headers(target)
@@ -791,8 +852,9 @@ def print_banner():
     print('  监听：%s : %d' % ('所有网卡' if LISTEN_HOST == '0.0.0.0' else LISTEN_HOST, LISTEN_PORT))
     print('  页面/接口 → %s' % UP.raw)
     if LOCAL is not None:
-        print('  实时流量 → %s（本机，不出公网）' % LOCAL.raw)
+        print('  实时流量 → %s' % (LOCAL.raw if LOCAL_AVAILABLE else '跟页面一样走公网'))
         print('    本地路径：%s' % ' '.join(LOCAL_PATHS))
+        print('    本机课堂系统：%s' % LOCAL_NOTE)
     else:
         print('  实时流量 → 跟页面一样走公网（local.enabled = no）')
     print('  配置文件：%s（改完重启生效）' % CONF_PATH)
@@ -815,6 +877,10 @@ def print_banner():
 
 
 def main():
+    # 启动时探一下本机有没有课堂系统（教学机与局域网通常不部署，只有公网那一份）
+    global LOCAL_AVAILABLE, LOCAL_NOTE
+    if LOCAL is not None:
+        LOCAL_AVAILABLE, LOCAL_NOTE = probe_local()
     # 自检页
     class HealthHandler(Handler):
         def do_GET(self):
@@ -824,6 +890,8 @@ def main():
                     'ok': True,
                     'role': 'lan-proxy',
                     'cacheEnabled': CACHE_ENABLED,
+                'localAvailable': bool(LOCAL_AVAILABLE),
+                'localNote': LOCAL_NOTE,
                     'cache': st,
                     'uptimeSec': int(time.time() - START),
                 }, ensure_ascii=False).encode('utf-8')
@@ -843,6 +911,8 @@ def main():
                 'listen': '%s:%d' % (LISTEN_HOST, LISTEN_PORT),
                 'target': UP.raw,
                 'localTarget': LOCAL.raw if LOCAL else '(不分流)',
+                'localAvailable': bool(LOCAL_AVAILABLE),
+                'localNote': LOCAL_NOTE,
                 'localPaths': LOCAL_PATHS if LOCAL else [],
                 'sampleRoute': '本地' if target is LOCAL else '公网',
                 'uptimeSec': int(time.time() - START),
