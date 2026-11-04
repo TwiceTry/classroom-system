@@ -60,14 +60,29 @@ OURS = ('host', 'content-length', 'x-forwarded-for', 'x-forwarded-proto', 'x-for
 
 # ---------------------------------------------------------------- 配置
 def read_conf(path):
-    """读 .conf：key = value，# 与 ; 开头是注释。读不到返回 None"""
+    """读 .conf：key = value，# 与 ; 开头是注释。读不到返回 None。
+
+    存法兼容三种（Win7 记事本默认存 ANSI/GBK，很容易踩）：
+      UTF-8（带不带 BOM 都行）→ ANSI/GBK → 任意字节（latin-1 兜底）
+    以前只用 utf-8-sig 解码：文件里有中文注释又是 GBK 存的，
+    整个配置就**读不出来**了 —— 于是 tls.insecure 这类设置全都悄悄退回默认值。
+    """
     try:
         with open(path, 'rb') as f:
-            raw = f.read().decode('utf-8-sig')
+            raw = f.read()
     except Exception:
         return None
+    text = None
+    for enc in ('utf-8-sig', 'gbk', 'latin-1'):
+        try:
+            text = raw.decode(enc)
+            break
+        except Exception:
+            continue
+    if text is None:
+        return None
     conf = {}
-    for line in raw.splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if not line or line[0] in '#;':
             continue
@@ -141,6 +156,7 @@ LISTEN_HOST = cli('host', 'listen.host', '0.0.0.0')
 TARGET = cli('target', 'target', '')
 TIMEOUT = float(cli('timeout', 'timeout.ms', '120000')) / 1000.0
 INSECURE = 'insecure' in ARGS or as_bool(conf_get('tls.insecure'), False)
+CA_FILE = conf_get('tls.cafile', '') or ''
 VERBOSE = 'verbose' in ARGS or as_bool(conf_get('log.verbose'), False)
 QUIET = 'quiet' in ARGS or as_bool(conf_get('log.quiet'), False)
 REWRITE = 'no-redirect-rewrite' not in ARGS
@@ -244,8 +260,12 @@ def cache_policy(path):
     return 0, 0
 
 if not CONF_FOUND:
-    sys.stderr.write('没找到配置文件：%s\n' % CONF_PATH)
-    sys.stderr.write('First run: copy proxy.example.conf to proxy.conf (same folder), then fill in the addresses.\n')
+    sys.stderr.write('配置文件读不到：%s\n' % CONF_PATH)
+    if os.path.exists(CONF_PATH):
+        sys.stderr.write('  文件在，但内容读不出来。\n')
+    else:
+        sys.stderr.write('  文件不存在。第一次用：把 proxy.example.conf 复制成 proxy.conf（同目录），再填地址。\n')
+    sys.stderr.write('  存成 UTF-8 或 ANSI 都行；注释写中文也没问题（读不出的字符会被忽略）。\n')
     sys.exit(1)
 if not TARGET:
     sys.stderr.write('配置里没有 target（公网上游地址）。\n')
@@ -277,6 +297,51 @@ except ValueError as e:
     sys.stderr.write('target 不对：%s\n' % e)
     sys.exit(1)
 
+def tls_hint(e):
+    """证书类错误给一句人能看懂的话（别把 Python 的原文甩给用户）"""
+    msg = str(e)
+    if 'CERTIFICATE_VERIFY_FAILED' in msg or 'certificate verify failed' in msg:
+        return ' —— 上游证书校验不过：proxy.conf 里加 tls.insecure = yes（自签证书必须加）'
+    if 'unable to get local issuer certificate' in msg:
+        return ' —— 缺少该域名的根证书/中间证书：proxy.conf 里加 tls.insecure = yes'
+    if 'SSL' in type(e).__name__:
+        return ' —— TLS 出错：proxy.conf 里加 tls.insecure = yes 试试'
+    return ''
+
+
+def make_tls_context():
+    """建一个 TLS 上下文。
+
+    Win7 上的坑（真机踩过）：ssl.create_default_context() 会去加载
+    「本地受信任的根证书库」（Windows 证书库）。内嵌 Python + Win7 这一步
+    经常直接失败，浏览器/日志里就看到
+      「本地受信任证书库中缺少该域名的根证书或中间证书」
+    —— 哪怕把 tls.insecure 设成 yes 也没用：老写法是**先**
+    create_default_context()（已经在读证书库了）**后**把校验关掉。
+
+    所以：
+      · tls.insecure = yes → 干脆不加载根证书，直接不校验（最稳，Win7 必选）
+      · tls.insecure = no  → 加载根证书；加载失败就退回不校验，并提示加 tls.insecure
+      · tls.cafile = 路径   → 额外指定一份 CA bundle（自建 CA 时用）
+    """
+    if INSECURE:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    try:
+        ctx = ssl.create_default_context()
+        if CA_FILE:
+            ctx.load_verify_locations(CA_FILE)
+        return ctx
+    except Exception as e:
+        verbose('加载根证书失败（%s: %s）→ 本次连接不校验证书' % (type(e).__name__, e))
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+
+
 def probe_upstream():
     """启动时探一下上游通不通。
 
@@ -285,11 +350,7 @@ def probe_upstream():
     """
     try:
         if is_https(UP):
-            ctx = ssl.create_default_context()
-            if INSECURE:
-                ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
-            conn = HTTPSConnection(UP.host, UP.port, timeout=6, context=ctx)
+            conn = HTTPSConnection(UP.host, UP.port, timeout=6, context=make_tls_context())
         else:
             conn = HTTPConnection(UP.host, UP.port, timeout=6)
         conn.request('GET', (UP.base_path or '') + '/api/health')
@@ -441,11 +502,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def open_upstream(self, target):
         if target.scheme == 'https':
-            ctx = ssl.create_default_context()
-            if INSECURE:
-                ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
-            conn = HTTPSConnection(target.host, target.port, timeout=TIMEOUT, context=ctx)
+            conn = HTTPSConnection(target.host, target.port, timeout=TIMEOUT, context=make_tls_context())
         else:
             conn = HTTPConnection(target.host, target.port, timeout=TIMEOUT)
         conn.connect()
@@ -554,7 +611,7 @@ class Handler(BaseHTTPRequestHandler):
             conn = self.open_upstream(target)
         except Exception as e:
             verbose('连不上 %s %s：%s' % (tag, target.raw, e))
-            self.fail(502, '连不上%s：%s' % (target.raw, e))
+            self.fail(502, '连不上%s：%s%s' % (target.raw, e, tls_hint(e)))
             return
 
         try:
@@ -689,11 +746,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             raw = socket.create_connection((target.host, target.port), timeout=TIMEOUT)
             if target.scheme == 'https':
-                ctx = ssl.create_default_context()
-                if INSECURE:
-                    ctx.check_hostname = False
-                    ctx.verify_mode = ssl.CERT_NONE
-                raw = ctx.wrap_socket(raw, server_hostname=target.host)
+                raw = make_tls_context().wrap_socket(raw, server_hostname=target.host)
         except Exception as e:
             verbose('WebSocket 连不上（%s）：%s' % (tag, e))
             self.fail(502, '连不上%s：%s' % (target.raw, e))
@@ -1068,11 +1121,7 @@ def open_upstream_ws(path):
     target = UP
     sock = socket.create_connection((target.host, target.port), timeout=TIMEOUT)
     if target.scheme == 'https':
-        ctx = ssl.create_default_context()
-        if INSECURE:
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-        sock = ctx.wrap_socket(sock, server_hostname=target.host)
+        sock = make_tls_context().wrap_socket(sock, server_hostname=target.host)
     key = base64.b64encode(os.urandom(16)).decode()
     lines = [
         'GET %s%s HTTP/1.1' % (target.base_path, path),
@@ -1106,11 +1155,7 @@ def verify_student(token):
     """
     try:
         if is_https(UP):
-            ctx = ssl.create_default_context()
-            if INSECURE:
-                ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
-            conn = HTTPSConnection(UP.host, UP.port, timeout=5, context=ctx)
+            conn = HTTPSConnection(UP.host, UP.port, timeout=5, context=make_tls_context())
         else:
             conn = HTTPConnection(UP.host, UP.port, timeout=5)
         conn.request('GET', '/api/me', headers={'Authorization': 'Bearer ' + token})
@@ -1367,9 +1412,14 @@ def print_banner():
     else:
         print('  投屏扇出：关（每个学生一条连接直连服务器，公网下行 N 份）')
     print('  配置文件：%s（改完重启生效）' % CONF_PATH)
+    print('    读到：port=%s · target=%s · tls.insecure=%s · cache=%s · 扇出=%s' % (
+        LISTEN_PORT, TARGET or '(空)', 'yes' if INSECURE else 'no',
+        'yes' if CACHE_ENABLED else 'no', 'yes' if FANOUT_ENABLED else 'no'))
     if CACHE_ENABLED:
         print('  缓存：开 · 上限 %s · 静态 %s / 示例 %s / 讲义 %s' % (
             fmt_bytes(CACHE_MAX_BYTES), fmt_ttl(TTL_ASSETS), fmt_ttl(TTL_STATIC), fmt_ttl(TTL_CONTENT)))
+    if is_https(UP):
+        print('  上游证书：%s' % ('已忽略校验（tls.insecure = yes）' if INSECURE else '严格校验（自签证书要加 tls.insecure = yes）'))
     else:
         print('  缓存：关（cache.enabled = no）')
     # 上游自检：顺带验证 https 分支没写错（明文打到 TLS 端口会被回 501）
