@@ -30,6 +30,8 @@ lan-proxy.py —— 教学机上的「局域网 → 公网」反向代理（Pyth
 """
 
 import hashlib
+import base64
+import hashlib
 import json
 import os
 import select
@@ -145,6 +147,10 @@ REWRITE = 'no-redirect-rewrite' not in ARGS
 
 # 说明：课堂系统只部署在公网那一份，教学机本机与局域网都不部署，
 # 所以**不做任何分流**——所有请求（页面、接口、静态资源、投屏的 /ws）一律转给 target。
+
+# 投屏扇出：教师端 → 代理 → 服务器 → 代理 → N 个学生，全程「公网上行 1 份 + 下行 1 份」。
+# 关掉就退回「每个学生一条连接直连服务器」（公网下行 N 份）。
+FANOUT_ENABLED = as_bool(conf_get('cast.fanout'), True) and '--no-fanout' not in ARGS
 
 # ---------------- 缓存 ----------------
 # 为什么需要缓存：走公网隧道的下行带宽是瓶颈，而系统所有响应都是 no-cache，
@@ -630,6 +636,21 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---------- WebSocket / 投屏 ----------
     def handle_upgrade(self):
+        """投屏（ctl / student）走「扇出」，其余（presence 等）走原样转发。"""
+        role = ''
+        try:
+            from urllib.parse import urlsplit, parse_qs
+            q = parse_qs(urlsplit(self.path).query)
+            role = (q.get('role') or [''])[0]
+        except Exception:
+            role = ''
+        if FANOUT_ENABLED and role in ('ctl', 'student'):
+            self.handle_fanout(role)
+            return
+        self.handle_upgrade_raw()
+
+    # ---------- 原样转发（presence 等非投屏通道）----------
+    def handle_upgrade_raw(self):
         target, tag = UP, '公网'
         try:
             raw = socket.create_connection((target.host, target.port), timeout=TIMEOUT)
@@ -697,9 +718,9 @@ class Handler(BaseHTTPRequestHandler):
 
         verbose('%s WebSocket 已接通：%s' % (tag, self.path))
         self.close_connection = True
-        self.relay(self.connection, raw)
+        self.relay(self.connection, raw, client_reader=self.read_client)
 
-    def relay(self, client_sock, upstream_sock):
+    def relay(self, client_sock, upstream_sock, client_reader=None):
         """双向转发（各一个线程，谁先断就结束）
 
         投屏的画面帧是 WebSocket 二进制帧，最怕攒包（Nagle）：
@@ -717,10 +738,13 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
-        def pump(src, dst):
+        def pump(src, dst, reader=None):
             try:
                 while True:
-                    data = src.recv(65536)
+                    if reader is not None:
+                        data = reader()
+                    else:
+                        data = src.recv(65536)
                     if not data:
                         break
                     dst.sendall(data)
@@ -733,7 +757,7 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception:
                         pass
 
-        t1 = threading.Thread(target=pump, args=(client_sock, upstream_sock), daemon=True)
+        t1 = threading.Thread(target=pump, args=(client_sock, upstream_sock, client_reader), daemon=True)
         t2 = threading.Thread(target=pump, args=(upstream_sock, client_sock), daemon=True)
         t1.start()
         t2.start()
@@ -743,6 +767,516 @@ class Handler(BaseHTTPRequestHandler):
             upstream_sock.close()
         except Exception:
             pass
+
+    # ---------- 投屏扇出 ----------
+    def handle_fanout(self, role):
+        """本地的投屏连接：交给扇出管理器统一处理"""
+        self.close_connection = True
+        try:
+            self.connection.settimeout(None)
+            self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except Exception:
+            pass
+        ws = WsConn(self.connection, mask_out=False, on_close=self.on_local_closed, reader=self.read_client)
+        ws.on_text = lambda t: FANOUT.on_local_text(ws, role, t)
+        ws.on_bin = lambda b: FANOUT.on_local_bin(ws, role, b)
+        FANOUT.attach_local(ws, role)
+        # 握手响应直接给本地（我们是服务端，不掩码）
+        try:
+            key = self.headers.get('Sec-WebSocket-Key') or ''
+            accept = base64.b64encode(
+                hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode('latin1')).digest()
+            ).decode()
+            self.wfile.write(
+                ('HTTP/1.1 101 Switching Protocols\r\n'
+                 'Upgrade: websocket\r\n'
+                 'Connection: Upgrade\r\n'
+                 'Sec-WebSocket-Accept: %s\r\n\r\n' % accept).encode('latin1')
+            )
+            self.wfile.flush()
+        except Exception:
+            return
+        ws.start()
+        ws.wait()
+
+    def read_client(self):
+        """从 HTTP 层那个带缓冲的 rfile 里读（浏览器发来的 WS 帧都缓存在那里）"""
+        try:
+            return self.rfile.read1(65536)
+        except Exception:
+            return b''
+
+    def on_local_closed(self, ws):
+        FANOUT.detach_local(ws)
+
+
+# ---------------- WebSocket 帧 ----------------
+WS_TEXT, WS_BIN, WS_CLOSE, WS_PING, WS_PONG = 0x1, 0x2, 0x8, 0x9, 0xa
+
+
+class WsConn(object):
+    """一条 WebSocket 连接：能解帧（回调）与发帧。
+
+    mask_out=True  → 我们是客户端（发给上游，要掩码）
+    mask_out=False → 我们是服务端（发给浏览器，不掩码）
+    """
+
+    def __init__(self, sock, mask_out, on_text=None, on_bin=None, on_close=None, reader=None):
+        self.sock = sock
+        self.reader = reader      # 从哪读（本地连接要传 rfile.read1）
+        self.mask_out = mask_out
+        self.on_text = on_text
+        self.on_bin = on_bin
+        self.on_close = on_close
+        self.buf = b''
+        self.closed = False
+        self._latest = None   # 背压：只保留最新一帧
+        self._flushing = False
+        self._thread = None
+
+    # ---------- 发 ----------
+    def send_frame(self, opcode, payload):
+        if self.closed:
+            return False
+        try:
+            n = len(payload)
+            head = bytearray([0x80 | opcode])
+            if n < 126:
+                head.append(n)
+            elif n < 65536:
+                head.append(126)
+                head += n.to_bytes(2, 'big')
+            else:
+                head.append(127)
+                head += n.to_bytes(8, 'big')
+            data = payload
+            if self.mask_out:
+                mask = os.urandom(4)
+                head[1] |= 0x80
+                head += mask
+                data = bytes(payload[i] ^ mask[i % 4] for i in range(n))
+            self.sock.sendall(bytes(head) + data)
+            return True
+        except Exception:
+            self.close()
+            return False
+
+    def send_text(self, text):
+        return self.send_frame(WS_TEXT, text.encode('utf-8'))
+
+    def send_bin(self, buf):
+        return self.send_frame(WS_BIN, buf)
+
+    def send_latest(self, buf):
+        """只保留最新一帧：上一帧没写完就把待发的那一帧覆盖掉。
+
+        慢的学生机只会自己少收几帧，不会拖垮别人，内存也不会堆积。
+        （与服务端 server/lib/ws.js 的 sendBinaryLatest 同一个思路）
+        """
+        if self.closed:
+            return False
+        self._latest = buf
+        if not self._flushing:
+            self._flush()
+        return True
+
+    def _flush(self):
+        if self.closed:
+            self._latest = None
+            self._flushing = False
+            return
+        buf = self._latest
+        self._latest = None
+        if not buf:
+            self._flushing = False
+            return
+        self._flushing = True
+        try:
+            self.sock.sendall(encode_ws_frame(WS_BIN, buf, self.mask_out))
+            # 写完接着发下一帧
+            def done():
+                self._flushing = False
+                if self._latest:
+                    self._flush()
+            try:
+                self.sock.settimeout(0.001)
+                self.sock.sendall(b'')  # 触发一次空写，确认缓冲已排空
+            except Exception:
+                pass
+            finally:
+                try:
+                    self.sock.settimeout(None)
+                except Exception:
+                    pass
+            done()
+        except Exception:
+            self._flushing = False
+            self.close()
+
+    # ---------- 收 ----------
+    def start(self):
+        self._thread = threading.Thread(target=self.pump, daemon=True)
+        self._thread.start()
+
+    def wait(self):
+        """占住这个 HTTP 请求，直到 WS 结束。
+
+        不占住的话，do_GET 一返回，HTTP 层就会把连接关掉（WebSocket 立刻断）。
+        """
+        if self._thread:
+            self._thread.join()
+
+    def pump(self):
+        try:
+            while not self.closed:
+                if self.reader is not None:
+                    data = self.reader()
+                else:
+                    data = self.sock.recv(65536)
+                if not data:
+                    break
+                self.buf += data
+                self.parse()
+        except Exception:
+            pass
+        self.close()
+
+    def parse(self):
+        while True:
+            b = self.buf
+            if len(b) < 2:
+                return
+            fin = b[0] & 0x80
+            op = b[0] & 0x0f
+            masked = b[1] & 0x80
+            ln = b[1] & 0x7f
+            off = 2
+            if ln == 126:
+                if len(b) < 4:
+                    return
+                ln = int.from_bytes(b[2:4], 'big')
+                off = 4
+            elif ln == 127:
+                if len(b) < 10:
+                    return
+                ln = int.from_bytes(b[2:10], 'big')
+                off = 10
+            mask = None
+            if masked:
+                if len(b) < off + 4:
+                    return
+                mask = b[off:off + 4]
+                off += 4
+            if len(b) < off + ln:
+                return
+            payload = b[off:off + ln]
+            if mask:
+                payload = bytes(payload[i] ^ mask[i % 4] for i in range(ln))
+            self.buf = b[off + ln:]
+            if not fin:
+                # 分片消息：投屏与控制消息都是单帧，这里先攒着不动
+                continue
+            try:
+                if op == WS_TEXT and self.on_text:
+                    self.on_text(payload.decode('utf-8', 'replace'))
+                elif op == WS_BIN and self.on_bin:
+                    self.on_bin(payload)
+                elif op == WS_PING:
+                    self.send_frame(WS_PONG, payload)
+                elif op == WS_CLOSE:
+                    self.close()
+                    return
+            except Exception as e:
+                verbose('WebSocket 处理消息出错：%s' % e)
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            self.sock.shutdown(socket.SHUT_RDWR)
+        except Exception:
+            pass
+        try:
+            self.sock.close()
+        except Exception:
+            pass
+        if self.on_close:
+            try:
+                self.on_close(self)
+            except Exception:
+                pass
+
+
+def encode_ws_frame(opcode, payload, mask):
+    """给 WsConn.send_latest 用（一次写完，不做回调）"""
+    n = len(payload)
+    head = bytearray([0x80 | opcode])
+    if n < 126:
+        head.append(n)
+    elif n < 65536:
+        head.append(126)
+        head += n.to_bytes(2, 'big')
+    else:
+        head.append(127)
+        head += n.to_bytes(8, 'big')
+    data = payload
+    if mask:
+        mk = os.urandom(4)
+        head[1] |= 0x80
+        head += mk
+        data = bytes(payload[i] ^ mk[i % 4] for i in range(n))
+    return bytes(head) + data
+
+
+def open_upstream_ws(path):
+    """连到上游的 WebSocket，返回 socket（握手已完成）"""
+    target = UP
+    sock = socket.create_connection((target.host, target.port), timeout=TIMEOUT)
+    if target.scheme == 'https':
+        ctx = ssl.create_default_context()
+        if INSECURE:
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        sock = ctx.wrap_socket(sock, server_hostname=target.host)
+    key = base64.b64encode(os.urandom(16)).decode()
+    lines = [
+        'GET %s%s HTTP/1.1' % (target.base_path, path),
+        'Host: %s' % target.host_header,
+        'Upgrade: websocket',
+        'Connection: Upgrade',
+        'Sec-WebSocket-Key: %s' % key,
+        'Sec-WebSocket-Version: 13',
+    ]
+    sock.sendall(('\r\n'.join(lines) + '\r\n\r\n').encode('latin1'))
+    head = b''
+    while b'\r\n\r\n' not in head:
+        chunk = sock.recv(4096)
+        if not chunk:
+            break
+        head += chunk
+    if b' 101' not in head.split(b'\r\n')[0]:
+        try:
+            sock.close()
+        except Exception:
+            pass
+        raise IOError('上游没同意 WebSocket：' + head.split(b'\r\n')[0].decode('latin1', 'replace'))
+    return sock
+
+
+def verify_student(token):
+    """用上游的 /api/me 校验学生令牌，拿身份（classId:sid）。
+
+    代理是局域网里的「门」，不能让任何人都白看投屏 —— 所以本地学生连接
+    也要过一道身份校验（一次小请求，只在连接时做一次）。
+    """
+    try:
+        conn = HTTPConnection(UP.host, UP.port, timeout=5)
+        if UP.scheme == 'https:':
+            ctx = ssl.create_default_context()
+            if INSECURE:
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+            conn = HTTPSConnection(UP.host, UP.port, timeout=5, context=ctx)
+        conn.request('GET', '/api/me', headers={'Authorization': 'Bearer ' + token})
+        resp = conn.getresponse()
+        data = resp.read()
+        conn.close()
+        if resp.status != 200:
+            return None
+        j = json.loads(data.decode('utf-8'))
+        if j.get('role') != 'student':
+            return None
+        st = j.get('student') or {}
+        return '%s:%s' % (st.get('classId') or '', st.get('sid') or '')
+    except Exception:
+        return None
+
+
+class CastFanout(object):
+    """投屏扇出：
+
+        教师端  ──1 条上游 ctl──▶  服务器  ──1 条上游 student──▶  代理  ──▶  N 个本地学生
+
+    公网上行 1 份、下行 1 份（不再 N 份）。服务器那侧一行都不用改：
+    它照旧给「学生连接」广播帧，代理用一条上游 student 连接接住，再在局域网里扇给所有人。
+    """
+
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.up_ctl = None       # 上游教师通道
+        self.up_stu = None       # 上游学生通道（帧从这条路来）
+        self.local_ctl = []      # 本地教师端连接
+        self.local_stu = []      # 本地学生端连接
+        self.idents = {}         # id(conn) -> 'classId:sid'
+        self.stu_hello = None    # 第一个学生的 hello（用来建立上游 student 连接）
+        self.ctl_hello = None
+        self.frames = 0
+        self.bytes = 0
+        self.fanned = 0
+
+    # ---------- 本地连接 ----------
+    def attach_local(self, ws, role):
+        with self.lock:
+            if role == 'ctl':
+                self.local_ctl.append(ws)
+            else:
+                self.local_stu.append(ws)
+        verbose('本地投屏连接接入：%s（当前本地观看 %d）' % (role, len(self.local_stu)))
+
+    def detach_local(self, ws):
+        with self.lock:
+            self.local_ctl = [c for c in self.local_ctl if c is not ws]
+            self.local_stu = [c for c in self.local_stu if c is not ws]
+            self.idents.pop(id(ws), None)
+        verbose('本地投屏连接断开（剩余观看 %d）' % len(self.local_stu))
+
+    # ---------- 本地 → 上游 ----------
+    def on_local_text(self, ws, role, text):
+        try:
+            msg = json.loads(text)
+        except Exception:
+            msg = {}
+        if role == 'ctl':
+            # 教师端：hello（带教师令牌）→ 转发给上游 ctl 通道
+            if msg.get('t') == 'hello':
+                with self.lock:
+                    self.ctl_hello = text
+                up = self.ensure_up_ctl()
+                if up:
+                    up.send_text(text)
+            else:
+                up = self.up_ctl
+                if up:
+                    up.send_text(text)
+            return
+
+        # 学生端：hello（带学生令牌）
+        if msg.get('t') == 'hello':
+            token = str(msg.get('token') or '')
+            ident = verify_student(token) if token else None
+            if not ident:
+                ws.send_text(json.dumps({'t': 'error', 'message': '观看投屏需要先用学号登录'}, ensure_ascii=False))
+                ws.close()
+                return
+            with self.lock:
+                self.idents[id(ws)] = ident
+            # 第一个学生：拿他的 hello 建立「上游学生通道」（只建一条）
+            up = self.ensure_up_stu(text)
+            if up is None:
+                ws.send_text(json.dumps({'t': 'error', 'message': '投屏通道暂时不可用，请稍后重试'}, ensure_ascii=False))
+                ws.close()
+                return
+            # 告诉服务器「有人在看」→ 服务器会给上游 student 通道发 cast 状态
+            up.send_text(text)
+
+    def on_local_bin(self, ws, role, buf):
+        # 教师端发来的二进制帧 = 投屏画面 → 送到上游教师通道，
+        # 服务器收到后会广播给「学生连接」→ 代理的上游学生通道接住 → 本地扇给所有人
+        if role == 'ctl':
+            up = self.up_ctl
+            if up:
+                up.send_bin(buf)
+        # 学生端不该发二进制，忽略
+
+    # ---------- 上游 → 本地 ----------
+    def on_up_ctl_text(self, text):
+        # 服务器告诉教师端「几人在看」→ 改写成「本地真实人数」
+        with self.lock:
+            n = len(set(self.idents.values())) or len(self.local_stu)
+        try:
+            msg = json.loads(text)
+        except Exception:
+            msg = None
+        if isinstance(msg, dict) and msg.get('t') == 'peers':
+            msg['students'] = n
+            text = json.dumps(msg, ensure_ascii=False)
+        with self.lock:
+            for c in list(self.local_ctl):
+                c.send_text(text)
+
+    def on_up_stu_text(self, text):
+        with self.lock:
+            for c in list(self.local_stu):
+                c.send_text(text)
+
+    def on_up_stu_bin(self, buf):
+        with self.lock:
+            self.frames += 1
+            self.bytes += len(buf)
+            targets = list(self.local_stu)
+        for c in targets:
+            c.send_latest(buf)
+        self.fanned += len(targets)
+
+    # ---------- 上游通道 ----------
+    def ensure_up_ctl(self):
+        with self.lock:
+            if self.up_ctl is not None and not self.up_ctl.closed:
+                return self.up_ctl
+        try:
+            sock = open_upstream_ws('/ws?role=ctl')
+        except Exception as e:
+            verbose('上游教师通道建不起来：%s' % e)
+            return None
+        ws = WsConn(sock, mask_out=True, on_text=self.on_up_ctl_text, on_close=self.on_up_ctl_closed)
+        with self.lock:
+            self.up_ctl = ws
+        ws.start()
+        verbose('上游教师通道已建立')
+        return ws
+
+    def on_up_ctl_closed(self, ws):
+        with self.lock:
+            if self.up_ctl is ws:
+                self.up_ctl = None
+        verbose('上游教师通道断开')
+
+    def ensure_up_stu(self, hello_text):
+        with self.lock:
+            if self.up_stu is not None and not self.up_stu.closed:
+                return self.up_stu
+            self.stu_hello = hello_text
+        try:
+            sock = open_upstream_ws('/ws?role=student')
+        except Exception as e:
+            verbose('上游学生通道建不起来：%s' % e)
+            return None
+        ws = WsConn(sock, mask_out=True, on_bin=self.on_up_stu_bin, on_close=self.on_up_stu_closed)
+        with self.lock:
+            self.up_stu = ws
+        ws.start()
+        verbose('上游学生通道已建立（公网下行从 N 份变成 1 份）')
+        return ws
+
+    def on_up_stu_closed(self, ws):
+        with self.lock:
+            if self.up_stu is ws:
+                self.up_stu = None
+            hello = self.stu_hello
+        verbose('上游学生通道断开，尝试重连')
+        if hello:
+            time.sleep(1.0)
+            up = self.ensure_up_stu(hello)
+            if up:
+                up.send_text(hello)
+
+    def stats(self):
+        with self.lock:
+            return {
+                'fanout': FANOUT_ENABLED,
+                'upCtl': bool(self.up_ctl and not self.up_ctl.closed),
+                'upStudent': bool(self.up_stu and not self.up_stu.closed),
+                'localTeacher': len(self.local_ctl),
+                'localWatchers': len(self.local_stu),
+                'uniqueWatchers': len(set(self.idents.values())),
+                'frames': self.frames,
+                'bytes': self.bytes,
+                'framesToWatchers': self.fanned,
+            }
+
+
+FANOUT = CastFanout()
 
 
 class Server(ThreadingHTTPServer):
@@ -773,6 +1307,10 @@ def print_banner():
     print('  监听：%s : %d' % ('所有网卡' if LISTEN_HOST == '0.0.0.0' else LISTEN_HOST, LISTEN_PORT))
     print('  页面/接口 → %s' % UP.raw)
     print('  实时流量（/ws、/api/cast…）→ 同样走公网（课堂系统只部署在公网）')
+    if FANOUT_ENABLED:
+        print('  投屏扇出：开（公网上行 1 份 / 下行 1 份；本地再分给每个学生）')
+    else:
+        print('  投屏扇出：关（每个学生一条连接直连服务器，公网下行 N 份）')
     print('  配置文件：%s（改完重启生效）' % CONF_PATH)
     if CACHE_ENABLED:
         print('  缓存：开 · 上限 %s · 静态 %s / 示例 %s / 讲义 %s' % (
@@ -802,6 +1340,7 @@ def main():
                     'ok': True,
                     'role': 'lan-proxy',
                     'cacheEnabled': CACHE_ENABLED,
+                'cast': FANOUT.stats(),
                     'cache': st,
                     'uptimeSec': int(time.time() - START),
                 }, ensure_ascii=False).encode('utf-8')
