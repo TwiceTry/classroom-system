@@ -9,12 +9,9 @@ lan-proxy.py —— 教学机上的「局域网 → 公网」反向代理（Pyth
 
     学生机  ──(局域网)──▶  教学机 :<listen.port>  ──(公网)──▶  <target>
 
-★ 实时流量走本地
-  投屏画面帧、点名心跳、在线状态这些是「实时流量」，走公网绕一圈又慢又占带宽
-  （投屏的画面帧尤其致命）。所以按路径分流：
-
-    local.paths 里列出的（/ws、/api/cast/*、/api/presence/*…） → 本机课堂系统
-    其它（页面、静态资源、作业、名单、接口…）                    → target（公网）
+★ 不做分流
+  课堂系统只部署在公网那一份，教学机本机与局域网都不部署 —— 所以页面、接口、
+  静态资源、投屏的 /ws 全部转给同一个上游（target），不做任何按路径分流。
 
 ★ 所有信息都在配置文件里，脚本本身不含任何地址
   配置文件：同目录的 proxy.conf（首次使用：把 proxy.example.conf 复制一份改名）
@@ -146,30 +143,8 @@ VERBOSE = 'verbose' in ARGS or as_bool(conf_get('log.verbose'), False)
 QUIET = 'quiet' in ARGS or as_bool(conf_get('log.quiet'), False)
 REWRITE = 'no-redirect-rewrite' not in ARGS
 
-# local.enabled 三态：
-#   auto（默认）—— 启动时探一下本机有没有课堂系统；有就分流，没有就整条走公网
-#   yes           —— 强制走本机（本机确实跑着课堂系统时用）
-#   no            —— 一律走公网（教学机与局域网都不部署课堂系统时用）
-# 命令行：--no-local 等于 no，--local 强制等于 yes
-LOCAL_MODE = 'auto'
-if 'no-local' in ARGS:
-    LOCAL_MODE = 'no'
-elif 'local' in ARGS:
-    LOCAL_MODE = 'yes'
-else:
-    _lv = str(conf_get('local.enabled', 'auto')).strip().lower()
-    if _lv in ('yes', 'y', '1', 'true', 'on', '是', '开'):
-        LOCAL_MODE = 'yes'
-    elif _lv in ('no', 'n', '0', 'false', 'off', '否', '关'):
-        LOCAL_MODE = 'no'
-    else:
-        LOCAL_MODE = 'auto'
-LOCAL_TARGET = cli('local-target', 'local.target', 'http://127.0.0.1:18730')
-LOCAL_PATHS = [
-    x.strip()
-    for x in str(cli('local-paths', 'local.paths', '/ws,/api/cast,/api/presence,/api/clock')).split(',')
-    if x.strip()
-]
+# 说明：课堂系统只部署在公网那一份，教学机本机与局域网都不部署，
+# 所以**不做任何分流**——所有请求（页面、接口、静态资源、投屏的 /ws）一律转给 target。
 
 # ---------------- 缓存 ----------------
 # 为什么需要缓存：走公网隧道的下行带宽是瓶颈，而系统所有响应都是 no-cache，
@@ -296,53 +271,7 @@ except ValueError as e:
     sys.stderr.write('target 不对：%s\n' % e)
     sys.exit(1)
 
-LOCAL = None
-if LOCAL_MODE != 'no':
-    try:
-        LOCAL = Target(LOCAL_TARGET)
-    except ValueError as e:
-        sys.stderr.write('local.target 不对：%s\n' % e)
-        sys.exit(1)
-
-# 本机课堂系统在不在？—— 教学机与局域网通常**不部署**课堂系统（只有公网那一份），
-# 这时实时流量也必须走公网，否则 /ws、/api/cast 等会 502（投屏、点名全废）。
-LOCAL_AVAILABLE = False
-LOCAL_NOTE = ''
-
-
-def probe_local():
-    """探一下本机的课堂系统（短超时，探不到就当没有）"""
-    if LOCAL is None:
-        return False, '未启用本地分流（local.enabled = no）'
-    try:
-        if LOCAL.scheme == 'https:':
-            conn = HTTPSConnection(LOCAL.host, LOCAL.port, timeout=1.5)
-        else:
-            conn = HTTPConnection(LOCAL.host, LOCAL.port, timeout=1.5)
-        conn.request('GET', '/api/health')
-        resp = conn.getresponse()
-        resp.read(64)
-        conn.close()
-        if resp.status == 200:
-            return True, '已探测到本机课堂系统（实时流量走本机）'
-        return False, '本机课堂系统返回 %d（改走公网）' % resp.status
-    except Exception as e:
-        return False, '本机没有课堂系统（%s），实时流量改走公网' % (str(e)[:60])
-
-
-def local_available():
-    return LOCAL_AVAILABLE
-
-
-def pick_target(path):
-    """这个请求走哪一边：实时流量走本地（前提是本机确实有课堂系统），别的走公网"""
-    if LOCAL is None or not LOCAL_AVAILABLE:
-        return UP, '公网'
-    p = (path or '').split('?')[0]
-    for pre in LOCAL_PATHS:
-        if p == pre or p.startswith(pre + '/') or (pre.endswith('/') and p.startswith(pre)):
-            return LOCAL, '本地'
-    return UP, '公网'
+# 不分流：所有请求都转给公网上游（课堂系统只部署在公网）
 
 
 def local_origin():
@@ -353,14 +282,11 @@ def rewrite_location(loc):
     """上游的绝对地址 → 本地地址（重定向别把人甩到公网去）"""
     if not loc or not REWRITE:
         return loc
-    for t in (UP, LOCAL):
-        if t is None:
-            continue
-        origin = '%s//%s' % (t.scheme, t.host_header)
-        if loc.startswith(origin):
-            return local_origin() + loc[len(origin):]
-        if loc.startswith('//' + t.host_header):
-            return local_origin() + loc[len('//' + t.host_header):]
+    origin = '%s//%s' % (UP.scheme, UP.host_header)
+    if loc.startswith(origin):
+        return local_origin() + loc[len(origin):]
+    if loc.startswith('//' + UP.host_header):
+        return local_origin() + loc[len('//' + UP.host_header):]
     return loc
 
 
@@ -581,33 +507,15 @@ class Handler(BaseHTTPRequestHandler):
                     verbose('回缓存失败：%s' % e)
                 return
 
-        target, tag = pick_target(self.path)
+        target, tag = UP, '公网'
         body = self.read_body()
         started = time.time()
         try:
             conn = self.open_upstream(target)
         except Exception as e:
-            # 本机课堂系统临时不在（没起 / 关了 / 换机器了）→ 自动改走公网，
-            # 别让投屏、点名这些直接 502
-            if tag == '本地' and UP is not target:
-                global LOCAL_AVAILABLE, LOCAL_NOTE
-                LOCAL_AVAILABLE = False
-                LOCAL_NOTE = '本机课堂系统连不上（%s），已自动改走公网' % str(e)[:60]
-                verbose(LOCAL_NOTE)
-                target, tag = UP, '公网'
-                body = self.read_body()  # 刚才那次可能没读全，重读一次
-                try:
-                    conn = self.open_upstream(target)
-                except Exception as e2:
-                    self.fail(502, '连不上%s：%s' % (target.raw, e2))
-                    return
-            else:
-                verbose('连不上 %s %s：%s' % (tag, target.raw, e))
-                self.fail(502, '连不上%s：%s%s' % (
-                    target.raw, e,
-                    ' —— 确认课堂系统在本机跑着' if tag == '本地' else ''
-                ))
-                return
+            verbose('连不上 %s %s：%s' % (tag, target.raw, e))
+            self.fail(502, '连不上%s：%s' % (target.raw, e))
+            return
 
         try:
             headers = self.build_upstream_headers(target)
@@ -722,7 +630,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---------- WebSocket / 投屏 ----------
     def handle_upgrade(self):
-        target, tag = pick_target(self.path)
+        target, tag = UP, '公网'
         try:
             raw = socket.create_connection((target.host, target.port), timeout=TIMEOUT)
             if target.scheme == 'https':
@@ -851,12 +759,7 @@ def print_banner():
     print('=' * 64)
     print('  监听：%s : %d' % ('所有网卡' if LISTEN_HOST == '0.0.0.0' else LISTEN_HOST, LISTEN_PORT))
     print('  页面/接口 → %s' % UP.raw)
-    if LOCAL is not None:
-        print('  实时流量 → %s' % (LOCAL.raw if LOCAL_AVAILABLE else '跟页面一样走公网'))
-        print('    本地路径：%s' % ' '.join(LOCAL_PATHS))
-        print('    本机课堂系统：%s' % LOCAL_NOTE)
-    else:
-        print('  实时流量 → 跟页面一样走公网（local.enabled = no）')
+    print('  实时流量（/ws、/api/cast…）→ 同样走公网（课堂系统只部署在公网）')
     print('  配置文件：%s（改完重启生效）' % CONF_PATH)
     if CACHE_ENABLED:
         print('  缓存：开 · 上限 %s · 静态 %s / 示例 %s / 讲义 %s' % (
@@ -877,10 +780,6 @@ def print_banner():
 
 
 def main():
-    # 启动时探一下本机有没有课堂系统（教学机与局域网通常不部署，只有公网那一份）
-    global LOCAL_AVAILABLE, LOCAL_NOTE
-    if LOCAL is not None:
-        LOCAL_AVAILABLE, LOCAL_NOTE = probe_local()
     # 自检页
     class HealthHandler(Handler):
         def do_GET(self):
@@ -890,8 +789,6 @@ def main():
                     'ok': True,
                     'role': 'lan-proxy',
                     'cacheEnabled': CACHE_ENABLED,
-                'localAvailable': bool(LOCAL_AVAILABLE),
-                'localNote': LOCAL_NOTE,
                     'cache': st,
                     'uptimeSec': int(time.time() - START),
                 }, ensure_ascii=False).encode('utf-8')
@@ -904,17 +801,13 @@ def main():
                 return
             if self.path != '/__proxy_health':
                 return Handler.do_GET(self)
-            target, tag = pick_target('/api/health')
+            target, tag = UP, '公网'
             body = json.dumps({
                 'ok': True,
                 'role': 'lan-proxy',
                 'listen': '%s:%d' % (LISTEN_HOST, LISTEN_PORT),
                 'target': UP.raw,
-                'localTarget': LOCAL.raw if LOCAL else '(不分流)',
-                'localAvailable': bool(LOCAL_AVAILABLE),
-                'localNote': LOCAL_NOTE,
-                'localPaths': LOCAL_PATHS if LOCAL else [],
-                'sampleRoute': '本地' if target is LOCAL else '公网',
+                'sampleRoute': '公网',
                 'uptimeSec': int(time.time() - START),
             }, ensure_ascii=False).encode('utf-8')
             self.send_response(200)

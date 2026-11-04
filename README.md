@@ -848,7 +848,7 @@ classroom-system/
                         config.json（含口令与 courseDir）/ uploads 不入库
   data/exams/           机试试卷 / 题库源文件（老师导入的那份 JSON + _template.json）
   tools/                工具脚本（check-compat.mjs：Chrome 109 / Node 18 两条基线体检；pack-course.mjs：打课程包）
-教学机代理/            教学机上的「局域网→公网」代理（Python 版，带缓存）：lan-proxy.py + 启动代理.bat
+教学机代理/            教学机上的「局域网→公网」代理（Python 版，带缓存，不分流）：lan-proxy.py + 启动代理.bat
                         + proxy.conf（配置，git 忽略）+ runtime/python（内嵌 Python 3.8，git 忽略）
   开发调试.bat          一键起后端 18730 + vite dev 5173（改前端时用它，带 HMR）
   打开教师端.bat         教师机上双击它：改一行 BASE_URL 就能开教师端
