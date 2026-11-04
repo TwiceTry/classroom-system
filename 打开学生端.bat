@@ -96,8 +96,8 @@ echo        address : %ADDR%
 echo        url     : %URL%
 echo        browser : %CHROME%
 echo.
-echo   Log in with your student number and name (the teacher told you the
-echo   class). Keep this window open while you work.
+echo   Log in with your student number and name - the teacher told you the
+echo   class. Keep this window open while you work.
 echo.
 
 if "%TS_BAT_DRYRUN%"=="1" (
@@ -127,7 +127,7 @@ exit /b 1
 :no_browser
 echo.
 echo   [ERROR] No browser found.
-echo           Install Chrome (109 works on Win7), or unpack our green
+echo           Install Chrome - version 109 works on Win7 - or unpack our
 echo           Chrome: run  downloads\Chrome-109.*-Win7.exe once, it
 echo           unpacks to  downloads\Chrome\App\Chrome.exe
 echo.

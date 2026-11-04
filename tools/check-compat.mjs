@@ -25,7 +25,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { execFileSync } from 'node:child_process'
+import { spawnSync, execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url)) // …/tools
@@ -316,6 +316,19 @@ function checkFrontend() {
 
 if (doBackend) checkBackend()
 if (doFrontend) checkFrontend()
+
+/* .bat 体检：Win7 上才会炸的三类毛病（LF 行尾 / 块里裸括号 / chcp 65001） */
+if (doFrontend) {
+  console.log('')
+  console.log('-- batch files --')
+  const r = spawnSync(process.execPath, [path.join(HERE, 'check-bat.mjs')], { encoding: 'utf8' })
+  for (const line of String(r.stdout || '').split(/\r?\n/)) {
+    if (!line.trim()) continue
+    if (line.startsWith('  FAIL')) problems++
+    console.log(line)
+  }
+  if (r.status !== 0 && !String(r.stdout || '').includes('FAIL')) problems++
+}
 
 console.log('')
 if (problems) {

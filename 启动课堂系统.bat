@@ -3,7 +3,6 @@ rem ============================================================
 rem  Teaching System launcher (ASCII only on purpose: cmd.exe
 rem  mangles non-ASCII .bat content on some Windows setups).
 rem ============================================================
-chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
 

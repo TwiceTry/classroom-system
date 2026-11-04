@@ -847,7 +847,8 @@ classroom-system/
                         students/ 是每人一套的档案（作业正文、附件、机试答卷进 git，派生 CSV 忽略）；
                         config.json（含口令与 courseDir）/ uploads 不入库
   data/exams/           机试试卷 / 题库源文件（老师导入的那份 JSON + _template.json）
-  tools/                工具脚本（check-compat.mjs：Chrome 109 / Node 18 两条基线体检；pack-course.mjs：打课程包）
+  tools/                工具脚本（check-compat.mjs：Chrome 109 / Node 18 两条基线体检 + .bat 的 Win7 体检；
+                        check-bat.mjs：批处理行尾/括号/chcp 体检；pack-course.mjs：打课程包）
 教学机代理/            教学机上的「局域网→公网」代理（Python 版，带缓存 + 投屏扇出）：lan-proxy.py + 启动代理.bat
                         投屏帧走 WebSocket 二进制帧，原样转发；扇出开着时公网上行/下行都只有 1 份
                         + proxy.conf（配置，git 忽略）+ runtime/python（内嵌 Python 3.8，git 忽略）

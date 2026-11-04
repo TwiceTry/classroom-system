@@ -1,5 +1,4 @@
 @echo off
-chcp 65001 >nul
 title LAN proxy for the classroom system
 cd /d "%~dp0"
 
@@ -45,8 +44,8 @@ echo   [ERROR] python not found.
 echo.
 echo   Put an embedded Python into this folder:
 echo       runtime\python\python.exe
-echo   (Python 3.8 is the last version that runs on Windows 7;
-echo    the embedded build is ~8 MB, no installation needed)
+echo   Python 3.8 is the last version that runs on Windows 7;
+echo   the embedded build is about 8 MB, no installation needed.
 echo.
 echo   Or install Python and add it to PATH:
 echo       https://www.python.org/downloads/release/python-3810/
@@ -62,8 +61,8 @@ if not exist "%CONF%" (
   echo   [ERROR] Config file not found:
   echo           %CONF%
   echo.
-  echo   Copy proxy.example.conf to proxy.conf (same folder), then fill
-  echo   in the addresses (at least "target").
+  echo   Copy proxy.example.conf to proxy.conf in the same folder, then fill
+  echo   in the addresses - at least "target".
   echo.
   pause
   exit /b 1
@@ -75,5 +74,5 @@ echo   Starting the proxy with: %CONF%
 echo.
 "%PYEXE%" %PYARGS% "%~dp0lan-proxy.py" --config "%CONF%"
 echo.
-echo   (proxy exited)
+echo   Proxy exited.
 pause

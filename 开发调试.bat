@@ -14,7 +14,6 @@ rem  Stop = close the two windows. Build a deployable copy with:
 rem      cd web && npm run build
 rem ============================================================
 setlocal EnableExtensions
-chcp 65001 >nul
 cd /d "%~dp0"
 
 where node >nul 2>nul
@@ -48,7 +47,7 @@ rem ---------- backend ----------
 netstat -ano | findstr /r /c:":18730 .*LISTENING" >nul
 if errorlevel 1 (
   echo   starting backend on http://127.0.0.1:18730
-  start "classroom-backend" cmd /k "chcp 65001>nul && node server\index.js"
+  start "classroom-backend" cmd /k "node server\index.js"
 ) else (
   echo   port 18730 already listening - backend window skipped
 )
@@ -58,7 +57,7 @@ netstat -ano | findstr /r /c:":5173 .*LISTENING" >nul
 if errorlevel 1 (
   echo   starting vite on http://127.0.0.1:5173
   pushd web
-  start "classroom-web" cmd /k "chcp 65001>nul && npm run dev"
+  start "classroom-web" cmd /k "npm run dev"
   popd
 ) else (
   echo   port 5173 already listening - vite window skipped
