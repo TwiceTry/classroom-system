@@ -39,7 +39,7 @@ set "HERE=%~dp0"
 
 rem ################ EDIT HERE ################
 rem  1) the classroom server address:
-set "BASE_URL=http://127.0.0.1:18730"
+set "BASE_URL=http://192.168.5.27:18799"
 rem  2) which page to open:
 set "PAGE=/teacher/lecture"
 rem ############################################

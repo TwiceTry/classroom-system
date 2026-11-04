@@ -277,6 +277,40 @@ except ValueError as e:
     sys.stderr.write('target 不对：%s\n' % e)
     sys.exit(1)
 
+def probe_upstream():
+    """启动时探一下上游通不通。
+
+    顺带作用：https 分支要是写错（比如把 'https' 写成 'https:'），
+    这里就会暴露出来 —— 明文 HTTP 打到 TLS 端口，上游会回 501。
+    """
+    try:
+        if is_https(UP):
+            ctx = ssl.create_default_context()
+            if INSECURE:
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+            conn = HTTPSConnection(UP.host, UP.port, timeout=6, context=ctx)
+        else:
+            conn = HTTPConnection(UP.host, UP.port, timeout=6)
+        conn.request('GET', (UP.base_path or '') + '/api/health')
+        resp = conn.getresponse()
+        body = resp.read(200)
+        conn.close()
+        return resp.status, body.decode('utf-8', 'replace')
+    except Exception as e:
+        return None, '%s: %s' % (type(e).__name__, e)
+
+
+def is_https(target):
+    """是不是 https 上游。
+
+    注意：Target.scheme 存的是 'https'（不带冒号）——
+    之前写错过成 'https:'，导致校验请求走了明文 HTTP 打到 TLS 端口，
+    隧道回 501，于是「学生一连上投屏就被踢」。统一用这个函数，别再手写字符串。
+    """
+    return (target.scheme or '').lower() in ('https', 'https:', 'wss')
+
+
 # 不分流：所有请求都转给公网上游（课堂系统只部署在公网）
 
 
@@ -1071,25 +1105,34 @@ def verify_student(token):
     也要过一道身份校验（一次小请求，只在连接时做一次）。
     """
     try:
-        conn = HTTPConnection(UP.host, UP.port, timeout=5)
-        if UP.scheme == 'https:':
+        if is_https(UP):
             ctx = ssl.create_default_context()
             if INSECURE:
                 ctx.check_hostname = False
                 ctx.verify_mode = ssl.CERT_NONE
             conn = HTTPSConnection(UP.host, UP.port, timeout=5, context=ctx)
+        else:
+            conn = HTTPConnection(UP.host, UP.port, timeout=5)
         conn.request('GET', '/api/me', headers={'Authorization': 'Bearer ' + token})
         resp = conn.getresponse()
         data = resp.read()
         conn.close()
         if resp.status != 200:
+            verbose('校验学生令牌：/api/me 返回 %d · %s' % (
+                resp.status, data[:160].decode('utf-8', 'replace').replace('\n', ' ')))
+            verbose('  校验用的上游：%s' % ('%s://%s:%s%s' % (
+                UP.scheme, UP.host, UP.port, UP.base_path)))
             return None
         j = json.loads(data.decode('utf-8'))
         if j.get('role') != 'student':
+            verbose('校验学生令牌：role=%r，不是学生' % j.get('role'))
             return None
         st = j.get('student') or {}
-        return '%s:%s' % (st.get('classId') or '', st.get('sid') or '')
-    except Exception:
+        ident = '%s:%s' % (st.get('classId') or '', st.get('sid') or '')
+        verbose('校验学生令牌通过：%s' % ident)
+        return ident
+    except Exception as e:
+        verbose('校验学生令牌失败：%s: %s' % (type(e).__name__, e))
         return None
 
 
@@ -1281,6 +1324,18 @@ FANOUT = CastFanout()
 
 class Server(ThreadingHTTPServer):
     daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        """浏览器自己把连接断了（刷新、切页、取消）不是错误，别刷 traceback。"""
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionAbortedError, ConnectionResetError, BrokenPipeError, socket.timeout)):
+            verbose('客户端断开：%s（%s）' % (client_address, type(exc).__name__))
+            return
+        if isinstance(exc, OSError) and getattr(exc, 'winerror', None) in (10053, 10054):
+            verbose('客户端断开：%s（WinError %s）' % (client_address, exc.winerror))
+            return
+        super(Server, self).handle_error(request, client_address)
+    daemon_threads = True
     allow_reuse_address = True
 
 
@@ -1317,6 +1372,15 @@ def print_banner():
             fmt_bytes(CACHE_MAX_BYTES), fmt_ttl(TTL_ASSETS), fmt_ttl(TTL_STATIC), fmt_ttl(TTL_CONTENT)))
     else:
         print('  缓存：关（cache.enabled = no）')
+    # 上游自检：顺带验证 https 分支没写错（明文打到 TLS 端口会被回 501）
+    _st, _body = probe_upstream()
+    if _st == 200:
+        print('  上游自检：OK（/api/health 返回 200）')
+    else:
+        print('  上游自检：不通 → %s' % (_body or _st))
+        print('    · 看看 target 的地址与端口对不对')
+        print('    · 上游是 https 且用自签证书时，配置里加 tls.insecure = yes')
+        print('    · 隧道 / 防火墙也可能挡住')
     print('  自检：%s:%d/__proxy_health' % ('127.0.0.1' if LISTEN_HOST == '0.0.0.0' else LISTEN_HOST, LISTEN_PORT))
     try:
         host_name = socket.gethostname()
