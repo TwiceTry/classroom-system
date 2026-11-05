@@ -1,0 +1,566 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+教学机代理 · 自检脚本（只用标准库，Win7 的内嵌 Python 3.8 能跑）
+
+用法（在 教学机代理\\ 目录下）：
+    runtime\\python\\python.exe 自检.py                      # 测默认端口 18799
+    runtime\\python\\python.exe 自检.py --port 18799
+    runtime\\python\\python.exe 自检.py --target https://你的公网地址:45600
+    runtime\\python\\python.exe 自检.py --n 40                # 并发学生数（默认 10）
+    runtime\\python\\python.exe 自检.py --only cache,cast    # 只跑某几项
+    runtime\\python\\python.exe 自检.py --list               # 列出所有检查项
+
+检查项：
+    proxy      代理自检页（监听地址、上游、缓存配置）
+    upstream   上游公网能不能通（/api/health）
+    cache      缓存：第一次 MISS、第二次 HIT（毫秒级）
+    cast       投屏帧经代理转发，字节一字节不差（sha256 对比）
+    presence   在场通道扇出：本地名单人数 = 教师端看到的在线人数
+    load       N 个学生同时开页：成功率、延迟 P50/P90
+
+不需要 node、不需要 npm、不需要外网。
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import socket
+import ssl
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+OK = '✓'
+NG = '✗'
+
+
+# ---------------------------------------------------------------- 小工具
+def http(url, method='GET', body=None, headers=None, timeout=20):
+    """返回 (状态码, 字节内容, 耗时毫秒)"""
+    data = None
+    hdrs = dict(headers or {})
+    if body is not None:
+        data = json.dumps(body).encode('utf-8')
+        hdrs.setdefault('Content-Type', 'application/json')
+    req = urllib.request.Request(url, data=data, headers=hdrs, method=method)
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            buf = r.read()
+            return r.status, buf, int((time.time() - t0) * 1000)
+    except urllib.error.HTTPError as e:
+        buf = e.read()
+        return e.code, buf, int((time.time() - t0) * 1000)
+    except Exception as e:
+        return 0, str(e).encode('utf-8'), int((time.time() - t0) * 1000)
+
+
+def read_conf(path):
+    conf = {}
+    try:
+        with open(path, 'rb') as f:
+            raw = f.read().decode('utf-8-sig', 'replace')
+    except Exception:
+        return conf
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line[0] in '#;':
+            continue
+        if '=' not in line:
+            continue
+        k, v = line.split('=', 1)
+        conf[k.strip().lower()] = v.strip()
+    return conf
+
+
+class Ws(object):
+    """最小 WebSocket 客户端（只够测投屏与在场）"""
+
+    def __init__(self, host, port, path, timeout=20):
+        self.host, self.port, self.path = host, port, path
+        self.sock = None
+        self.buf = b''
+        self.texts = []
+        self.bins = []
+        self.status = ''
+        self._lock = threading.Lock()
+        self._ready = threading.Event()
+        self._stop = False
+        self._timeout = timeout
+        self._open()
+
+    def _open(self):
+        self.sock = socket.create_connection((self.host, self.port), timeout=self._timeout)
+        key = 'dGhlIHNhbXBsZSBub25jZQ=='
+        self.sock.sendall((
+            'GET %s HTTP/1.1\r\nHost: %s:%d\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
+            'Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n'
+        ) % (self.path, self.host, self.port, key).encode('latin1'))
+        self._t = threading.Thread(target=self._read)
+        self._t.daemon = True
+        self._t.start()
+        if not self._ready.wait(self._timeout):
+            raise RuntimeError('WebSocket 握手超时')
+
+    def _read(self):
+        try:
+            while not self._stop:
+                d = self.sock.recv(65536)
+                if not d:
+                    break
+                self.buf += d
+                self._parse()
+        except Exception:
+            pass
+
+    def _parse(self):
+        while len(self.buf) >= 2:
+            b0, b1 = self.buf[0], self.buf[1]
+            op = b0 & 0x0f
+            ln = b1 & 0x7f
+            off = 2
+            if ln == 126:
+                if len(self.buf) < 4:
+                    return
+                ln = int.from_bytes(self.buf[2:4], 'big')
+                off = 4
+            elif ln == 127:
+                if len(self.buf) < 10:
+                    return
+                ln = int.from_bytes(self.buf[2:10], 'big')
+                off = 10
+            if len(self.buf) < off + ln:
+                return
+            payload = self.buf[off:off + ln]
+            self.buf = self.buf[off + ln:]
+            with self._lock:
+                if op == 1:
+                    self.texts.append(payload.decode('utf-8', 'replace'))
+                elif op == 2:
+                    self.bins.append(payload)
+
+    def send(self, data, binary=False):
+        payload = data if isinstance(data, bytes) else str(data).encode('utf-8')
+        ln = len(payload)
+        head = bytearray([0x82 if binary else 0x81])
+        if ln < 126:
+            head.append(0x80 | ln)
+        elif ln < 65536:
+            head.append(0x80 | 126)
+            head += ln.to_bytes(2, 'big')
+        else:
+            head.append(0x80 | 127)
+            head += ln.to_bytes(8, 'big')
+        mask = os.urandom(4)
+        head += mask
+        masked = bytearray(payload)
+        for i in range(ln):
+            masked[i] ^= mask[i % 4]
+        self.sock.sendall(bytes(head) + bytes(masked))
+
+    def send_json(self, obj):
+        self.send(json.dumps(obj, ensure_ascii=False))
+
+    def wait_text(self, want_key=None, timeout=8.0):
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            with self._lock:
+                for t in self.texts:
+                    try:
+                        j = json.loads(t)
+                    except Exception:
+                        continue
+                    if want_key is None or want_key in j:
+                        return j
+            time.sleep(0.1)
+        return None
+
+    def wait_bin(self, timeout=8.0):
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            with self._lock:
+                if self.bins:
+                    return self.bins[0]
+            time.sleep(0.05)
+        return None
+
+    def close(self):
+        self._stop = True
+        try:
+            self.sock.close()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------- 检查项
+class Check(object):
+    def __init__(self, name, title):
+        self.name = name
+        self.title = title
+        self.lines = []
+        self.passed = None
+        self.hint = ''
+
+    def say(self, text):
+        self.lines.append(text)
+
+    def ok(self, text):
+        self.lines.append('    ' + OK + ' ' + text)
+
+    def bad(self, text):
+        self.lines.append('    ' + NG + ' ' + text)
+
+    def note(self, text):
+        self.lines.append('    · ' + text)
+
+    def done(self, passed, hint=''):
+        self.passed = passed
+        self.hint = hint
+        return passed
+
+
+def c_proxy(cfg, args):
+    c = Check('proxy', '代理自检页')
+    st, buf, ms = http(cfg['base'] + '/__proxy_health')
+    if st != 200:
+        return c.done(False, '代理没起来？确认 启动代理.bat 的窗口还开着、端口对不对')
+    try:
+        j = json.loads(buf.decode('utf-8'))
+    except Exception:
+        return c.done(False, '自检页返回的不是 JSON')
+    c.ok('监听：%s' % j.get('listen'))
+    c.ok('上游：%s' % j.get('target'))
+    if j.get('localAvailable') is False:
+        c.note('本机没有课堂系统（正常，课堂系统只部署在公网）')
+    pool = j.get('upstreamPool')
+    if pool:
+        c.ok('上游连接池：%s 条（空闲 %s）' % (pool.get('max'), pool.get('size')))
+    c.say('  （耗时 %d ms）' % ms)
+    return c.done(True)
+
+
+def c_upstream(cfg, args):
+    c = Check('upstream', '上游公网连通')
+    st, buf, ms = http(cfg['base'] + '/api/health', timeout=25)
+    if st == 200:
+        try:
+            j = json.loads(buf.decode('utf-8'))
+            c.ok('/api/health 200 · %s · uptime %s 秒' % (j.get('node'), j.get('uptimeSec')))
+        except Exception:
+            c.ok('/api/health 200')
+        c.say('  （耗时 %d ms）' % ms)
+        return c.done(True)
+    c.bad('/api/health 返回 %s' % (st or buf[:60]))
+    c.note('代理能通但上游不通：检查 target 地址/端口、隧道有没有掉线、证书（tls.insecure = yes）')
+    return c.done(False, '上游不通 —— 先看 target 对不对')
+
+
+def c_cache(cfg, args):
+    c = Check('cache', '缓存：第一次 MISS、第二次 HIT')
+    path = '/examples/vue3-sfc-loader.js'
+    st1, b1, ms1 = http(cfg['base'] + path, timeout=60)
+    if st1 != 200:
+        return c.done(False, '这个文件没取到（上游有问题？）')
+    st2, b2, ms2 = http(cfg['base'] + path, timeout=60)
+    x1 = 'MISS' if b'X-Cache: MISS' in b1 else ('HIT' if b'X-Cache: HIT' in b1 else '?')
+    x2 = 'MISS' if b'X-Cache: MISS' in b2 else ('HIT' if b'X-Cache: HIT' in b2 else '?')
+    c.ok('%s → %s · %.1f KB · %d ms' % (path, x1, len(b1) / 1024.0, ms1))
+    c.ok('%s → %s · %.1f KB · %d ms' % (path, x2, len(b2) / 1024.0, ms2))
+    same = hashlib.sha256(b1).hexdigest() == hashlib.sha256(b2).hexdigest()
+    if not same:
+        c.bad('两次取到的内容不一样！')
+        return c.done(False, '缓存内容不一致，缓存坏了')
+    if x2 == 'HIT' and ms2 < 200:
+        c.ok('命中很快（%d ms）—— 第二个学生不出公网' % ms2)
+        return c.done(True)
+    if x2 == 'HIT':
+        c.note('命中了但还是 %d ms —— 检查缓存是不是命中在内存里（本地磁盘快是正常的）' % ms2)
+        return c.done(True)
+    c.bad('第二次不是 HIT —— 缓存没生效')
+    c.note('检查 proxy.conf 里 cache.enabled = yes')
+    return c.done(False, '缓存没生效')
+
+
+def c_cast(cfg, args):
+    c = Check('cast', '投屏帧经代理转发（字节无损）')
+    teacher = args.teacher_token
+    student = args.student_token
+    if not teacher or not student:
+        c.bad('拿不到令牌（教师/学生登录失败）')
+        return c.done(False, '登录失败：检查 --password 与 --sid/--name')
+    ctl = None
+    watcher = None
+    try:
+        watcher = Ws(cfg['host'], cfg['port'], '/ws?role=student')
+        watcher.send_json({'t': 'hello', 'token': student})
+        ctl = Ws(cfg['host'], cfg['port'], '/ws?role=ctl')
+        ctl.send_json({'t': 'hello', 'token': teacher, 'cid': 'web-front-dev'})
+        peers = ctl.wait_text('students', 8)
+        c.ok('教师端连上，服务器说 %s 人在看' % (peers.get('students') if peers else '?'))
+
+        payload = os.urandom(64 * 1024)
+        frame = bytearray(16 + len(payload))
+        frame[0] = 1
+        frame[1] = 0
+        frame[2:4] = (1).to_bytes(2, 'little')
+        frame[4:6] = (1280).to_bytes(2, 'little')
+        frame[6:8] = (720).to_bytes(2, 'little')
+        frame[8:10] = (0).to_bytes(2, 'little')
+        frame[10:12] = (0).to_bytes(2, 'little')
+        frame[12:16] = (0).to_bytes(4, 'little')
+        frame[16:] = payload
+        ctl.send(bytes(frame), binary=True)
+
+        got = watcher.wait_bin(12)
+        if not got:
+            c.bad('学生端没收到帧')
+            c.note('看代理窗口的日志；确认教师端真的在投屏（帧是从教师端来的）')
+            return c.done(False, '投屏帧没到学生端')
+        h1 = hashlib.sha256(bytes(frame)).hexdigest()
+        h2 = hashlib.sha256(got).hexdigest()
+        c.ok('发出 %d 字节 · 收到 %d 字节' % (len(frame), len(got)))
+        if h1 == h2:
+            c.ok('sha256 一致 → 字节一字节不差')
+            return c.done(True)
+        c.bad('sha256 不一致 → 转发把内容弄坏了')
+        return c.done(False, '投屏帧字节不一致')
+    except Exception as e:
+        c.bad('异常：%s' % e)
+        return c.done(False, 'WebSocket 连接失败')
+    finally:
+        for w in (ctl, watcher):
+            if w:
+                w.close()
+
+
+def c_presence(cfg, args):
+    c = Check('presence', '在场通道扇出 + 本地名单')
+    socks = []
+    try:
+        # 1) 三个学生连到场通道
+        for i in range(3):
+            w = Ws(cfg['host'], cfg['port'], '/ws?role=presence')
+            socks.append(w)
+            w.send_json({'t': 'auth', 'token': args.students[i]})
+            time.sleep(0.4)
+        c.ok('3 个学生连上 /ws?role=presence')
+
+        time.sleep(1.2)
+        st, buf, _ = http(cfg['base'] + '/__proxy_stats')
+        try:
+            j = json.loads(buf.decode('utf-8'))
+        except Exception:
+            j = {}
+        pr = j.get('presence') or {}
+        if pr:
+            c.ok('代理：本地 %d 条连接 → 上游 %d 条（扇出省了 %d 条）'
+                 % (pr.get('local', 0), 1 if pr.get('up') else 0, max(0, pr.get('local', 0) - 1)))
+        loc = j.get('localOnline') or {}
+        local_n = sum(loc.values())
+        c.ok('代理本地名单：%d 人（按班：%s）' % (local_n, json.dumps(loc, ensure_ascii=False)))
+
+        # 2) 教师端查在线名单
+        st, buf, _ = http(cfg['base'] + '/api/teacher/classes',
+                          headers={'Authorization': 'Bearer ' + args.teacher_token})
+        if st != 200:
+            c.bad('教师端拿不到班级列表（%s）' % st)
+            return c.done(False, '教师令牌不对？')
+        classes = (json.loads(buf.decode('utf-8')) or {}).get('classes') or []
+        if not classes:
+            c.bad('没有班级')
+            return c.done(False, '没有班级数据')
+        cid = classes[0]['id']
+        st, buf, _ = http(cfg['base'] + '/api/teacher/classes/%s/presence' % cid,
+                          headers={'Authorization': 'Bearer ' + args.teacher_token})
+        if st != 200:
+            c.bad('拿不到在场名单（%s）' % st)
+            return c.done(False, '教师端接口不对')
+        p = json.loads(buf.decode('utf-8'))
+        c.ok('教师端看到：在线 %d 人 · 在看投屏 %d 人 · 全班 %d 人'
+             % (p.get('onlineCount', 0), p.get('castingCount', 0), p.get('total', 0)))
+        if p.get('onlineCount', 0) >= 3:
+            c.ok('名单正确（代理按本地名单改写了）')
+            return c.done(True)
+        c.bad('教师端只看到 %d 人 —— 名单改写没生效' % p.get('onlineCount', 0))
+        c.note('检查 presence.fanout = yes；或看代理统计里的 localOnline')
+        return c.done(False, '在场名单不对')
+    except Exception as e:
+        c.bad('异常：%s' % e)
+        return c.done(False)
+    finally:
+        for w in socks:
+            w.close()
+
+
+def c_load(cfg, args):
+    c = Check('load', '%d 个学生同时开页' % args.n)
+    st, buf, _ = http(cfg['base'] + '/', timeout=20)
+    html = buf.decode('utf-8', 'replace') if st == 200 else ''
+    import re
+    m = re.search(r'src="(/assets/[^"]+\.js)"', html)
+    js = m.group(1) if m else ''
+    m2 = re.search(r'href="(/assets/[^"]+\.css)"', html)
+    css = m2.group(1) if m2 else ''
+    paths = ['/student/materials', '/api/public/course']
+    if js:
+        paths.append(js)
+    if css:
+        paths.append(css)
+    paths.append('/examples/vue3-sfc-loader.js')
+
+    results = []
+    lock = threading.Lock()
+
+    def one(i):
+        got = []
+        for p in paths:
+            st, b, ms = http(cfg['base'] + p, timeout=90)
+            got.append((p, st, len(b), ms))
+        with lock:
+            results.append(got)
+
+    t0 = time.time()
+    ths = [threading.Thread(target=one, args=(i,)) for i in range(args.n)]
+    for t in ths:
+        t.start()
+    for t in ths:
+        t.join()
+    wall = time.time() - t0
+
+    bad = []
+    times = []
+    total = 0
+    for got in results:
+        for p, st, ln, ms in got:
+            times.append(ms)
+            total += ln
+            if st != 200:
+                bad.append('%s → %s' % (p, st or 'ERR'))
+    times.sort()
+    p50 = times[len(times) // 2] if times else 0
+    p90 = times[int(len(times) * 0.9)] if times else 0
+    c.ok('%d 个学生 × %d 个请求 = %d 个' % (args.n, len(paths), len(results) * len(paths)))
+    c.ok('全部完成 %.1f 秒 · 延迟 P50 %d ms · P90 %d ms · 最大 %d ms'
+         % (wall, p50, p90, times[-1] if times else 0))
+    c.ok('浏览器侧共收到 %.1f MB' % (total / 1048576.0))
+    if not bad:
+        c.ok('没有一个请求失败')
+        return c.done(True)
+    c.bad('%d 个请求失败：%s' % (len(bad), bad[:4]))
+    c.note('失败多是上游连接被踢（弱网）或缓存没命中；看代理窗口的日志')
+    return c.done(False, '%d 个请求失败' % len(bad))
+
+
+CHECKS = [
+    ('proxy', '代理自检页', c_proxy),
+    ('upstream', '上游公网连通', c_upstream),
+    ('cache', '缓存 MISS→HIT', c_cache),
+    ('cast', '投屏帧字节无损', c_cast),
+    ('presence', '在场扇出与名单', c_presence),
+    ('load', '并发开页', c_load),
+]
+
+
+def login(base, password, sid, name, course):
+    """拿教师令牌与学生令牌"""
+    teacher = ''
+    st, buf, _ = http(base + '/api/login/teacher', 'POST', {'password': password})
+    if st == 200:
+        teacher = (json.loads(buf.decode('utf-8')) or {}).get('token') or ''
+    students = []
+    for s, n in [(sid, name)]:
+        st, buf, _ = http(base + '/api/login/student', 'POST',
+                          {'sid': s, 'name': n, 'courseId': course})
+        if st == 200:
+            students.append((json.loads(buf.decode('utf-8')) or {}).get('token') or '')
+        else:
+            students.append('')
+    return teacher, students
+
+
+def main():
+    ap = argparse.ArgumentParser(description='教学机代理自检（只用标准库）')
+    ap.add_argument('--port', type=int, default=None, help='代理端口（默认读 proxy.conf）')
+    ap.add_argument('--host', default='127.0.0.1', help='代理所在机器（默认本机）')
+    ap.add_argument('--target', default='', help='公网上游地址（默认读 proxy.conf 的 target）')
+    ap.add_argument('--n', type=int, default=10, help='并发学生数（默认 10）')
+    ap.add_argument('--password', default='teacher', help='教师口令（默认 teacher）')
+    ap.add_argument('--sid', default='2515230114', help='学生学号（默认取名单里第一个）')
+    ap.add_argument('--name', default='马婷婷', help='学生姓名')
+    ap.add_argument('--course', default='web-front-dev', help='课程 id')
+    ap.add_argument('--only', default='', help='只跑某几项，逗号分隔')
+    ap.add_argument('--list', action='store_true', help='列出所有检查项')
+    args = ap.parse_args()
+
+    if args.list:
+        print('可用检查项：')
+        for name, title, _ in CHECKS:
+            print('  %-10s %s' % (name, title))
+        return 0
+
+    conf = read_conf(os.path.join(HERE, 'proxy.conf'))
+    port = args.port or int(conf.get('listen.port', '18799'))
+    target = args.target or conf.get('target', '')
+    cfg = {'host': args.host, 'port': port, 'base': 'http://%s:%d' % (args.host, port),
+           'target': target}
+
+    print('=' * 62)
+    print('  教学机代理自检')
+    print('  代理：%s   上游：%s' % (cfg['base'], target or '(没读到)'))
+    print('=' * 62)
+
+    # 令牌（通过代理拿，这样测的是「学生看到的」那条路）
+    teacher, students = login(cfg['base'], args.password, args.sid, args.name, args.course)
+    args.teacher_token = teacher
+    args.student_token = students[0] if students else ''
+    args.students = students + [''] * 5
+    if not teacher:
+        print('  ! 教师登录失败（口令不对？后面几项会跳过）')
+
+    only = [x.strip() for x in args.only.split(',') if x.strip()]
+    failed = []
+    for name, title, fn in CHECKS:
+        if only and name not in only:
+            continue
+        c = Check(name, title)
+        try:
+            fn(cfg, args)
+        except Exception as e:
+            c.bad('异常：%s: %s' % (type(e).__name__, e))
+            c.passed = False
+            c.hint = c.hint or '脚本异常'
+        print('')
+        print('[%s] %s' % (OK if c.passed else NG, title))
+        for l in c.lines:
+            print(l)
+        if not c.passed:
+            failed.append((title, c.hint))
+
+    print('')
+    print('=' * 62)
+    if failed:
+        print('  有 %d 项没通过：' % len(failed))
+        for t, h in failed:
+            print('    · %s —— %s' % (t, h or '看上面的数字'))
+    else:
+        print('  全部通过 ✓')
+    print('=' * 62)
+    return 1 if failed else 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print('\n（中断）')
+        sys.exit(130)
