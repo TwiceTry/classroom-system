@@ -203,15 +203,101 @@ class CsvTable {
     this.load()
   }
 
+  /**
+   * 表头第一列必须是我这张表的第一列。
+   *
+   * 用来分辨「文件是空的/截断的」和「文件其实是别的表 / 编码变了」：
+   * 最常见的坏法是老师用 Excel 或记事本打开 csv 再保存，
+   * 编码从 UTF-8 变成 GBK/UTF-16 —— 解析不报错，但表头全是乱码，
+   * 于是每一列都取不到值、整张表「看起来空了」。那种情况绝不能静默吞掉。
+   */
+  looksLikeMine(headerCells) {
+    const keys = new Set(this.columns.map((c) => c.key))
+    const cells = (headerCells || [])
+      .map((h) => String(h).replace(/^\uFEFF/, '').trim())
+      .filter((h) => h !== '')
+    if (!cells.length) return false
+    // 第一列必须对得上（列顺序是本系统写的，不会变）
+    const first = this.columns[0] && this.columns[0].key
+    if (first && cells[0] !== first) return false
+    // 而且**每个表头都必须是本表的列名**：
+    //   编码变了（GBK/UTF-16）→ 全是乱码，一个都对不上
+    //   写到一半被截断 → 末尾是半个列名，对不上
+    //   被别的表覆盖了 → 列名是别人的，对不上
+    for (const h of cells) if (!keys.has(h)) return false
+    return true
+  }
+
+  /** 读文本；文件不存在返回 null（真出错也返回 null，但要留一行日志） */
+  readTextOrNull(file) {
+    try {
+      return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null
+    } catch (e) {
+      console.error('[csv] 读不出来：' + file + ' · ' + e.message)
+      return null
+    }
+  }
+
+  /** 文本 → 网格；「不像这张表」一律返回 null（调用方据此决定留证 / 恢复） */
+  gridOf(text) {
+    if (text == null) return null
+    if (!text.trim()) return { text, grid: [] } // 空文件 = 空表，正常
+    let g = null
+    try {
+      g = parse(text)
+    } catch (e) {
+      g = null
+    }
+    if (!g || !g.length || !this.looksLikeMine(g[0])) return null
+    return { text, grid: g }
+  }
+
   load() {
-    if (!fs.existsSync(this.file)) {
+    const tmpFile = this.file + '.tmp'
+    const mainText = this.readTextOrNull(this.file)
+
+    // 上一次写入被打断时，.tmp 会留下来（正常流程里它写完就被改名成主文件了）。
+    // 那种情况下 .tmp 可能是「完整的新版」，而主文件是「旧版」或「写到一半的」——
+    // 两个都解析，挑更完整的那个。
+    let main = this.gridOf(mainText)
+    const tmp = this.gridOf(this.readTextOrNull(tmpFile))
+    if (tmp && (!main || tmp.grid.length > main.grid.length)) {
+      console.error('[csv] 上次写入没走完，改用 .tmp 恢复：' + tmpFile)
+      main = tmp
+      try {
+        fs.renameSync(tmpFile, this.file)
+      } catch (e) {
+        /* 改不动也无所谓：内容已经在内存里了 */
+      }
+    } else if (fs.existsSync(tmpFile)) {
+      // .tmp 没比主文件好（说明主文件是完整的）→ 清掉这个垃圾，别留着让人误会
+      try {
+        fs.unlinkSync(tmpFile)
+      } catch (e) {
+        /* ignore */
+      }
+    }
+
+    if (!main) {
+      // 主文件在、但内容不是这张表（编码变成了 GBK/UTF-16、写到一半被截断、
+      // 或者被别的文件覆盖了）。**不能静默当空表** —— 那等于数据无声消失。
+      if (mainText && mainText.trim()) {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+        const bad = this.file + '.broken-' + stamp
+        try {
+          fs.renameSync(this.file, bad)
+          console.error('[csv] 内容不像这张表，已改名留证：' + bad)
+        } catch (e) {
+          console.error('[csv] 内容不像这张表，改名失败：' + this.file + ' · ' + e.message)
+        }
+      }
       this.rows = []
-      this.loadedText = this.serialize()
+      this.loadedText = ''
       return
     }
-    const text = fs.readFileSync(this.file, 'utf8')
-    this.loadedText = text
-    const grid = parse(text)
+
+    this.loadedText = main.text
+    const grid = main.grid
     if (!grid.length) {
       this.rows = []
       return
@@ -250,14 +336,33 @@ class CsvTable {
     return stringifyGrid(lines)
   }
 
-  /** 写入磁盘：内容没变就不碰文件（避免无意义的 mtime 变化和 diff） */
+  /**
+   * 写入磁盘：内容没变就不碰文件（避免无意义的 mtime 变化和 diff）。
+   *
+   * 原子替换的完整动作是三步，缺一步都不算安全：
+   *   1) 写临时文件
+   *   2) **fsync** —— 让内容真的落到盘上（只 write 的话，
+   *      断电时可能「rename 成功了、内容还在系统缓存里」→ 得到一个空文件）
+   *   3) rename 覆盖主文件 —— 同一磁盘上的改名是原子的，
+   *      所以任何时刻读到的都是「完整的旧版」或「完整的新版」，不会是半截
+   */
   save() {
     const text = this.serialize()
     if (text === this.loadedText) return false
     const dir = path.dirname(this.file)
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
     const tmp = this.file + '.tmp'
-    fs.writeFileSync(tmp, text, 'utf8')
+    const fd = fs.openSync(tmp, 'w')
+    try {
+      fs.writeFileSync(fd, text, 'utf8')
+      try {
+        fs.fsyncSync(fd)
+      } catch (e) {
+        /* 某些文件系统（网络盘/虚拟盘）不支持 fsync，忽略 */
+      }
+    } finally {
+      fs.closeSync(fd)
+    }
     fs.renameSync(tmp, this.file)
     this.loadedText = text
     return true

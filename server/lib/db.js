@@ -707,8 +707,9 @@ function createDb(dataDir) {
   // 首次运行时把四个文件的表头写出来，方便直接 git add
   for (const key of Object.keys(t)) {
     if (!fs.existsSync(files[key])) {
-      fs.writeFileSync(files[key], t[key].serialize(), 'utf8')
-      t[key].loadedText = t[key].serialize()
+      // 走 CsvTable.save()（tmp + fsync + rename 原子写），别直接 writeFileSync 覆盖
+      t[key].loadedText = '' // 清掉「内容没变就不写」的判定，强制落一份表头
+      t[key].save()
     }
   }
 
