@@ -184,8 +184,8 @@ FANOUT_ENABLED = as_bool(conf_get('cast.fanout'), True) and '--no-fanout' not in
 # 浏览器每次都重下 —— 打开一次代码练习页就是 2.5MB（vue.global.js + sfc-loader）。
 # 代理在教学机上把公开的静态资源缓存下来：第一个学生出公网，后面都本地命中。
 CACHE_ENABLED = as_bool(conf_get('cache.enabled'), True)
-CACHE_MAX_BYTES = int(float(conf_get('cache.maxbytes', str(64 * 1024 * 1024))))
-CACHE_MAX_ENTRIES = int(conf_get('cache.maxentries', '500'))
+CACHE_MAX_BYTES = int(float(conf_get('cache.maxbytes', str(256 * 1024 * 1024))))
+CACHE_MAX_ENTRIES = int(conf_get('cache.maxentries', '2000'))
 TTL_ASSETS = int(float(conf_get('cache.ttl.assets', str(365 * 24 * 3600))))
 TTL_STATIC = int(float(conf_get('cache.ttl.static', str(24 * 3600))))
 TTL_CONTENT = int(float(conf_get('cache.ttl.content', '60')))
