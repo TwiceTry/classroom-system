@@ -1023,6 +1023,32 @@ async function testCast(ctx) {
       !two.some((x) => casting3.includes(x.sid)),
       'casting=' + casting3.join(','))
   }
+
+  // 边缘端快照：代理把本地 N 个学生的状态打包成**一次**请求发上来，
+  // 服务端按**令牌**认人（客户端说了不算）—— 这样既省流又伪造不了。
+  {
+    const cls1 = await request('GET', '/api/teacher/classes', undefined, teaToken)
+    const c1 = cls1.json.classes[0]
+    const one = c1.students[0]
+    const snap = await request('POST', '/api/presence/snapshot', {
+      source: 'selftest-edge',
+      students: [{ token: stuToken, online: true, casting: true }],
+    }, teaToken)
+    check('edge snapshot: accepted', !!(snap.json && snap.json.ok),
+      'online=' + (snap.json && snap.json.online) + ' casting=' + (snap.json && snap.json.casting))
+    await sleep(300)
+    const pres5 = await request('GET', '/api/teacher/classes/' + c1.id + '/presence', undefined, teaToken)
+    check('edge snapshot: teacher sees the online student',
+      (pres5.json.online || []).length >= 1,
+      'online=' + pres5.json.onlineCount + ' casting=' + pres5.json.castingCount)
+    // 令牌不对的条目要被忽略（伪造不了）
+    const bad = await request('POST', '/api/presence/snapshot', {
+      source: 'selftest-edge-bad',
+      students: [{ token: 'not-a-real-token', online: true, casting: true }],
+    }, teaToken)
+    check('edge snapshot: forged token ignored', bad.json.online === 0,
+      'online=' + bad.json.online)
+  }
 }
   // 差量模式下，一帧「整屏」就是学生的基准画面（差量块画在它上面）。
   // 慢链路（公网隧道）上整屏帧大、差量帧小 —— 背压若一视同仁地覆盖，

@@ -162,6 +162,10 @@ BIND_SOURCE = str(conf_get('bind.source', '') or '').strip()
 # （随身 WiFi 上一次握手要 600ms，40 个学生同时开页就是 40 次握手，
 #   手机热点的并发连接数直接被打爆 → 连接被踢、页面转圈）
 POOL_MAX = int(conf_get('upstream.pool', '8'))
+# 边缘端：本地状态聚合成快照上云的周期（秒）。
+# 40 个学生 ≈ 10KB / 周期 —— 比每人一条长连接省流得多。
+EDGE_SNAPSHOT_INTERVAL = int(float(conf_get('edge.snapshot.interval', '5')))
+EDGE_SNAPSHOT = as_bool(conf_get('edge.snapshot'), True)
 # 池里连接最多留多久（秒）。必须小于服务端的 keepAliveTimeout（Node 默认 5 秒），
 # 否则复用到已被对端关掉的连接 → 转发失败 → 学生看到 502。
 POOL_IDLE = int(float(conf_get('upstream.poolidle', '3')))
@@ -578,6 +582,119 @@ def fail_page(code, msg):
 
 
 
+class EdgeState(object):
+    """边缘端（代理）本地的实时状态：谁在场、谁在看投屏。
+
+    为什么不逐条连到云端：40 个学生 = 80 条长连接（到场 + 看投屏），
+    弱网（随身 WiFi）扛不住，公网下行也被撑爆。
+
+    这里的做法：本地只连学生（局域网，不出公网），
+    状态**聚合成一个快照**定期上报 —— 一个请求带 N 个人的状态。
+
+    身份以令牌为准：上报时每个条目带**学生令牌**，服务端逐个验，
+    班级/学号/姓名全由服务端从令牌解出来 —— 冒名顶替不了。
+    """
+
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.students = {}   # sid -> {'token','classId','name','online','casting'}
+        self.mode = 'idle'   # 投屏状态（老师开播/停播）
+
+    def mark(self, ident, online=None, casting=None):
+        sid = ident.get('sid')
+        if not sid:
+            return None
+        with self.lock:
+            rec = self.students.get(sid)
+            if not rec:
+                rec = {'token': ident.get('token') or '', 'classId': ident.get('classId') or '',
+                       'name': ident.get('name') or '', 'online': False, 'casting': False}
+                self.students[sid] = rec
+            if ident.get('token'):
+                rec['token'] = ident['token']
+            if ident.get('name'):
+                rec['name'] = ident['name']
+            if online is not None:
+                rec['online'] = bool(online)
+            if casting is not None:
+                rec['casting'] = bool(casting)
+            return rec
+
+    def drop_flags(self, sid, online=None, casting=None):
+        """只清指定的标志（没指定的保持原样）。"""
+        with self.lock:
+            rec = self.students.get(sid)
+            if not rec:
+                return
+            if online is not None:
+                rec['online'] = bool(online)
+            if casting is not None:
+                rec['casting'] = bool(casting)
+
+    def snapshot(self):
+        """打包一份快照：谁在线、谁在看投屏（带各自的令牌）。"""
+        with self.lock:
+            return [
+                {'token': r['token'], 'online': r['online'], 'casting': r['casting']}
+                for r in self.students.values()
+                if r['token'] and (r['online'] or r['casting'])
+            ]
+
+    def stats(self):
+        with self.lock:
+            return {
+                'known': len(self.students),
+                'online': sum(1 for r in self.students.values() if r['online']),
+                'casting': sum(1 for r in self.students.values() if r['casting']),
+                'mode': self.mode,
+            }
+
+
+EDGE = EdgeState()
+# 本地「到场通道」的连接（代理要在投屏状态变化时告诉它们）
+EDGE_PRESENCE_WS = []
+
+
+def edge_report():
+    """把本地状态聚合成一个快照上报云端（一个请求带 N 个人 → 省流）。"""
+    entries = EDGE.snapshot()
+    if not entries:
+        return
+    body = json.dumps({'source': 'lan-proxy', 'students': entries}, ensure_ascii=False).encode('utf-8')
+    try:
+        raw_sock = connect_out(UP.host, UP.port, 10)
+        if is_https(UP):
+            ctx = make_tls_context()
+            conn = HTTPSConnection(UP.host, UP.port, timeout=10, context=ctx)
+            conn.sock = ctx.wrap_socket(raw_sock, server_hostname=UP.host)
+        else:
+            conn = HTTPConnection(UP.host, UP.port, timeout=10)
+            conn.sock = raw_sock
+        conn.auto_open = False
+        conn.request('POST', (UP.base_path or '') + '/api/presence/snapshot', body=body,
+                     headers={'Content-Type': 'application/json', 'Content-Length': str(len(body))})
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        verbose('快照已上报：%d 人（在线 %d · 看投屏 %d）' % (
+            len(entries), sum(1 for e in entries if e['online']),
+            sum(1 for e in entries if e['casting'])))
+    except Exception as e:
+        verbose('快照上报失败：%s: %s' % (type(e).__name__, e))
+
+
+def edge_loop():
+    """边缘端的上报循环：几秒一次快照。"""
+    while True:
+        time.sleep(max(2, EDGE_SNAPSHOT_INTERVAL))
+        if not EDGE_SNAPSHOT:
+            continue
+        try:
+            edge_report()
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------- HTTP
 class Handler(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
@@ -918,7 +1035,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---------- WebSocket / 投屏 ----------
     def handle_upgrade(self):
-        """投屏（ctl / student）走「扇出」，其余（presence 等）走原样转发。"""
+        """边缘端：投屏走扇出，到场通道本地处理，其余原样转发。"""
         role = ''
         try:
             from urllib.parse import urlsplit, parse_qs
@@ -929,7 +1046,79 @@ class Handler(BaseHTTPRequestHandler):
         if FANOUT_ENABLED and role in ('ctl', 'student'):
             self.handle_fanout(role)
             return
+        if EDGE_SNAPSHOT and role == 'presence':
+            self.handle_edge_presence()
+            return
         self.handle_upgrade_raw()
+
+    # ---------- 到场通道：边缘端本地处理（状态聚合成快照上云）----------
+    def handle_edge_presence(self):
+        """到场通道只在局域网里连着，**不往云端开连接**。
+
+        代理本地记下「谁在场」，几秒后聚合成一个快照上报云端。
+        云端因此不用为每个学生维持一条长连接（40 人 = 40 条 → 1 个请求/几秒）。
+        """
+        self.close_connection = True
+        try:
+            self.connection.settimeout(None)
+            self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except Exception:
+            pass
+        holder = {'ident': None}
+
+        def on_text(t):
+            try:
+                msg = json.loads(t)
+            except Exception:
+                msg = {}
+            if msg.get('t') != 'auth':
+                return
+            token = str(msg.get('token') or '')
+            ident = verify_student(token) if token else None
+            if not ident:
+                ws.send_text(json.dumps({'t': 'auth-fail'}, ensure_ascii=False))
+                ws.close()
+                return
+            ident = dict(ident)
+            ident['token'] = token
+            holder['ident'] = ident
+            EDGE.mark(ident, online=True)
+            verbose('本地在场：%s（%s）' % (ident.get('sid'), ident.get('name')))
+            # 学生端要收到这两条才认为「连上了」
+            ws.send_text(json.dumps({'t': 'auth-ok'}, ensure_ascii=False))
+            ws.send_text(json.dumps({'t': 'cast', 'mode': EDGE.mode}, ensure_ascii=False))
+
+        def on_close():
+            ident = holder.get('ident')
+            if ident:
+                EDGE.drop_flags(ident.get('sid'), online=False, casting=None)
+                verbose('本地：%s 离开了' % ident.get('sid'))
+
+        ws = WsConn(self.connection, mask_out=False, on_text=on_text, on_close=on_close,
+                    reader=self.read_client)
+        try:
+            key = self.headers.get('Sec-WebSocket-Key') or ''
+            accept = base64.b64encode(
+                hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode('latin1')).digest()
+            ).decode()
+            self.wfile.write(
+                ('HTTP/1.1 101 Switching Protocols\r\n'
+                 'Upgrade: websocket\r\n'
+                 'Connection: Upgrade\r\n'
+                 'Sec-WebSocket-Accept: %s\r\n\r\n' % accept).encode('latin1')
+            )
+            self.wfile.flush()
+        except Exception:
+            return
+        with EDGE.lock:
+            EDGE_PRESENCE_WS.append(ws)
+        ws.start()
+        try:
+            ws.wait()
+        finally:
+            with EDGE.lock:
+                if ws in EDGE_PRESENCE_WS:
+                    EDGE_PRESENCE_WS.remove(ws)
 
     # ---------- 原样转发（其它非投屏通道）----------
     def handle_upgrade_raw(self):
@@ -1421,8 +1610,8 @@ class CastFanout(object):
     def __init__(self):
         self.lock = threading.RLock()
         self.up_ctl = None       # 上游教师通道（1 条）
-        self.up_stus = {}        # sid -> {'ws': 上游连接, 'hello': 原始 hello}
-        self.main_stu = None     # 帧从这条连接走（其余的只用来登记「谁在看」）
+        self.up_stu = None       # 上游学生通道（**一条**：投屏帧的管道）
+        self.stu_hello = None    # 建这条管道用的 hello（第一个观看者的）
         self.local_ctl = []      # 本地教师端连接
         self.local_stu = []      # 本地学生端连接
         self.idents = {}         # id(conn) -> {'classId','sid','name','token'}（本地观看者）
@@ -1448,20 +1637,24 @@ class CastFanout(object):
             left = len(self.local_stu)
         verbose('本地投屏连接断开（剩余观看 %d）' % left)
         if ident:
-            self.drop_up_stu((ident.get('classId'), ident.get('sid')))
+            EDGE.drop_flags(ident.get('sid'), casting=False)
+            with self.lock:
+                still = any(v.get('casting') for v in EDGE.students.values())
+            if not still:
+                self.drop_up_stu(ident.get('sid'))
 
     # ---------- 上游学生连接（每个真实观看者一条）----------
 
-    def ensure_up_stu(self, key, hello_text):
-        """为这个学生建（或复用）一条上游 student 连接。
+    def ensure_up_stu(self, hello_text):
+        """上游只有**一条** student 连接（投屏帧的管道）。
 
-        各带各的令牌 → 服务端按令牌如实登记「谁在看投屏」，
-        它的行为与学生直连时完全一样（不需要服务端配合任何改动）。
+        公网下行因此只有 1 份（不管本地有多少人在看）。
+        「谁在看投屏」由代理本地记录 + 快照上报如实告诉云端。
         """
         with self.lock:
-            item = self.up_stus.get(key)
-            if item and not item['ws'].closed:
-                return item['ws']
+            if self.up_stu is not None and not self.up_stu.closed:
+                return self.up_stu
+            self.stu_hello = hello_text
         try:
             sock = open_upstream_ws('/ws?role=student')
         except Exception as e:
@@ -1469,31 +1662,23 @@ class CastFanout(object):
             return None
         ws = WsConn(sock, mask_out=True, on_bin=self.on_up_stu_bin, on_close=self.on_up_stu_closed)
         with self.lock:
-            self.up_stus[key] = {'ws': ws, 'hello': hello_text}
-            if self.main_stu is None:
-                self.main_stu = key      # 帧从第一条连接走
+            self.up_stu = ws
         ws.start()
-        ws.send_text(hello_text)          # 原样转发他自己的 hello（带他的令牌）
-        verbose('上游学生通道已建立（%s）· 现在共 %d 条' % (key[1], len(self.up_stus)))
+        verbose('上游学生通道已建立（投屏帧的管道，公网下行 1 份）')
+        # 必须打招呼：服务器要认了这条连接才会把投屏帧广播过来
+        ws.send_text(hello_text)
         return ws
 
-    def drop_up_stu(self, key):
-        """这个学生不看 了 → 关掉他那条上游连接（服务端立刻不再算他）。"""
+    def drop_up_stu(self, sid):
+        """没人看了 → 关掉管道（省得云端以为还有人）。"""
         with self.lock:
-            item = self.up_stus.pop(key, None)
-            if self.main_stu == key:
-                # 主连接没了 → 换一条还在的顶上（帧改从它走）
-                self.main_stu = None
-                for k, v in self.up_stus.items():
-                    if not v['ws'].closed:
-                        self.main_stu = k
-                        break
-        if item:
+            ws = self.up_stu
+            self.up_stu = None
+        if ws:
             try:
-                item['ws'].close()
+                ws.close()
             except Exception:
                 pass
-            verbose('已断开该学生的上游通道（服务端不再算他在看）')
 
     # ---------- 本地 → 上游 ----------
     def on_local_text(self, ws, role, text):
@@ -1525,12 +1710,13 @@ class CastFanout(object):
                 return
             ident = dict(ident)
             ident['token'] = token
-            key = (ident.get('classId'), ident.get('sid'))
             with self.lock:
                 self.idents[id(ws)] = ident
-            # 每个真实观看者各建一条上游连接（各带本人令牌）
-            # → 服务端按令牌如实登记「谁在看投屏」，行为与直连完全一致
-            up = self.ensure_up_stu(key, text)
+            # 投屏帧只走**一条**上游连接（管道）→ 公网下行 1 份；
+            # 「谁在看」由本地状态 + 快照上报如实告诉云端。
+            EDGE.mark(ident, casting=True)
+            up = self.ensure_up_stu(text)
+            self.notify_peers()
             if up is None:
                 ws.send_text(json.dumps({'t': 'error', 'message': '投屏通道暂时不可用，请稍后重试'}, ensure_ascii=False))
                 ws.close()
@@ -1547,16 +1733,57 @@ class CastFanout(object):
 
     # ---------- 上游 → 本地 ----------
     def on_up_ctl_text(self, text):
-        # 服务器告诉教师端「几人在看」—— 它已经知道这条连接代表哪些学生，
-        # 原样转发即可（代理不用再改写任何东西）。
+        # 「几人在看」：云端只看到投屏帧管道那一条连接（1 人），
+        # 代理如实改写成**本地真实人数**（它后面真的在看的）。
+        # 这是「如实上报」，不是自报名单 —— 身份仍然是服务端按令牌认的。
+        try:
+            msg = json.loads(text)
+        except Exception:
+            msg = None
+        if isinstance(msg, dict) and msg.get('t') == 'peers':
+            with self.lock:
+                n = len(set((v.get('classId'), v.get('sid')) for v in self.idents.values()))
+            msg['students'] = n
+            text = json.dumps(msg, ensure_ascii=False)
         with self.lock:
             for c in list(self.local_ctl):
                 c.send_text(text)
 
+    def notify_peers(self):
+        """本地观看人数变了 → 主动告诉本地教师端（如实上报）。
+
+        服务端只在「有新的学生连接进来」时才发 peers，
+        而代理这边本地学生进出并不会惊动云端 → 所以由代理主动发一次，
+        数字是**它后面真的在看的**人数。
+        """
+        with self.lock:
+            n = len(set((v.get('classId'), v.get('sid')) for v in self.idents.values()))
+            ctl = list(self.local_ctl)
+        msg = json.dumps({'t': 'peers', 'students': n}, ensure_ascii=False)
+        for c in ctl:
+            c.send_text(msg)
+
+    def notify_local_presence(self, text):
+        """把投屏状态变化告诉本地「在场通道」的连接（学生端据此显示横幅）。"""
+        for w in list(EDGE_PRESENCE_WS):
+            try:
+                w.send_text(text)
+            except Exception:
+                pass
+
     def on_up_stu_text(self, text):
+        # 帧管道上收到的控制消息（mode / cast…）→ 转给本地看投屏的学生
         with self.lock:
             for c in list(self.local_stu):
                 c.send_text(text)
+        # mode 变化 → 记下来，并告诉本地「在场通道」的连接（他们也要知道开播了）
+        try:
+            msg = json.loads(text)
+        except Exception:
+            msg = None
+        if isinstance(msg, dict) and msg.get('t') == 'mode':
+            EDGE.mode = msg.get('mode') or 'idle'
+            self.notify_local_presence(text)
 
     def on_up_stu_bin(self, buf):
         """服务器会把帧广播给每一条 student 连接（每个观看者一条）。
@@ -1597,29 +1824,23 @@ class CastFanout(object):
         verbose('上游教师通道断开')
 
     def on_up_stu_closed(self, ws):
-        """某条上游学生连接断了 → 找出来是谁的，用他原来的 hello 重连。"""
-        key = None
-        hello = None
+        """上游学生通道断了 → 用原来的 hello 重连。"""
         with self.lock:
-            for k, v in list(self.up_stus.items()):
-                if v['ws'] is ws:
-                    key = k
-                    hello = v['hello']
-                    break
-        if key is None:
-            return
-        verbose('上游学生通道断开（%s），尝试重连' % key[1])
+            if self.up_stu is ws:
+                self.up_stu = None
+            hello = self.stu_hello
         if hello:
+            verbose('上游学生通道断开，尝试重连')
             time.sleep(1.0)
-            self.ensure_up_stu(key, hello)
+            self.ensure_up_stu(hello)
 
     def stats(self):
         with self.lock:
             return {
                 'fanout': FANOUT_ENABLED,
                 'upCtl': bool(self.up_ctl and not self.up_ctl.closed),
-                'upStudent': len(self.up_stus),
-                'mainStudent': self.main_stu[1] if self.main_stu else None,
+                'upStudent': bool(self.up_stu and not self.up_stu.closed),
+                'edge': EDGE.stats(),
                 'localTeacher': len(self.local_ctl),
                 'localWatchers': len(self.local_stu),
                 'uniqueWatchers': len(set((v.get('classId'), v.get('sid')) for v in self.idents.values())),
@@ -1672,14 +1893,19 @@ def print_banner():
     print('  监听：%s : %d' % ('所有网卡' if LISTEN_HOST == '0.0.0.0' else LISTEN_HOST, LISTEN_PORT))
     print('  页面/接口 → %s' % UP.raw)
     print('  实时流量（/ws、/api/cast…）→ 同样走公网（课堂系统只部署在公网）')
+    print('  边缘端：大流量走本地缓存；实时状态（在场/在看）聚合成快照上云')
     if FANOUT_ENABLED:
-        print('  投屏扇出：开（公网上行 1 份 / 下行 1 份；本地再分给每个学生）')
+        print('  投屏扇出：开（投屏帧公网只 1 份，本地再分给每个学生）')
     else:
         print('  投屏扇出：关（每个学生一条连接直连服务器，公网下行 N 份）')
     print('  配置文件：%s（改完重启生效）' % CONF_PATH)
     print('  出口网卡：%s' % (BIND_SOURCE or '(由系统路由决定)'))
     print('  上游连接池：%d 条（keep-alive 复用，省 TLS 握手）' % POOL_MAX)
-    print('  在场通道：逐条直连（一个学生一条，名单最准）')
+    if EDGE_SNAPSHOT:
+        print('  到场通道：本地连（不占公网连接）· 每 %d 秒聚合上报一次快照'
+              % EDGE_SNAPSHOT_INTERVAL)
+    else:
+        print('  到场通道：逐条直连（一个学生一条，名单最准）')
     print('    读到：port=%s · target=%s · tls.insecure=%s · cache=%s · 扇出=%s' % (
         LISTEN_PORT, TARGET or '(空)', 'yes' if INSECURE else 'no',
         'yes' if CACHE_ENABLED else 'no', 'yes' if FANOUT_ENABLED else 'no'))
@@ -1753,6 +1979,12 @@ def main():
             self.wfile.write(body)
 
     print_banner()
+
+    # 边缘端：本地状态聚合成快照，周期性上云（省流的关键）
+    if EDGE_SNAPSHOT:
+        _edge_thread = threading.Thread(target=edge_loop, daemon=True)
+        _edge_thread.start()
+        print('  边缘端快照：每 %d 秒把本地在场/在看状态聚合成一个请求上报' % EDGE_SNAPSHOT_INTERVAL)
     httpd = Server((LISTEN_HOST, LISTEN_PORT), HealthHandler)
     try:
         httpd.serve_forever()

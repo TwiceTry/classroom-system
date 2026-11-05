@@ -1,4 +1,5 @@
 'use strict'
+const auth = require('./auth')
 /*
  * presence.js —— 在场状态（学生是否登录着、页面是否还开着）
  *
@@ -23,6 +24,15 @@ const GRACE = 5 * 1000
 const seen = new Map() // key = classId + ':' + sid → 最后一次心跳
 const conns = new Map() // key → 还活着的在场通道条数（同一学生开多个标签页会累加）
 const castConns = new Map() // key → 正在看投屏的连接条数（/watch 带令牌连上来才算）
+// 边缘端快照来源的「谁在看投屏」：覆盖式（每个 sid 一个标记）。
+// 必须与上面的 WS 来源分开记 —— 同一个学生可能既开着直连的观看页、
+// 又被边缘端快照报了一次；混在一个计数里会导致「退出了还剩 1」（幽灵观众）。
+const castSnap = new Map()   // key → true
+// 边缘端（局域网代理）上报的快照：source → { online:Set, casting:Set }
+// 代理把本地 N 个学生的状态打包成一次请求发上来（省流的关键）；
+// 身份一律以**令牌**为准（客户端只能报「我手上有这些令牌」，
+// 冒名顶替不了 —— 令牌是服务端签发的）。
+const snapshots = new Map() // source -> { online: Set(sid), casting: Set(sid) }
 
 const keyOf = (classId, sid) => classId + ':' + sid
 
@@ -91,11 +101,71 @@ function detachCast(classId, sid) {
   else castConns.delete(key)
 }
 
+/**
+ * 边缘端快照：一次性把「谁在场、谁在看投屏」报上来。
+ *
+ * entries: [{ token, online, casting }] —— token 是**学生令牌**，
+ *   身份（班级/学号/姓名）一律由服务端从令牌解出来，客户端说了不算。
+ *
+ * 与直连的区别：
+ *   · 直连走 WebSocket 在场通道，服务端秒级感知；
+ *   · 边缘端走这个快照（几秒一次）—— 离线的人立刻 leave()，
+ *     不用等 TTL（120 秒）才变灰。
+ */
+function applySnapshot(source, entries) {
+  const prev = snapshots.get(source) || { online: new Set(), casting: new Set() }
+  const nextOnline = new Set()
+  const nextCasting = new Set()
+  const who = new Map() // sid -> { classId, name }
+
+  for (const e of entries) {
+    const rec = auth.verify(e.token)
+    if (!rec || rec.role !== 'student') continue // 令牌不对 → 这条不算
+    const sid = rec.sid
+    if (!sid) continue
+    who.set(sid, { classId: rec.classId, name: rec.name })
+    if (e.online) nextOnline.add(sid)
+    if (e.casting) nextCasting.add(sid)
+  }
+
+  // 上场：刷新心跳（在线判定靠它）
+  for (const sid of nextOnline) {
+    const w = who.get(sid)
+    touch(w.classId, sid, w.name)
+  }
+  // 离场：上次在线、这次没了 → 立刻下线（不等 TTL）
+  for (const sid of prev.online) {
+    if (nextOnline.has(sid)) continue
+    const w = who.get(sid)
+    if (w) leave(w.classId, sid)
+  }
+  // 看投屏：快照来源单独记（覆盖式）——
+  // 不能和 WS 连接的计数混在一起，否则同一个人减一次还剩一次（幽灵观众）。
+  for (const sid of nextCasting) {
+    const w = who.get(sid)
+    if (w) castSnap.set(keyOf(w.classId, sid), true)
+  }
+  for (const sid of prev.casting) {
+    if (nextCasting.has(sid)) continue
+    const w = who.get(sid)
+    if (w) castSnap.delete(keyOf(w.classId, sid))
+  }
+
+  snapshots.set(source, { online: nextOnline, casting: nextCasting })
+  return { online: nextOnline.size, casting: nextCasting.size }
+}
+
 /** 某班此刻正在看投屏的学号集合 */
 function castingSet(classId) {
   const set = new Set()
   for (const [key, n] of castConns) {
     if (n <= 0) continue
+    const at = key.indexOf(':')
+    if (key.slice(0, at) === classId) set.add(key.slice(at + 1))
+  }
+  // 边缘端快照报来的（覆盖式，与上面的 WS 来源互不影响）
+  for (const [key, on] of castSnap) {
+    if (!on) continue
     const at = key.indexOf(':')
     if (key.slice(0, at) === classId) set.add(key.slice(at + 1))
   }
@@ -124,6 +194,7 @@ function sweep() {
 setInterval(sweep, 60 * 1000).unref()
 
 module.exports = {
+  applySnapshot,
   touch,
   leave,
   attach,

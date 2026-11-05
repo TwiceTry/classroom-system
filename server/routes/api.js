@@ -996,6 +996,23 @@ module.exports = function createApi(db, cast) {
     return { ok: true, online: presence.onlineSet(t.classId).size, cast: cast ? cast.state().mode : 'idle' }
   })
 
+  /**
+   * 边缘端（局域网代理）上报「谁在场、谁在看投屏」的快照。
+   *
+   * 为什么要有它：代理把本地 N 个学生的状态**打包成一次请求**发上来，
+   * 比每人一条 WebSocket 省流得多（40 人 ≈ 10KB / 5 秒，而不是 40 条长连接）。
+   *
+   * 身份以**令牌**为准：客户端只能报「我手上有这些令牌」，
+   * 班级/学号/姓名全由服务端从令牌解出来 —— 冒名顶替不了。
+   */
+  r.post('/api/presence/snapshot', async (req) => {
+    const body = await readJson(req)
+    const list = Array.isArray(body.students) ? body.students.slice(0, 500) : []
+    const source = String(body.source || 'edge').slice(0, 40)
+    const r = presence.applySnapshot(source, list)
+    return { ok: true, online: r.online, casting: r.casting }
+  })
+
   /** 关页面 / 退出登录时调用（前端用 keepalive 发，保证页面卸载后也能送到） */
   r.post('/api/presence/leave', async (req) => {
     const t = need(req, 'student')

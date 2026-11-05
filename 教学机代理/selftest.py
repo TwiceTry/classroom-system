@@ -380,16 +380,19 @@ def c_presence(cfg, args, c):
                  headers={'Authorization': 'Bearer ' + args.students[i]}, timeout=15)
             time.sleep(0.4)
         time.sleep(1.0)
-        # 代理不做任何改写：到场通道逐条直连，「谁在场」由服务端自己记
+        # 边缘端：到场通道只在本地连，状态聚合成快照上云
         st, buf, _ = http(cfg['base'] + '/__proxy_stats')
         try:
             j = json.loads(buf.decode('utf-8'))
         except Exception:
             j = {}
-        if 'presence' in j or 'localOnline' in j:
-            c.bad('代理里还有 presence / localOnline 字段 —— 心跳那套没撤干净')
-            return c.done(False, '代理还在改写在场信息')
-        c.ok('代理不维护在场名单（到场通道逐条直连，名单由服务端记）')
+        edge = j.get('cast', {}).get('edge') or {}
+        if edge:
+            c.ok('代理本地状态：知道 %d 人（在线 %d · 看投屏 %d）· 快照周期上报'
+                 % (edge.get('known', 0), edge.get('online', 0), edge.get('casting', 0)))
+        else:
+            c.bad('代理统计里没有 edge 状态')
+            return c.done(False, '代理不是边缘端模式？')
 
         # 2) 教师端查在线名单（数据来自服务端，代理原样转发）
         st, buf, _ = http(cfg['base'] + '/api/teacher/classes',
