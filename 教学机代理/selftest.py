@@ -380,20 +380,18 @@ def c_presence(cfg, args, c):
                  headers={'Authorization': 'Bearer ' + args.students[i]}, timeout=15)
             time.sleep(0.4)
         time.sleep(1.0)
+        # 代理不做任何改写：到场通道逐条直连，「谁在场」由服务端自己记
         st, buf, _ = http(cfg['base'] + '/__proxy_stats')
         try:
             j = json.loads(buf.decode('utf-8'))
         except Exception:
             j = {}
-        pr = j.get('presence') or {}
-        if pr:
-            c.ok('代理：本地 %d 条连接 → 上游 %d 条（扇出省了 %d 条）'
-                 % (pr.get('local', 0), 1 if pr.get('up') else 0, max(0, pr.get('local', 0) - 1)))
-        loc = j.get('localOnline') or {}
-        local_n = sum(loc.values())
-        c.ok('代理本地名单：%d 人（按班：%s）' % (local_n, json.dumps(loc, ensure_ascii=False)))
+        if 'presence' in j or 'localOnline' in j:
+            c.bad('代理里还有 presence / localOnline 字段 —— 心跳那套没撤干净')
+            return c.done(False, '代理还在改写在场信息')
+        c.ok('代理不维护在场名单（到场通道逐条直连，名单由服务端记）')
 
-        # 2) 教师端查在线名单
+        # 2) 教师端查在线名单（数据来自服务端，代理原样转发）
         st, buf, _ = http(cfg['base'] + '/api/teacher/classes',
                           headers={'Authorization': 'Bearer ' + args.teacher_token})
         if st != 200:
@@ -410,13 +408,13 @@ def c_presence(cfg, args, c):
             c.bad('拿不到在场名单（%s）' % st)
             return c.done(False, '教师端接口不对')
         p = json.loads(buf.decode('utf-8'))
-        c.ok('教师端看到：在线 %d 人 · 在看投屏 %d 人 · 全班 %d 人'
+        c.ok('服务端记的：在线 %d 人 · 在看投屏 %d 人 · 全班 %d 人'
              % (p.get('onlineCount', 0), p.get('castingCount', 0), p.get('total', 0)))
         if p.get('onlineCount', 0) >= 3:
-            c.ok('名单正确（代理按本地名单改写了）')
+            c.ok('在场名单由服务端直接记账（准）')
             return c.done(True)
-        c.bad('教师端只看到 %d 人 —— 名单改写没生效' % p.get('onlineCount', 0))
-        c.note('检查 presence.fanout = yes；或看代理统计里的 localOnline')
+        c.bad('服务端只记到 %d 人 —— 到场通道没通' % p.get('onlineCount', 0))
+        c.note('看代理窗口日志：是不是 presence 连接建不起来')
         return c.done(False, '在场名单不对')
     except Exception as e:
         c.bad('异常：%s' % e)

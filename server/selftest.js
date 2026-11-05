@@ -973,6 +973,56 @@ async function testCast(ctx) {
   await new Promise((r) => setTimeout(r, 200))
   check('unknown role is closed', bad.closed === true)
   bad.close()
+
+  // 局域网代理：N 个学生的观看合成一条上行连接（公网上行/下行都只 1 份），
+  // 但服务端必须照样知道「谁在看投屏」—— 上游 hello 里带一份名单（for）。
+  {
+    // 局域网代理：N 个学生的观看合成一条上行连接（公网上行/下行都只 1 份），
+    // 但服务端必须照样知道「谁在看投屏」—— 上游 hello 里带一份名单（for）。
+    //
+    // 注意：自检是**另一个进程**（连的是已运行的服务），所以只能通过 HTTP 接口看结果，
+    // 不能直接读服务端的 presence 模块。
+    const cls0 = await request('GET', '/api/teacher/classes', undefined, teaToken)
+    const c0 = cls0.json.classes[0]
+    const two = c0.students.slice(0, 2)
+    check('proxy roster: class has students to test', two.length >= 2, '班级人数=' + two.length)
+
+    // 开播（服务端只在 mode=watch 时登记「谁在看投屏」）
+    const opener = await wsConnect('ctl')
+    opener.sendText({ t: 'hello', token: teaToken })
+    await sleep(200)
+    opener.sendText({ t: 'mode', mode: 'watch' })
+    await sleep(300)
+
+    const proxyConn = await wsConnect('student')
+    proxyConn.sendText({ t: 'hello', token: stuToken, cid: 'cs', for: two.map((x) => ({
+      classId: c0.id, sid: x.sid, name: x.name || '',
+    })) })
+    await sleep(500)
+    const cast1 = await request('GET', '/api/teacher/classes/' + c0.id + '/presence', undefined, teaToken)
+    const casting1 = (cast1.json.casting || []).map((x) => x.sid)
+    check('proxy roster: one connection can represent many watchers',
+      two.every((x) => casting1.includes(x.sid)),
+      'casting=' + casting1.join(',') + ' 期望含 ' + two.map((x) => x.sid).join(','))
+
+    // 代理那边「没人看了」→ 空名单 → 服务端不能留下幽灵观众
+    proxyConn.sendText({ t: 'hello', token: stuToken, cid: 'cs', for: [] })
+    await sleep(500)
+    const cast2 = await request('GET', '/api/teacher/classes/' + c0.id + '/presence', undefined, teaToken)
+    const casting2 = (cast2.json.casting || []).map((x) => x.sid)
+    check('proxy roster: empty roster leaves nobody behind',
+      !two.some((x) => casting2.includes(x.sid)),
+      'casting=' + casting2.join(','))
+
+    proxyConn.close()
+    opener.close()
+    await sleep(400)
+    const cast3 = await request('GET', '/api/teacher/classes/' + c0.id + '/presence', undefined, teaToken)
+    const casting3 = (cast3.json.casting || []).map((x) => x.sid)
+    check('proxy roster: closed connection drops its roster',
+      !two.some((x) => casting3.includes(x.sid)),
+      'casting=' + casting3.join(','))
+  }
 }
   // 差量模式下，一帧「整屏」就是学生的基准画面（差量块画在它上面）。
   // 慢链路（公网隧道）上整屏帧大、差量帧小 —— 背压若一视同仁地覆盖，

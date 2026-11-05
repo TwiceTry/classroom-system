@@ -168,7 +168,6 @@ POOL_IDLE = int(float(conf_get('upstream.poolidle', '3')))
 # 在场通道（presence）也走扇出：1 条上游连接 + 本地维护名单，
 # 免得 40 个学生 = 40 条长连接把弱网（随身 WiFi）打爆。
 # 代理会把「谁在场」按本地名单改写后再给教师端，所以名单依然是准的。
-PRESENCE_FANOUT = as_bool(conf_get('presence.fanout'), True) and '--no-presence-fanout' not in ARGS
 CA_FILE = conf_get('tls.cafile', '') or ''
 VERBOSE = 'verbose' in ARGS or as_bool(conf_get('log.verbose'), False)
 QUIET = 'quiet' in ARGS or as_bool(conf_get('log.quiet'), False)
@@ -570,304 +569,13 @@ def fail_page(code, msg):
     return body.encode('utf-8')
 
 
-# ---------------------------------------------------------------- 在场名单（本地维护）
+# ---------------------------------------------------------------- 到场通道
 #
-# 为什么要在代理里维护一份「谁在场」：
-#   · 投屏与到场两条通道都做了扇出（上游只保持 1~2 条连接），
-#     服务端只认得「第一个学生」→ 教师端看到的在场人数会变成 1；
-#   · 所以代理自己记一份真实名单，再把给教师端的接口改写成这份名单。
-#   · 名单有两个来源：① presence 通道的 auth（带令牌，能查到身份）
-#                     ② /api/presence/ping 心跳（同样带令牌）
-#     两者都靠上游 /api/me 认身份（令牌是随机串，服务端才有那张表）。
-LOCAL_ONLINE = {}     # classId -> {sid: {'name': name, 'ts': ms}}
-LOCAL_CASTING = {}    # classId -> {sid: ts}   谁在看投屏
-IDENT_CACHE = {}      # token -> {'classId','sid','name'}（认一次就缓存）
-IDENT_LOCK = threading.Lock()
-IDENT_SERIAL = threading.Lock()   # 认身份串行（弱网下并发打上游容易失败）
-LOCAL_LOCK = threading.Lock()
+# 到场通道（/ws?role=presence）**逐条直连**，不做扇出：
+#   服务端靠这条通道判断「谁在场」，一个学生一条最准；
+#   代价是 40 个学生 = 40 条长连接（弱网下要留意）。
+#   投屏那条（role=student）才走扇出，见 CastFanout。
 
-
-def identify(token):
-    """令牌 → 身份（问上游的 /api/me；结果缓存起来，别每次都问）
-
-    认身份是「打上游一次」的动作 —— 弱网下并发打过去容易失败
-    （40 个学生同时连 → 一半失败 → 名单只剩一半人）。
-    所以：① 串行做（一个一个问）② 失败重试一次 ③ 失败要记日志。
-    """
-    if not token:
-        return None
-    with IDENT_LOCK:
-        hit = IDENT_CACHE.get(token)
-    if hit:
-        return hit
-    with IDENT_SERIAL:
-        with IDENT_LOCK:
-            hit = IDENT_CACHE.get(token)
-        if hit:
-            return hit
-        for attempt in (1, 2):
-            ident = _identify_once(token)
-            if ident:
-                return ident
-            if attempt == 1:
-                time.sleep(0.3)
-        return None
-
-
-def _identify_once(token):
-    try:
-        raw = connect_out(UP.host, UP.port, 6)
-        if is_https(UP):
-            ctx = make_tls_context()
-            conn = HTTPSConnection(UP.host, UP.port, timeout=6, context=ctx)
-            conn.sock = ctx.wrap_socket(raw, server_hostname=UP.host)
-        else:
-            conn = HTTPConnection(UP.host, UP.port, timeout=6)
-            conn.sock = raw
-        conn.auto_open = False
-        conn.request('GET', (UP.base_path or '') + '/api/me',
-                     headers={'Authorization': 'Bearer ' + token})
-        resp = conn.getresponse()
-        body = resp.read()
-        conn.close()
-        if resp.status != 200:
-            verbose('认身份：/api/me 返回 %d' % resp.status)
-            return None
-        j = json.loads(body.decode('utf-8'))
-        if j.get('role') != 'student':
-            verbose('认身份：role=%r，不是学生' % j.get('role'))
-            return None
-        st = j.get('student') or {}
-        ident = {'classId': st.get('classId') or '', 'sid': st.get('sid') or '',
-                 'name': st.get('name') or ''}
-        if not ident['sid']:
-            return None
-        with IDENT_LOCK:
-            if len(IDENT_CACHE) > 2000:
-                IDENT_CACHE.clear()
-            IDENT_CACHE[token] = ident
-        return ident
-    except Exception as e:
-        verbose('认身份失败：%s' % e)
-        return None
-
-
-def local_mark_online(ident):
-    if not ident:
-        return
-    with LOCAL_LOCK:
-        cid = ident['classId']
-        LOCAL_ONLINE.setdefault(cid, {})[ident['sid']] = {
-            'name': ident['name'], 'ts': time.time()
-        }
-
-
-def local_unmark_online(ident):
-    if not ident:
-        return
-    with LOCAL_LOCK:
-        cid = ident['classId']
-        box = LOCAL_ONLINE.get(cid)
-        if box:
-            box.pop(ident['sid'], None)
-            if not box:
-                LOCAL_ONLINE.pop(cid, None)
-
-
-def local_mark_casting(ident):
-    if not ident:
-        return
-    with LOCAL_LOCK:
-        LOCAL_CASTING.setdefault(ident['classId'], {})[ident['sid']] = time.time()
-
-
-def local_unmark_casting(ident):
-    if not ident:
-        return
-    with LOCAL_LOCK:
-        box = LOCAL_CASTING.get(ident['classId'])
-        if box:
-            box.pop(ident['sid'], None)
-
-
-def local_online_sids(class_id):
-    """这个班本地谁在场（顺带清掉 120 秒没心跳的）"""
-    now = time.time()
-    out = set()
-    with LOCAL_LOCK:
-        box = LOCAL_ONLINE.get(class_id) or {}
-        for sid in list(box.keys()):
-            if now - box[sid]['ts'] > 120:
-                box.pop(sid, None)
-        out = set(box.keys())
-    return out
-
-
-def local_casting_sids(class_id):
-    now = time.time()
-    with LOCAL_LOCK:
-        box = LOCAL_CASTING.get(class_id) or {}
-        for sid in list(box.keys()):
-            if now - box[sid] > 120:
-                box.pop(sid, None)
-        return set(box.keys())
-
-
-def rewrite_online(path, obj):
-    """把响应里的「在场」按本地名单改写。返回 True 表示改过。"""
-    if not isinstance(obj, dict):
-        return False
-    p = (path or '').split('?')[0]
-
-    # POST /api/presence/ping → { online: 数量 }（学生端自己看的）
-    if p.endswith('/api/presence/ping'):
-        return False   # 这个是心跳自己的回包，代理在转发请求时已经记过名单
-
-    # GET /api/teacher/classes/:id/presence
-    #   { onlineCount, castingCount, total, online:[], offline:[], casting:[] }
-    if p.endswith('/presence') and '/api/teacher/classes/' in p:
-        cid = p.split('/api/teacher/classes/', 1)[1].split('/')[0]
-        on = local_online_sids(cid)
-        casting = local_casting_sids(cid)
-        roster = list(obj.get('online') or []) + list(obj.get('offline') or [])
-        if not roster:
-            return False
-        def mark(rows, sids):
-            for row in rows:
-                if isinstance(row, dict) and row.get('sid') in sids:
-                    row['online'] = True
-        mark(roster, on)
-        mark(roster, casting)
-        online_rows = [r for r in roster if isinstance(r, dict) and r.get('sid') in on]
-        offline_rows = [r for r in roster if isinstance(r, dict) and r.get('sid') not in on]
-        casting_rows = [r for r in roster if isinstance(r, dict) and r.get('sid') in casting]
-        obj['online'] = online_rows
-        obj['offline'] = offline_rows
-        obj['casting'] = casting_rows
-        obj['onlineCount'] = len(online_rows)
-        obj['castingCount'] = len(casting_rows)
-        return True
-
-    # GET /api/teacher/classes → { classes:[ { id, students:[{sid, online}] } ] }
-    if p.rstrip('/') == '/api/teacher/classes':
-        changed = False
-        for cls in obj.get('classes') or []:
-            if not isinstance(cls, dict):
-                continue
-            on = local_online_sids(cls.get('id') or '')
-            for st in cls.get('students') or []:
-                if isinstance(st, dict) and 'online' in st:
-                    st['online'] = st.get('sid') in on
-                    changed = True
-        return changed
-
-    # GET /api/teacher/classes/:id/interact → { students:[{sid, online}] }
-    if p.endswith('/interact'):
-        cid = p.split('/api/teacher/classes/', 1)[1].split('/')[0]
-        on = local_online_sids(cid)
-        changed = False
-        for st in obj.get('students') or []:
-            if isinstance(st, dict) and 'online' in st:
-                st['online'] = st.get('sid') in on
-                changed = True
-        return changed
-
-    return False
-
-
-class PresenceFanout(object):
-    """在场通道扇出：1 条上游 presence + N 条本地连接。
-
-    本地名单由 LOCAL_ONLINE 维护；教师端拿到的接口由 rewrite_online 改写。
-    """
-
-    def __init__(self):
-        self.lock = threading.Lock()
-        self.up_lock = threading.Lock()   # 建上游通道时用（别建成好几条）
-        self.local = []          # 本地 presence 连接（WsConn）
-        self.up = None           # 上游 presence 连接
-        self.up_hello = None     # 用来建上游连接的那个 hello（带学生令牌）
-
-    def attach(self, ws):
-        with self.lock:
-            self.local.append(ws)
-        self.ensure_up()
-
-    def detach(self, ws):
-        with self.lock:
-            self.local = [c for c in self.local if c is not ws]
-
-    def ensure_up(self):
-        """建上游在场通道。
-
-        一定要加锁：40 个学生同时连上来时，没有锁会建成好几条上游通道，
-        它们互相把对方的连接顶掉（on_up_closed 又去重建）→ 来回拉锯。
-        """
-        with self.up_lock:
-            with self.lock:
-                if self.up is not None and not self.up.closed:
-                    return self.up
-                hello = self.up_hello
-            if not hello:
-                return None
-            try:
-                sock = open_upstream_ws('/ws?role=presence')
-            except Exception as e:
-                verbose('上游在场通道建不起来：%s' % e)
-                return None
-            ws = WsConn(sock, mask_out=True, on_text=self.on_up_text, on_close=self.on_up_closed)
-            with self.lock:
-                self.up = ws
-            ws.start()
-            ws.send_text(hello)
-            verbose('上游在场通道已建立（本地 %d 条连接合并成 1 条）' % len(self.local))
-            return ws
-
-    def on_up_text(self, text):
-        with self.lock:
-            targets = list(self.local)
-        for c in targets:
-            c.send_text(text)
-
-    def on_up_closed(self, ws):
-        with self.lock:
-            if self.up is ws:
-                self.up = None
-        verbose('上游在场通道断开，稍后重连')
-        time.sleep(1.0)
-        self.ensure_up()
-
-    def hello_from_local(self, ws, text):
-        """本地 presence 连接的 auth/hello → 记名单；第一条还用来建上游通道"""
-        try:
-            msg = json.loads(text)
-        except Exception:
-            return
-        if msg.get('t') != 'auth' and msg.get('t') != 'hello':
-            return
-        token = str(msg.get('token') or '')
-        ident = identify(token)
-        if not ident:
-            return
-        local_mark_online(ident)
-        with self.lock:
-            first = self.up_hello is None
-            if first:
-                self.up_hello = text
-        if first:
-            self.ensure_up()
-
-    def stats(self):
-        with self.lock:
-            return {
-                'fanout': PRESENCE_FANOUT,
-                'up': bool(self.up and not self.up.closed),
-                'local': len(self.local),
-                'onlineClasses': len(LOCAL_ONLINE),
-            }
-
-
-PRESENCE = PresenceFanout()
 
 
 # ---------------------------------------------------------------- HTTP
@@ -1060,18 +768,6 @@ class Handler(BaseHTTPRequestHandler):
 
         target, tag = UP, '公网'
         body = self.read_body()
-        # 到场心跳：代理顺便把这个人记进本地名单（令牌 → 身份）
-        if self.path.split('?')[0].endswith('/api/presence/ping'):
-            tok = ''
-            try:
-                h = self.headers.get('Authorization') or ''
-                if h.lower().startswith('bearer '):
-                    tok = h.split(' ', 1)[1].strip()
-            except Exception:
-                tok = ''
-            ident = identify(tok)
-            if ident:
-                local_mark_online(ident)
         started = time.time()
         reusable = self.command in ('GET', 'HEAD')
         reused = False
@@ -1125,18 +821,6 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 if self.command != 'HEAD':
                     self.wfile.write(buf)
-            elif self.should_rewrite():
-                # 教师端要看的「在场名单」→ 按本地名单改写后再给
-                buf = self.read_all(resp)
-                try:
-                    obj = json.loads(buf.decode('utf-8'))
-                    if rewrite_online(self.path, obj):
-                        buf = json.dumps(obj, ensure_ascii=False).encode('utf-8')
-                        verbose('已按本地名单改写：%s' % self.path)
-                except Exception as e:
-                    verbose('改写在场名单失败：%s' % e)
-                self.send_upstream_response(resp, target, replace_len=len(buf))
-                self.wfile.write(buf)
             else:
                 self.send_upstream_response(resp, target)
                 self.stream_body(resp)
@@ -1185,18 +869,7 @@ class Handler(BaseHTTPRequestHandler):
             conn.endheaders(body)
         return conn.getresponse()
 
-    def should_rewrite(self):
-        """这几个接口带「在场名单」，要按本地名单改写。"""
-        p = self.path.split('?')[0]
-        if p.rstrip('/') == '/api/teacher/classes':
-            return True
-        if p.endswith('/presence') and '/api/teacher/classes/' in p:
-            return True
-        if p.endswith('/interact') and '/api/teacher/classes/' in p:
-            return True
-        return False
-
-    def send_upstream_response(self, resp, target, cache_control=None, extra=None, replace_len=None):
+    def send_upstream_response(self, resp, target, cache_control=None, extra=None):
         self.send_response(resp.status)
         has_len = False
         for k, v in resp.getheaders():
@@ -1209,9 +882,6 @@ class Handler(BaseHTTPRequestHandler):
                 v = strip_domain(v)
             elif lk == 'content-length':
                 has_len = True
-                # body 被改写过 → 长度要换掉（不能重复加一个 content-length）
-                if replace_len is not None:
-                    v = str(replace_len)
             self.send_header(k, v)
         if cache_control:
             self.send_header('Cache-Control', cache_control)
@@ -1259,53 +929,7 @@ class Handler(BaseHTTPRequestHandler):
         if FANOUT_ENABLED and role in ('ctl', 'student'):
             self.handle_fanout(role)
             return
-        if PRESENCE_FANOUT and role == 'presence':
-            self.handle_presence_fanout()
-            return
         self.handle_upgrade_raw()
-
-    # ---------- 在场通道扇出（1 条上游 + N 条本地）----------
-    def handle_presence_fanout(self):
-        """到场通道也收编：本地记名单，上游只保持 1 条连接。"""
-        self.close_connection = True
-        try:
-            self.connection.settimeout(None)
-            self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        except Exception:
-            pass
-        holder = {'ident': None}
-
-        def on_text(t):
-            PRESENCE.hello_from_local(ws, t)
-            # 本地 presence 连接也要收到服务器推的消息（cast 状态等）
-            up = PRESENCE.up
-            if up:
-                up.send_text(t)
-
-        def on_close():
-            ident = holder.get('ident')
-            if ident:
-                local_unmark_online(ident)
-            PRESENCE.detach(ws)
-
-        ws = WsConn(self.connection, mask_out=False, on_text=on_text, on_close=on_close, reader=self.read_client)
-        try:
-            key = self.headers.get('Sec-WebSocket-Key') or ''
-            accept = base64.b64encode(
-                hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode('latin1')).digest()
-            ).decode()
-            self.wfile.write(
-                ('HTTP/1.1 101 Switching Protocols\r\n'
-                 'Upgrade: websocket\r\n'
-                 'Connection: Upgrade\r\n'
-                 'Sec-WebSocket-Accept: %s\r\n\r\n' % accept).encode('latin1')
-            )
-            self.wfile.flush()
-        except Exception:
-            return
-        PRESENCE.attach(ws)
-        ws.start()
-        ws.wait()
 
     # ---------- 原样转发（其它非投屏通道）----------
     def handle_upgrade_raw(self):
@@ -1778,8 +1402,12 @@ class CastFanout(object):
 
         教师端  ──1 条上游 ctl──▶  服务器  ──1 条上游 student──▶  代理  ──▶  N 个本地学生
 
-    公网上行 1 份、下行 1 份（不再 N 份）。服务器那侧一行都不用改：
-    它照旧给「学生连接」广播帧，代理用一条上游 student 连接接住，再在局域网里扇给所有人。
+    公网上行 1 份、下行 1 份（不再 N 份）。
+
+    **「谁在看投屏」服务端照样清楚**：代理给上游的 hello 里带一份名单（for），
+    告诉服务器「这条连接代表这些人在看」；服务器按人记账，
+    教师端那份「谁在看」的名单就是准的（代理不用再改写任何接口）。
+    有人进/退出观看时，代理重发一次 hello 把名单刷新。
     """
 
     def __init__(self):
@@ -1788,7 +1416,7 @@ class CastFanout(object):
         self.up_stu = None       # 上游学生通道（帧从这条路来）
         self.local_ctl = []      # 本地教师端连接
         self.local_stu = []      # 本地学生端连接
-        self.idents = {}         # id(conn) -> 'classId:sid'
+        self.idents = {}         # id(conn) -> {'classId','sid','name','token'}（本地观看者）
         self.stu_hello = None    # 第一个学生的 hello（用来建立上游 student 连接）
         self.ctl_hello = None
         self.frames = 0
@@ -1803,13 +1431,67 @@ class CastFanout(object):
             else:
                 self.local_stu.append(ws)
         verbose('本地投屏连接接入：%s（当前本地观看 %d）' % (role, len(self.local_stu)))
+        if role != 'ctl':
+            self.push_up_hello()
 
     def detach_local(self, ws):
         with self.lock:
             self.local_ctl = [c for c in self.local_ctl if c is not ws]
             self.local_stu = [c for c in self.local_stu if c is not ws]
             self.idents.pop(id(ws), None)
-        verbose('本地投屏连接断开（剩余观看 %d）' % len(self.local_stu))
+            left = len(self.local_stu)
+        verbose('本地投屏连接断开（剩余观看 %d）' % left)
+        self.push_up_hello()
+
+    # ---------- 给上游的 hello（带「谁在看」的名单）----------
+
+    def build_up_hello(self):
+        """生成给上游的 hello：带本地所有观看者的名单（for）。
+
+        服务端按名单里的人记账 → 教师端那份「谁在看投屏」是准的，
+        而公网上行/下行都只走这一条连接（这是扇出省带宽的关键）。
+        """
+        with self.lock:
+            watchers = list(self.idents.values())
+            base = self.stu_hello
+        if not base:
+            return None
+        try:
+            msg = json.loads(base)
+        except Exception:
+            return base
+        uniq = []
+        seen = set()
+        for w in watchers:
+            sid = w.get('sid')
+            if not sid:
+                continue
+            key = (w.get('classId'), sid)
+            if key in seen:
+                continue
+            seen.add(key)
+            uniq.append({'classId': w.get('classId') or '', 'sid': sid,
+                         'name': w.get('name') or ''})
+        if not uniq:
+            return None
+        # 令牌用名单里第一个人的（服务端要验一个有效学生令牌）
+        for w in watchers:
+            if w.get('token'):
+                msg['token'] = w['token']
+                break
+        msg['for'] = uniq
+        verbose('给上游的观看名单：%d 人（%s）' % (
+            len(uniq), ' '.join(w['sid'] for w in uniq)))
+        return json.dumps(msg, ensure_ascii=False)
+
+    def push_up_hello(self):
+        """把最新的观看者名单告诉服务器（有人进/退出观看时调用）。"""
+        up = self.up_stu
+        if up is None or up.closed:
+            return
+        text = self.build_up_hello()
+        if text:
+            up.send_text(text)
 
     # ---------- 本地 → 上游 ----------
     def on_local_text(self, ws, role, text):
@@ -1839,18 +1521,18 @@ class CastFanout(object):
                 ws.send_text(json.dumps({'t': 'error', 'message': '观看投屏需要先用学号登录'}, ensure_ascii=False))
                 ws.close()
                 return
+            ident = dict(ident)
+            ident['token'] = token
             with self.lock:
                 self.idents[id(ws)] = ident
-            # 记一份「谁在看投屏」→ 教师端的投屏名单按本地名单改写
-            local_mark_casting(ident)
             # 第一个学生：拿他的 hello 建立「上游学生通道」（只建一条）
             up = self.ensure_up_stu(text)
             if up is None:
                 ws.send_text(json.dumps({'t': 'error', 'message': '投屏通道暂时不可用，请稍后重试'}, ensure_ascii=False))
                 ws.close()
                 return
-            # 告诉服务器「有人在看」→ 服务器会给上游 student 通道发 cast 状态
-            up.send_text(text)
+            # 告诉服务器「这些人在看」（带名单）→ 服务器的「谁在看」就准了
+            self.push_up_hello()
 
     def on_local_bin(self, ws, role, buf):
         # 教师端发来的二进制帧 = 投屏画面 → 送到上游教师通道，
@@ -1863,17 +1545,8 @@ class CastFanout(object):
 
     # ---------- 上游 → 本地 ----------
     def on_up_ctl_text(self, text):
-        # 服务器告诉教师端「几人在看」→ 改写成「本地真实人数」
-        with self.lock:
-            n = len(set((v.get('classId'), v.get('sid')) for v in self.idents.values())) \
-                or len(self.local_stu)
-        try:
-            msg = json.loads(text)
-        except Exception:
-            msg = None
-        if isinstance(msg, dict) and msg.get('t') == 'peers':
-            msg['students'] = n
-            text = json.dumps(msg, ensure_ascii=False)
+        # 服务器告诉教师端「几人在看」—— 它已经知道这条连接代表哪些学生，
+        # 原样转发即可（代理不用再改写任何东西）。
         with self.lock:
             for c in list(self.local_ctl):
                 c.send_text(text)
@@ -1930,6 +1603,8 @@ class CastFanout(object):
             self.up_stu = ws
         ws.start()
         verbose('上游学生通道已建立（公网下行从 N 份变成 1 份）')
+        # 打招呼时就把名单带上（服务端据此知道谁在看）
+        ws.send_text(self.build_up_hello() or hello_text)
         return ws
 
     def on_up_stu_closed(self, ws):
@@ -1940,9 +1615,7 @@ class CastFanout(object):
         verbose('上游学生通道断开，尝试重连')
         if hello:
             time.sleep(1.0)
-            up = self.ensure_up_stu(hello)
-            if up:
-                up.send_text(hello)
+            self.ensure_up_stu(hello)
 
     def stats(self):
         with self.lock:
@@ -2009,8 +1682,7 @@ def print_banner():
     print('  配置文件：%s（改完重启生效）' % CONF_PATH)
     print('  出口网卡：%s' % (BIND_SOURCE or '(由系统路由决定)'))
     print('  上游连接池：%d 条（keep-alive 复用，省 TLS 握手）' % POOL_MAX)
-    print('  在场通道：%s' % ('扇出（本地维护名单，教师端看到的名单按本地改写）'
-                              if PRESENCE_FANOUT else '逐条直连（名单最准，但人多时占连接）'))
+    print('  在场通道：逐条直连（一个学生一条，名单最准）')
     print('    读到：port=%s · target=%s · tls.insecure=%s · cache=%s · 扇出=%s' % (
         LISTEN_PORT, TARGET or '(空)', 'yes' if INSECURE else 'no',
         'yes' if CACHE_ENABLED else 'no', 'yes' if FANOUT_ENABLED else 'no'))
@@ -2056,8 +1728,6 @@ def main():
                     'cacheEnabled': CACHE_ENABLED,
                 'upstreamPool': {'size': POOL.size(), 'max': POOL_MAX},
                 'cast': FANOUT.stats(),
-                'presence': PRESENCE.stats(),
-                'localOnline': {cid: len(v) for cid, v in LOCAL_ONLINE.items()},
                     'cache': st,
                     'uptimeSec': int(time.time() - START),
                 }, ensure_ascii=False).encode('utf-8')

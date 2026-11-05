@@ -35,12 +35,27 @@ function createCast() {
   let lan = []
 
   /**
+   * 这条连接代表的学生们。
+   *
+   * 正常学生端：一个人（自己的令牌）。
+   * 局域网代理：把 N 个学生的观看**合成一条上行连接**（公网下行才是 1 份），
+   *   这时名单由 hello 里的 `for` 给出 —— 服务端照样能准确知道「谁在看投屏」。
+   */
+  function castWhos(conn) {
+    if (conn.castWhos && conn.castWhos.length) return conn.castWhos
+    if (conn.castWho) return [conn.castWho]
+    return []
+  }
+
+  /**
    * 「在看投屏」按人算，不按连接算：
    * 同一个学生同时开了应用内投屏和另一个标签页，也只该算 1 个人。
    */
   function uniqueWatchers() {
     const set = new Set()
-    for (const c of students) if (c.castWho) set.add(c.castWho.classId + ':' + c.castWho.sid)
+    for (const c of students) {
+      for (const w of castWhos(c)) set.add(w.classId + ':' + w.sid)
+    }
     return set.size
   }
 
@@ -66,12 +81,13 @@ function createCast() {
    * 学生开着观看页但老师没开播，只是等着，不算在看；开播/停播时统一更新。
    */
   function markCast(conn, on) {
-    if (!conn.castWho) return
+    const list = castWhos(conn)
+    if (!list.length) return
     if (on && !conn.castOn) {
-      presence.attachCast(conn.castWho.classId, conn.castWho.sid)
+      for (const w of list) presence.attachCast(w.classId, w.sid)
       conn.castOn = true
     } else if (!on && conn.castOn) {
-      presence.detachCast(conn.castWho.classId, conn.castWho.sid)
+      for (const w of list) presence.detachCast(w.classId, w.sid)
       conn.castOn = false
     }
   }
@@ -180,17 +196,40 @@ function createCast() {
               return
             }
 
+            // 身份：正常学生端是本人；局域网代理会送来一份名单（for），
+            // 表示「这条连接代表这么多人在看」—— 服务端照样能准确记账，
+            // 而公网上行/下行都只走这一条。
+            const list = []
+            if (Array.isArray(msg.for)) {
+              // 代理模式：名单就是全部。**空名单表示「现在没人看了」** ——
+              // 不能回退成令牌本人，否则会留下一个「幽灵观众」。
+              for (const it of msg.for) {
+                if (it && it.sid) {
+                  list.push({ classId: it.classId || rec.classId, sid: it.sid, name: it.name || '' })
+                }
+              }
+            } else {
+              // 普通学生端：本人
+              list.push({ classId: rec.classId, sid: rec.sid, name: rec.name || '' })
+            }
+
+            // 名单变了（代理那边有人进/退出观看）→ 先把旧的摘掉再登记新的
             const changed =
-              !conn.castWho || conn.castWho.sid !== rec.sid || conn.castWho.classId !== rec.classId
+              !conn.castWhos ||
+              conn.castWhos.length !== list.length ||
+              conn.castWhos.some((w, i) => w.sid !== list[i].sid || w.classId !== list[i].classId)
             if (changed) {
               markCast(conn, false)
-              conn.castWho = { classId: rec.classId, sid: rec.sid }
+              conn.castWhos = list
+              conn.castWho = list[0] // 兼容旧字段
             }
 
             // 同一学生只保留一个窗口在看：新窗口接管，旧窗口主动退场。
             // 好处一：教师端「在看」不会因为多开标签页而翻倍；
             // 好处二：旧窗口立刻停止收帧，省服务器带宽（一帧几百 KB，学生机也会卡）。
-            if (conn.castWho) {
+            // 只对「代表一个人」的连接生效：代理那条代表很多人，
+            // 它不能把真正在看的学生踢掉（那样全班都收不到画面）。
+            if (conn.castWhos.length === 1) {
               for (const other of students) {
                 if (other === conn || !other.castWho) continue
                 if (other.castWho.classId !== conn.castWho.classId) continue
@@ -242,9 +281,10 @@ function createCast() {
             presence.detach(conn.presence.classId, conn.presence.sid)
             followers.delete(conn)
           }
-          if (conn.castWho) {
+          if (conn.castWho || (conn.castWhos && conn.castWhos.length)) {
             markCast(conn, false)
             conn.castWho = null
+            conn.castWhos = null
           }
           // 正在投屏的那条连接断了：必须归零，否则学生端对着最后一帧干等
           if (modeOwner === conn) {
