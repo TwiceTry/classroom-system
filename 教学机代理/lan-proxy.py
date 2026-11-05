@@ -1398,26 +1398,34 @@ def verify_student(token):
 
 
 class CastFanout(object):
-    """投屏扇出：
+    """投屏：教师端 1 条上行；每个真实观看者 1 条上行（各带自己的令牌）
 
-        教师端  ──1 条上游 ctl──▶  服务器  ──1 条上游 student──▶  代理  ──▶  N 个本地学生
+        教师端  ──1 条上游 ctl────────────────▶ 服务器
+        学生① ──1 条上游 student（带本人令牌）──▶ 服务器   ← 服务端按令牌如实登记
+        学生② ──1 条上游 student（带本人令牌）──▶ 服务器
+        学生③ ──1 条上游 student（带本人令牌）──▶ 服务器
+                                          │
+                    代理只取其中一条的帧 ──┴──▶ 局域网分给所有本地学生
 
-    公网上行 1 份、下行 1 份（不再 N 份）。
-
-    **「谁在看投屏」服务端照样清楚**：代理给上游的 hello 里带一份名单（for），
-    告诉服务器「这条连接代表这些人在看」；服务器按人记账，
-    教师端那份「谁在看」的名单就是准的（代理不用再改写任何接口）。
-    有人进/退出观看时，代理重发一次 hello 把名单刷新。
+    **为什么每个学生一条**：
+    服务端「谁在看投屏」是按连接上的令牌记账的（一条连接一个人）。
+    代理若把 N 个人合并成一条，服务端就只认得一个人 —— 名不副实。
+    所以这里如实为每个真实观看者各建一条（各带本人令牌）：
+      · 服务端看到的「谁在看」= 真的在看的人（有人退出，代理就断掉他的连接，
+        服务端立刻不再算他）→ 名单与人数都是准的
+      · 服务端一行都不用改，行为与直连完全一致
+      · 代价：服务器会把帧广播给每条 student 连接 → 公网下行是 N 份
+        （代理只转发其中一份，其余丢弃；本地那一份是局域网，几乎不要钱）
     """
 
     def __init__(self):
         self.lock = threading.RLock()
-        self.up_ctl = None       # 上游教师通道
-        self.up_stu = None       # 上游学生通道（帧从这条路来）
+        self.up_ctl = None       # 上游教师通道（1 条）
+        self.up_stus = {}        # sid -> {'ws': 上游连接, 'hello': 原始 hello}
+        self.main_stu = None     # 帧从这条连接走（其余的只用来登记「谁在看」）
         self.local_ctl = []      # 本地教师端连接
         self.local_stu = []      # 本地学生端连接
         self.idents = {}         # id(conn) -> {'classId','sid','name','token'}（本地观看者）
-        self.stu_hello = None    # 第一个学生的 hello（用来建立上游 student 连接）
         self.ctl_hello = None
         self.frames = 0
         self.bytes = 0
@@ -1431,67 +1439,61 @@ class CastFanout(object):
             else:
                 self.local_stu.append(ws)
         verbose('本地投屏连接接入：%s（当前本地观看 %d）' % (role, len(self.local_stu)))
-        if role != 'ctl':
-            self.push_up_hello()
 
     def detach_local(self, ws):
         with self.lock:
             self.local_ctl = [c for c in self.local_ctl if c is not ws]
             self.local_stu = [c for c in self.local_stu if c is not ws]
-            self.idents.pop(id(ws), None)
+            ident = self.idents.pop(id(ws), None)
             left = len(self.local_stu)
         verbose('本地投屏连接断开（剩余观看 %d）' % left)
-        self.push_up_hello()
+        if ident:
+            self.drop_up_stu((ident.get('classId'), ident.get('sid')))
 
-    # ---------- 给上游的 hello（带「谁在看」的名单）----------
+    # ---------- 上游学生连接（每个真实观看者一条）----------
 
-    def build_up_hello(self):
-        """生成给上游的 hello：带本地所有观看者的名单（for）。
+    def ensure_up_stu(self, key, hello_text):
+        """为这个学生建（或复用）一条上游 student 连接。
 
-        服务端按名单里的人记账 → 教师端那份「谁在看投屏」是准的，
-        而公网上行/下行都只走这一条连接（这是扇出省带宽的关键）。
+        各带各的令牌 → 服务端按令牌如实登记「谁在看投屏」，
+        它的行为与学生直连时完全一样（不需要服务端配合任何改动）。
         """
         with self.lock:
-            watchers = list(self.idents.values())
-            base = self.stu_hello
-        if not base:
-            return None
+            item = self.up_stus.get(key)
+            if item and not item['ws'].closed:
+                return item['ws']
         try:
-            msg = json.loads(base)
-        except Exception:
-            return base
-        uniq = []
-        seen = set()
-        for w in watchers:
-            sid = w.get('sid')
-            if not sid:
-                continue
-            key = (w.get('classId'), sid)
-            if key in seen:
-                continue
-            seen.add(key)
-            uniq.append({'classId': w.get('classId') or '', 'sid': sid,
-                         'name': w.get('name') or ''})
-        if not uniq:
+            sock = open_upstream_ws('/ws?role=student')
+        except Exception as e:
+            verbose('上游学生通道建不起来：%s' % e)
             return None
-        # 令牌用名单里第一个人的（服务端要验一个有效学生令牌）
-        for w in watchers:
-            if w.get('token'):
-                msg['token'] = w['token']
-                break
-        msg['for'] = uniq
-        verbose('给上游的观看名单：%d 人（%s）' % (
-            len(uniq), ' '.join(w['sid'] for w in uniq)))
-        return json.dumps(msg, ensure_ascii=False)
+        ws = WsConn(sock, mask_out=True, on_bin=self.on_up_stu_bin, on_close=self.on_up_stu_closed)
+        with self.lock:
+            self.up_stus[key] = {'ws': ws, 'hello': hello_text}
+            if self.main_stu is None:
+                self.main_stu = key      # 帧从第一条连接走
+        ws.start()
+        ws.send_text(hello_text)          # 原样转发他自己的 hello（带他的令牌）
+        verbose('上游学生通道已建立（%s）· 现在共 %d 条' % (key[1], len(self.up_stus)))
+        return ws
 
-    def push_up_hello(self):
-        """把最新的观看者名单告诉服务器（有人进/退出观看时调用）。"""
-        up = self.up_stu
-        if up is None or up.closed:
-            return
-        text = self.build_up_hello()
-        if text:
-            up.send_text(text)
+    def drop_up_stu(self, key):
+        """这个学生不看 了 → 关掉他那条上游连接（服务端立刻不再算他）。"""
+        with self.lock:
+            item = self.up_stus.pop(key, None)
+            if self.main_stu == key:
+                # 主连接没了 → 换一条还在的顶上（帧改从它走）
+                self.main_stu = None
+                for k, v in self.up_stus.items():
+                    if not v['ws'].closed:
+                        self.main_stu = k
+                        break
+        if item:
+            try:
+                item['ws'].close()
+            except Exception:
+                pass
+            verbose('已断开该学生的上游通道（服务端不再算他在看）')
 
     # ---------- 本地 → 上游 ----------
     def on_local_text(self, ws, role, text):
@@ -1523,16 +1525,16 @@ class CastFanout(object):
                 return
             ident = dict(ident)
             ident['token'] = token
+            key = (ident.get('classId'), ident.get('sid'))
             with self.lock:
                 self.idents[id(ws)] = ident
-            # 第一个学生：拿他的 hello 建立「上游学生通道」（只建一条）
-            up = self.ensure_up_stu(text)
+            # 每个真实观看者各建一条上游连接（各带本人令牌）
+            # → 服务端按令牌如实登记「谁在看投屏」，行为与直连完全一致
+            up = self.ensure_up_stu(key, text)
             if up is None:
                 ws.send_text(json.dumps({'t': 'error', 'message': '投屏通道暂时不可用，请稍后重试'}, ensure_ascii=False))
                 ws.close()
                 return
-            # 告诉服务器「这些人在看」（带名单）→ 服务器的「谁在看」就准了
-            self.push_up_hello()
 
     def on_local_bin(self, ws, role, buf):
         # 教师端发来的二进制帧 = 投屏画面 → 送到上游教师通道，
@@ -1557,6 +1559,12 @@ class CastFanout(object):
                 c.send_text(text)
 
     def on_up_stu_bin(self, buf):
+        """服务器会把帧广播给每一条 student 连接（每个观看者一条）。
+
+        本地只需要一份 → 只转发「主连接」收到的那份，其余丢弃。
+        （公网下行那份流量已经付掉了，本地省下来的不多，
+          但至少局域网里不会跑 N 份解码。）
+        """
         with self.lock:
             self.frames += 1
             self.bytes += len(buf)
@@ -1588,41 +1596,30 @@ class CastFanout(object):
                 self.up_ctl = None
         verbose('上游教师通道断开')
 
-    def ensure_up_stu(self, hello_text):
-        with self.lock:
-            if self.up_stu is not None and not self.up_stu.closed:
-                return self.up_stu
-            self.stu_hello = hello_text
-        try:
-            sock = open_upstream_ws('/ws?role=student')
-        except Exception as e:
-            verbose('上游学生通道建不起来：%s' % e)
-            return None
-        ws = WsConn(sock, mask_out=True, on_bin=self.on_up_stu_bin, on_close=self.on_up_stu_closed)
-        with self.lock:
-            self.up_stu = ws
-        ws.start()
-        verbose('上游学生通道已建立（公网下行从 N 份变成 1 份）')
-        # 打招呼时就把名单带上（服务端据此知道谁在看）
-        ws.send_text(self.build_up_hello() or hello_text)
-        return ws
-
     def on_up_stu_closed(self, ws):
+        """某条上游学生连接断了 → 找出来是谁的，用他原来的 hello 重连。"""
+        key = None
+        hello = None
         with self.lock:
-            if self.up_stu is ws:
-                self.up_stu = None
-            hello = self.stu_hello
-        verbose('上游学生通道断开，尝试重连')
+            for k, v in list(self.up_stus.items()):
+                if v['ws'] is ws:
+                    key = k
+                    hello = v['hello']
+                    break
+        if key is None:
+            return
+        verbose('上游学生通道断开（%s），尝试重连' % key[1])
         if hello:
             time.sleep(1.0)
-            self.ensure_up_stu(hello)
+            self.ensure_up_stu(key, hello)
 
     def stats(self):
         with self.lock:
             return {
                 'fanout': FANOUT_ENABLED,
                 'upCtl': bool(self.up_ctl and not self.up_ctl.closed),
-                'upStudent': bool(self.up_stu and not self.up_stu.closed),
+                'upStudent': len(self.up_stus),
+                'mainStudent': self.main_stu[1] if self.main_stu else None,
                 'localTeacher': len(self.local_ctl),
                 'localWatchers': len(self.local_stu),
                 'uniqueWatchers': len(set((v.get('classId'), v.get('sid')) for v in self.idents.values())),
