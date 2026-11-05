@@ -45,8 +45,8 @@ NG = '✗'
 
 
 # ---------------------------------------------------------------- 小工具
-def http(url, method='GET', body=None, headers=None, timeout=20):
-    """返回 (状态码, 字节内容, 耗时毫秒)"""
+def http(url, method='GET', body=None, headers=None, timeout=20, with_headers=False):
+    """返回 (状态码, 字节内容, 耗时毫秒)；with_headers=True 时多返回一个响应头字典"""
     data = None
     hdrs = dict(headers or {})
     if body is not None:
@@ -57,12 +57,22 @@ def http(url, method='GET', body=None, headers=None, timeout=20):
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             buf = r.read()
-            return r.status, buf, int((time.time() - t0) * 1000)
+            ms = int((time.time() - t0) * 1000)
+            if with_headers:
+                return r.status, buf, ms, dict(r.getheaders())
+            return r.status, buf, ms
     except urllib.error.HTTPError as e:
         buf = e.read()
-        return e.code, buf, int((time.time() - t0) * 1000)
+        ms = int((time.time() - t0) * 1000)
+        if with_headers:
+            return e.code, buf, ms, dict(e.headers or {})
+        return e.code, buf, ms
     except Exception as e:
-        return 0, str(e).encode('utf-8'), int((time.time() - t0) * 1000)
+        buf = str(e).encode('utf-8')
+        ms = int((time.time() - t0) * 1000)
+        if with_headers:
+            return 0, buf, ms, {}
+        return 0, buf, ms
 
 
 def read_conf(path):
@@ -102,10 +112,11 @@ class Ws(object):
     def _open(self):
         self.sock = socket.create_connection((self.host, self.port), timeout=self._timeout)
         key = 'dGhlIHNhbXBsZSBub25jZQ=='
-        self.sock.sendall((
+        req = (
             'GET %s HTTP/1.1\r\nHost: %s:%d\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
             'Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n'
-        ) % (self.path, self.host, self.port, key).encode('latin1'))
+        ) % (self.path, self.host, self.port, key)
+        self.sock.sendall(req.encode('latin1'))
         self._t = threading.Thread(target=self._read)
         self._t.daemon = True
         self._t.start()
@@ -119,9 +130,18 @@ class Ws(object):
                 if not d:
                     break
                 self.buf += d
+                if not self._ready.is_set():
+                    # 先把 HTTP 握手响应（101）吃掉 —— 它不是 WebSocket 帧
+                    if b'\r\n\r\n' in self.buf:
+                        head, _, rest = self.buf.partition(b'\r\n\r\n')
+                        self.status = head.split(b'\r\n')[0].decode('latin1')
+                        self.buf = rest
+                        self._ready.set()
+                    continue
                 self._parse()
         except Exception:
-            pass
+            # 出错也要放行，否则一直等到超时
+            self._ready.set()
 
     def _parse(self):
         while len(self.buf) >= 2:
@@ -229,11 +249,13 @@ class Check(object):
         return passed
 
 
-def c_proxy(cfg, args):
-    c = Check('proxy', '代理自检页')
+def c_proxy(cfg, args, c):
     st, buf, ms = http(cfg['base'] + '/__proxy_health')
     if st != 200:
-        return c.done(False, '代理没起来？确认 启动代理.bat 的窗口还开着、端口对不对')
+        c.bad('连不上 %s/__proxy_health（%s）' % (cfg['base'], (buf[:40] or b'').decode('utf-8', 'replace')))
+        c.note('代理窗口开着吗？端口对吗？proxy.conf 里 listen.port 写的是 %d' % cfg['port'])
+        c.note('端口不对就用 --port 指定，或改 proxy.conf 的 listen.port')
+        return c.done(False, '连不上代理（端口 %d）—— 先确认代理在哪个端口' % cfg['port'])
     try:
         j = json.loads(buf.decode('utf-8'))
     except Exception:
@@ -249,8 +271,7 @@ def c_proxy(cfg, args):
     return c.done(True)
 
 
-def c_upstream(cfg, args):
-    c = Check('upstream', '上游公网连通')
+def c_upstream(cfg, args, c):
     st, buf, ms = http(cfg['base'] + '/api/health', timeout=25)
     if st == 200:
         try:
@@ -265,15 +286,15 @@ def c_upstream(cfg, args):
     return c.done(False, '上游不通 —— 先看 target 对不对')
 
 
-def c_cache(cfg, args):
-    c = Check('cache', '缓存：第一次 MISS、第二次 HIT')
+def c_cache(cfg, args, c):
     path = '/examples/vue3-sfc-loader.js'
-    st1, b1, ms1 = http(cfg['base'] + path, timeout=60)
+    st1, b1, ms1, h1 = http(cfg['base'] + path, timeout=60, with_headers=True)
     if st1 != 200:
-        return c.done(False, '这个文件没取到（上游有问题？）')
-    st2, b2, ms2 = http(cfg['base'] + path, timeout=60)
-    x1 = 'MISS' if b'X-Cache: MISS' in b1 else ('HIT' if b'X-Cache: HIT' in b1 else '?')
-    x2 = 'MISS' if b'X-Cache: MISS' in b2 else ('HIT' if b'X-Cache: HIT' in b2 else '?')
+        c.bad('取不到 %s（%s）' % (path, st1))
+        return c.done(False, '这个文件没取到 —— 先看「上游公网连通」那项')
+    st2, b2, ms2, h2 = http(cfg['base'] + path, timeout=60, with_headers=True)
+    x1 = (h1.get('X-Cache') or '?').upper()
+    x2 = (h2.get('X-Cache') or '?').upper()
     c.ok('%s → %s · %.1f KB · %d ms' % (path, x1, len(b1) / 1024.0, ms1))
     c.ok('%s → %s · %.1f KB · %d ms' % (path, x2, len(b2) / 1024.0, ms2))
     same = hashlib.sha256(b1).hexdigest() == hashlib.sha256(b2).hexdigest()
@@ -291,8 +312,7 @@ def c_cache(cfg, args):
     return c.done(False, '缓存没生效')
 
 
-def c_cast(cfg, args):
-    c = Check('cast', '投屏帧经代理转发（字节无损）')
+def c_cast(cfg, args, c):
     teacher = args.teacher_token
     student = args.student_token
     if not teacher or not student:
@@ -343,8 +363,7 @@ def c_cast(cfg, args):
                 w.close()
 
 
-def c_presence(cfg, args):
-    c = Check('presence', '在场通道扇出 + 本地名单')
+def c_presence(cfg, args, c):
     socks = []
     try:
         # 1) 三个学生连到场通道
@@ -355,7 +374,12 @@ def c_presence(cfg, args):
             time.sleep(0.4)
         c.ok('3 个学生连上 /ws?role=presence')
 
-        time.sleep(1.2)
+        # 模拟真实场景：学生端每 10 秒发一次心跳，代理据此补齐名单
+        for i in range(3):
+            http(cfg['base'] + '/api/presence/ping', 'POST', {},
+                 headers={'Authorization': 'Bearer ' + args.students[i]}, timeout=15)
+            time.sleep(0.4)
+        time.sleep(1.0)
         st, buf, _ = http(cfg['base'] + '/__proxy_stats')
         try:
             j = json.loads(buf.decode('utf-8'))
@@ -402,8 +426,7 @@ def c_presence(cfg, args):
             w.close()
 
 
-def c_load(cfg, args):
-    c = Check('load', '%d 个学生同时开页' % args.n)
+def c_load(cfg, args, c):
     st, buf, _ = http(cfg['base'] + '/', timeout=20)
     html = buf.decode('utf-8', 'replace') if st == 200 else ''
     import re
@@ -472,19 +495,34 @@ CHECKS = [
 
 
 def login(base, password, sid, name, course):
-    """拿教师令牌与学生令牌"""
+    """拿教师令牌与几个学生令牌。
+
+    要「几个」：服务端规定「同一个学生只保留一个观看连接」，
+    所以投屏测试用的学生必须与在场测试用的学生不是同一个，
+    否则代理的上游通道和本地观看会被服务端互相踢掉。
+    """
     teacher = ''
     st, buf, _ = http(base + '/api/login/teacher', 'POST', {'password': password})
     if st == 200:
         teacher = (json.loads(buf.decode('utf-8')) or {}).get('token') or ''
+    # 服务端校验「学号 + 姓名」的配对，所以要用真实名单里的组合
+    # （--sid / --name 指定的那个排第一，其余用同班的学生补齐）
+    roster = [
+        (sid, name),
+        ('2515270101', '王志博'),
+        ('2515270102', '杜非凡'),
+        ('2515270103', '张铱星'),
+        ('2515270104', '尹康'),
+    ]
     students = []
-    for s, n in [(sid, name)]:
+    for s, n in roster:
         st, buf, _ = http(base + '/api/login/student', 'POST',
                           {'sid': s, 'name': n, 'courseId': course})
         if st == 200:
             students.append((json.loads(buf.decode('utf-8')) or {}).get('token') or '')
         else:
             students.append('')
+            verbose_note = '学号 %s / %s 登录失败（名字对不上？用 --sid --name 指定）' % (s, n)
     return teacher, students
 
 
@@ -511,6 +549,23 @@ def main():
     conf = read_conf(os.path.join(HERE, 'proxy.conf'))
     port = args.port or int(conf.get('listen.port', '18799'))
     target = args.target or conf.get('target', '')
+
+    # 端口探测：配置里的端口连不上时，扫几个常见端口，
+    # 直接告诉用户「代理在哪个端口能通」—— 比让他自己猜省事得多
+    if not args.port:
+        st, _, _ = http('http://127.0.0.1:%d/__proxy_health' % port, timeout=3)
+        if st != 200:
+            for p in (18799, 18805, 18850, 18860, 18905, 18798):
+                if p == port:
+                    continue
+                st2, _, _ = http('http://127.0.0.1:%d/__proxy_health' % p, timeout=2)
+                if st2 == 200:
+                    print('  ! proxy.conf 里写的是端口 %d，但 %d 能通 —— 用 %d 继续测'
+                          % (port, p, p))
+                    port = p
+                    break
+            else:
+                print('  ! 端口 %d 不通，常见端口也没找到 —— 代理是不是没起来？' % port)
     cfg = {'host': args.host, 'port': port, 'base': 'http://%s:%d' % (args.host, port),
            'target': target}
 
@@ -522,8 +577,10 @@ def main():
     # 令牌（通过代理拿，这样测的是「学生看到的」那条路）
     teacher, students = login(cfg['base'], args.password, args.sid, args.name, args.course)
     args.teacher_token = teacher
+    # students[0] 给「投屏」用（本地看投屏的那个学生）
+    # students[1..] 给「在场」用（别的学生，避免同一学生被服务端互踢）
     args.student_token = students[0] if students else ''
-    args.students = students + [''] * 5
+    args.students = (students[1:4] if len(students) > 3 else students) + [''] * 5
     if not teacher:
         print('  ! 教师登录失败（口令不对？后面几项会跳过）')
 
@@ -534,7 +591,7 @@ def main():
             continue
         c = Check(name, title)
         try:
-            fn(cfg, args)
+            fn(cfg, args, c)
         except Exception as e:
             c.bad('异常：%s: %s' % (type(e).__name__, e))
             c.passed = False
@@ -544,6 +601,8 @@ def main():
         for l in c.lines:
             print(l)
         if not c.passed:
+            if c.hint:
+                print('    → 怎么办：' + c.hint)
             failed.append((title, c.hint))
 
     print('')

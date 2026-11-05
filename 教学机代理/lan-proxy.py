@@ -29,7 +29,6 @@ lan-proxy.py —— 教学机上的「局域网 → 公网」反向代理（Pyth
   python lan-proxy.py --port 18800 --verbose   # 命令行临时覆盖配置
 """
 
-import hashlib
 import base64
 import hashlib
 import json
@@ -163,6 +162,9 @@ BIND_SOURCE = str(conf_get('bind.source', '') or '').strip()
 # （随身 WiFi 上一次握手要 600ms，40 个学生同时开页就是 40 次握手，
 #   手机热点的并发连接数直接被打爆 → 连接被踢、页面转圈）
 POOL_MAX = int(conf_get('upstream.pool', '8'))
+# 池里连接最多留多久（秒）。必须小于服务端的 keepAliveTimeout（Node 默认 5 秒），
+# 否则复用到已被对端关掉的连接 → 转发失败 → 学生看到 502。
+POOL_IDLE = int(float(conf_get('upstream.poolidle', '3')))
 # 在场通道（presence）也走扇出：1 条上游连接 + 本地维护名单，
 # 免得 40 个学生 = 40 条长连接把弱网（随身 WiFi）打爆。
 # 代理会把「谁在场」按本地名单改写后再给教师端，所以名单依然是准的。
@@ -335,14 +337,32 @@ class UpstreamPool(object):
         self.free = {}
 
     def take(self, target):
+        """拿一条空闲连接。
+
+        两个坑都在这里挡掉：
+          · 对端（Node 的 keepAliveTimeout 默认 5 秒）会把空闲连接关掉，
+            复用到死连接 → 转发失败 → 学生看到 502；
+          · 所以：① 超过 idle 秒的一律丢弃；② 复用前探一下活
+            （对端关闭时 socket 会变成可读）。
+        """
         key = id(target)
+        now = time.time()
         with self.lock:
             lst = self.free.get(key) or []
+            keep = []
             while lst:
-                conn = lst.pop()
+                item = lst.pop()
+                conn, born = item if isinstance(item, tuple) else (item, now)
+                if now - born > POOL_IDLE:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    continue
                 try:
-                    if conn.sock is not None and conn.sock.fileno() != -1:
-                        self.free[key] = lst
+                    if conn.sock is not None and conn.sock.fileno() != -1 and self._alive(conn):
+                        # 借出去的那条**不要**放回 free（它正在被这个请求用着）
+                        self.free[key] = keep
                         return conn, True
                 except Exception:
                     pass
@@ -350,8 +370,23 @@ class UpstreamPool(object):
                     conn.close()
                 except Exception:
                     pass
-            self.free[key] = lst
+            self.free[key] = keep
         return None, False
+
+    @staticmethod
+    def _alive(conn):
+        """连接还活着吗：对端关了的话，socket 会变成可读（读到 0 字节）"""
+        sock = conn.sock
+        if sock is None:
+            return False
+        try:
+            r, _, _ = select.select([sock], [], [], 0)
+            if not r:
+                return True
+            data = sock.recv(1, socket.MSG_PEEK)
+            return bool(data)
+        except Exception:
+            return False
 
     def put(self, target, conn):
         key = id(target)
@@ -363,7 +398,7 @@ class UpstreamPool(object):
                 except Exception:
                     pass
                 return
-            lst.append(conn)
+            lst.append((conn, time.time()))
 
     def drop(self, target, conn):
         try:
@@ -548,17 +583,38 @@ LOCAL_ONLINE = {}     # classId -> {sid: {'name': name, 'ts': ms}}
 LOCAL_CASTING = {}    # classId -> {sid: ts}   谁在看投屏
 IDENT_CACHE = {}      # token -> {'classId','sid','name'}（认一次就缓存）
 IDENT_LOCK = threading.Lock()
+IDENT_SERIAL = threading.Lock()   # 认身份串行（弱网下并发打上游容易失败）
 LOCAL_LOCK = threading.Lock()
 
 
 def identify(token):
-    """令牌 → 身份（问上游的 /api/me；结果缓存起来，别每次都问）"""
+    """令牌 → 身份（问上游的 /api/me；结果缓存起来，别每次都问）
+
+    认身份是「打上游一次」的动作 —— 弱网下并发打过去容易失败
+    （40 个学生同时连 → 一半失败 → 名单只剩一半人）。
+    所以：① 串行做（一个一个问）② 失败重试一次 ③ 失败要记日志。
+    """
     if not token:
         return None
     with IDENT_LOCK:
         hit = IDENT_CACHE.get(token)
     if hit:
         return hit
+    with IDENT_SERIAL:
+        with IDENT_LOCK:
+            hit = IDENT_CACHE.get(token)
+        if hit:
+            return hit
+        for attempt in (1, 2):
+            ident = _identify_once(token)
+            if ident:
+                return ident
+            if attempt == 1:
+                time.sleep(0.3)
+        return None
+
+
+def _identify_once(token):
     try:
         raw = connect_out(UP.host, UP.port, 6)
         if is_https(UP):
@@ -575,9 +631,11 @@ def identify(token):
         body = resp.read()
         conn.close()
         if resp.status != 200:
+            verbose('认身份：/api/me 返回 %d' % resp.status)
             return None
         j = json.loads(body.decode('utf-8'))
         if j.get('role') != 'student':
+            verbose('认身份：role=%r，不是学生' % j.get('role'))
             return None
         st = j.get('student') or {}
         ident = {'classId': st.get('classId') or '', 'sid': st.get('sid') or '',
@@ -725,6 +783,7 @@ class PresenceFanout(object):
 
     def __init__(self):
         self.lock = threading.Lock()
+        self.up_lock = threading.Lock()   # 建上游通道时用（别建成好几条）
         self.local = []          # 本地 presence 连接（WsConn）
         self.up = None           # 上游 presence 连接
         self.up_hello = None     # 用来建上游连接的那个 hello（带学生令牌）
@@ -739,24 +798,30 @@ class PresenceFanout(object):
             self.local = [c for c in self.local if c is not ws]
 
     def ensure_up(self):
-        with self.lock:
-            if self.up is not None and not self.up.closed:
-                return self.up
-            hello = self.up_hello
-        if not hello:
-            return None
-        try:
-            sock = open_upstream_ws('/ws?role=presence')
-        except Exception as e:
-            verbose('上游在场通道建不起来：%s' % e)
-            return None
-        ws = WsConn(sock, mask_out=True, on_text=self.on_up_text, on_close=self.on_up_closed)
-        with self.lock:
-            self.up = ws
-        ws.start()
-        ws.send_text(hello)
-        verbose('上游在场通道已建立（本地 %d 条连接合并成 1 条）' % len(self.local))
-        return ws
+        """建上游在场通道。
+
+        一定要加锁：40 个学生同时连上来时，没有锁会建成好几条上游通道，
+        它们互相把对方的连接顶掉（on_up_closed 又去重建）→ 来回拉锯。
+        """
+        with self.up_lock:
+            with self.lock:
+                if self.up is not None and not self.up.closed:
+                    return self.up
+                hello = self.up_hello
+            if not hello:
+                return None
+            try:
+                sock = open_upstream_ws('/ws?role=presence')
+            except Exception as e:
+                verbose('上游在场通道建不起来：%s' % e)
+                return None
+            ws = WsConn(sock, mask_out=True, on_text=self.on_up_text, on_close=self.on_up_closed)
+            with self.lock:
+                self.up = ws
+            ws.start()
+            ws.send_text(hello)
+            verbose('上游在场通道已建立（本地 %d 条连接合并成 1 条）' % len(self.local))
+            return ws
 
     def on_up_text(self, text):
         with self.lock:
