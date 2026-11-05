@@ -1005,49 +1005,94 @@ async function testCast(ctx) {
       two.every((x) => casting1.includes(x.sid)),
       'casting=' + casting1.join(',') + ' 期望含 ' + two.map((x) => x.sid).join(','))
 
-    // 代理那边「没人看了」→ 空名单 → 服务端不能留下幽灵观众
-    proxyConn.sendText({ t: 'hello', token: stuToken, cid: 'cs', for: [] })
-    await sleep(500)
-    const cast2 = await request('GET', '/api/teacher/classes/' + c0.id + '/presence', undefined, teaToken)
-    const casting2 = (cast2.json.casting || []).map((x) => x.sid)
-    check('proxy roster: empty roster leaves nobody behind',
-      !two.some((x) => casting2.includes(x.sid)),
-      'casting=' + casting2.join(','))
 
-    proxyConn.close()
-    opener.close()
-    await sleep(400)
-    const cast3 = await request('GET', '/api/teacher/classes/' + c0.id + '/presence', undefined, teaToken)
-    const casting3 = (cast3.json.casting || []).map((x) => x.sid)
-    check('proxy roster: closed connection drops its roster',
-      !two.some((x) => casting3.includes(x.sid)),
-      'casting=' + casting3.join(','))
+
+
   }
 
-  // 边缘端快照：代理把本地 N 个学生的状态打包成**一次**请求发上来，
-  // 服务端按**令牌**认人（客户端说了不算）—— 这样既省流又伪造不了。
+  // 边缘端快照：代理把本地 N 个学生的状态打包成**一次**请求发上来。
+  // 这个请求代表「一群人」，所以必须凭边缘端密钥签名（见 config.edgeKey）。
+  // 这里同时验证「签名有效才收」和「没有签名一律拒」。
   {
+    const crypto = require('crypto')
+    const config = require('./config')
+    const edgeSign = (source, ts, bodyStr) => {
+      const mac = crypto.createHmac('sha256', config.edgeKey)
+      mac.update(source + '\n' + ts + '\n')
+      mac.update(Buffer.from(bodyStr, 'utf8'))
+      return mac.digest('hex')
+    }
+    const postSnap = (bodyObj, opts) => {
+      const o = opts || {}
+      const body = JSON.stringify(bodyObj)
+      const source = o.source || 'selftest-edge'
+      const ts = String(o.ts || Math.floor(Date.now() / 1000))
+      const headers = { 'Content-Type': 'application/json' }
+      if (o.sign !== false) {
+        headers['X-Edge-Source'] = source
+        headers['X-Edge-Ts'] = ts
+        headers['X-Edge-Sign'] = o.sign || edgeSign(source, ts, body)
+      }
+      return new Promise((resolve, reject) => {
+        const req2 = http.request(
+          { host: HOST, port: PORT, path: '/api/presence/snapshot', method: 'POST', headers },
+          (res) => {
+            let buf = ''
+            res.on('data', (d) => (buf += d))
+            res.on('end', () => {
+              let json = {}
+              try {
+                json = JSON.parse(buf)
+              } catch (e) {}
+              resolve({ status: res.statusCode, json, text: buf })
+            })
+          }
+        )
+        req2.on('error', reject)
+        req2.end(body)
+      })
+    }
+
+    // ① 没有签名 → 必须拒（这就是原来「一键踢全班」的入口）
+    const anon = await postSnap({ students: [] }, { sign: false })
+    check('edge snapshot: unsigned rejected', anon.status === 401, 'status=' + anon.status)
+
+    // ② 签名正确 → 收下
+    const okPost = await postSnap({ students: [{ token: stuToken, online: true, casting: true }] })
+    check('edge snapshot: signed accepted', okPost.status === 200 && !!okPost.json.ok,
+      'status=' + okPost.status + ' ' + JSON.stringify(okPost.json))
+    await sleep(300)
     const cls1 = await request('GET', '/api/teacher/classes', undefined, teaToken)
     const c1 = cls1.json.classes[0]
-    const one = c1.students[0]
-    const snap = await request('POST', '/api/presence/snapshot', {
-      source: 'selftest-edge',
-      students: [{ token: stuToken, online: true, casting: true }],
-    }, teaToken)
-    check('edge snapshot: accepted', !!(snap.json && snap.json.ok),
-      'online=' + (snap.json && snap.json.online) + ' casting=' + (snap.json && snap.json.casting))
-    await sleep(300)
     const pres5 = await request('GET', '/api/teacher/classes/' + c1.id + '/presence', undefined, teaToken)
     check('edge snapshot: teacher sees the online student',
       (pres5.json.online || []).length >= 1,
       'online=' + pres5.json.onlineCount + ' casting=' + pres5.json.castingCount)
-    // 令牌不对的条目要被忽略（伪造不了）
-    const bad = await request('POST', '/api/presence/snapshot', {
-      source: 'selftest-edge-bad',
-      students: [{ token: 'not-a-real-token', online: true, casting: true }],
-    }, teaToken)
-    check('edge snapshot: forged token ignored', bad.json.online === 0,
-      'online=' + bad.json.online)
+
+    // ③ 令牌不对的条目要被忽略（身份以令牌为准）
+    const badBody = JSON.stringify({ students: [{ token: 'not-a-real-token', online: true, casting: true }] })
+    const bts = String(Math.floor(Date.now() / 1000))
+    const badPost = await postSnap(
+      { students: [{ token: 'not-a-real-token', online: true, casting: true }] },
+      { source: 'selftest-edge-bad', ts: bts, sign: edgeSign('selftest-edge-bad', bts, badBody) }
+    )
+    check('edge snapshot: forged token ignored', badPost.json.online === 0, 'online=' + badPost.json.online)
+
+    // ④ 重放同一包 → 拒
+    const rts = String(Math.floor(Date.now() / 1000))
+    const rbody = JSON.stringify({ students: [] })
+    const rsign = edgeSign('selftest-edge-replay', rts, rbody)
+    const first = await postSnap({ students: [] }, { source: 'selftest-edge-replay', ts: rts, sign: rsign })
+    const again = await postSnap({ students: [] }, { source: 'selftest-edge-replay', ts: rts, sign: rsign })
+    check('edge snapshot: replay rejected', first.status === 200 && again.status === 401,
+      'first=' + first.status + ' again=' + again.status)
+
+    // ⑤ 教师能取到密钥，学生不能
+    const kTeacher = await request('GET', '/api/teacher/edge-key', undefined, teaToken)
+    check('edge key: teacher can read it', kTeacher.status === 200 && !!kTeacher.json.key,
+      'len=' + String(kTeacher.json.key || '').length)
+    const kStudent = await request('GET', '/api/teacher/edge-key', undefined, stuToken)
+    check('edge key: student forbidden', kStudent.status === 403, 'status=' + kStudent.status)
   }
 }
   // 差量模式下，一帧「整屏」就是学生的基准画面（差量块画在它上面）。

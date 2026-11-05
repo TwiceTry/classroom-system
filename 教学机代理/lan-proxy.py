@@ -31,6 +31,7 @@ lan-proxy.py —— 教学机上的「局域网 → 公网」反向代理（Pyth
 
 import base64
 import hashlib
+import hmac
 import json
 import os
 import select
@@ -166,6 +167,10 @@ POOL_MAX = int(conf_get('upstream.pool', '8'))
 # 40 个学生 ≈ 10KB / 周期 —— 比每人一条长连接省流得多。
 EDGE_SNAPSHOT_INTERVAL = int(float(conf_get('edge.snapshot.interval', '5')))
 EDGE_SNAPSHOT = as_bool(conf_get('edge.snapshot'), True)
+# 上报密钥：服务端要求「代表一群人」的请求必须签名（见服务端 GET /api/teacher/edge-key）。
+# 没填的话服务端会 401，代理只在日志里提示一次，不会反复刷屏。
+EDGE_KEY = str(conf_get('edge.key', '')).strip()
+EDGE_SOURCE = str(conf_get('edge.source', 'lan-proxy')).strip() or 'lan-proxy'
 # 池里连接最多留多久（秒）。必须小于服务端的 keepAliveTimeout（Node 默认 5 秒），
 # 否则复用到已被对端关掉的连接 → 转发失败 → 学生看到 502。
 POOL_IDLE = int(float(conf_get('upstream.poolidle', '3')))
@@ -660,7 +665,17 @@ def edge_report():
     entries = EDGE.snapshot()
     if not entries:
         return
-    body = json.dumps({'source': 'lan-proxy', 'students': entries}, ensure_ascii=False).encode('utf-8')
+    if not EDGE_KEY:
+        verbose('边缘端上报跳过：proxy.conf 里没填 edge.key（服务端会拒绝）。'
+                '教师端 GET /api/teacher/edge-key 可以取到当前密钥。')
+        return
+    body = json.dumps({'students': entries}, ensure_ascii=False,
+                      separators=(',', ':')).encode('utf-8')
+    ts = str(int(time.time()))
+    mac = hmac.new(EDGE_KEY.encode('utf-8'), digestmod=hashlib.sha256)
+    mac.update((EDGE_SOURCE + '\n' + ts + '\n').encode('utf-8'))
+    mac.update(body)
+    sign = mac.hexdigest()
     try:
         raw_sock = connect_out(UP.host, UP.port, 10)
         if is_https(UP):
@@ -672,10 +687,22 @@ def edge_report():
             conn.sock = raw_sock
         conn.auto_open = False
         conn.request('POST', (UP.base_path or '') + '/api/presence/snapshot', body=body,
-                     headers={'Content-Type': 'application/json', 'Content-Length': str(len(body))})
+                     headers={'Content-Type': 'application/json',
+                              'Content-Length': str(len(body)),
+                              'X-Edge-Source': EDGE_SOURCE,
+                              'X-Edge-Ts': ts,
+                              'X-Edge-Sign': sign})
         resp = conn.getresponse()
-        resp.read()
+        payload = resp.read()
+        status = resp.status
         conn.close()
+        if status == 401:
+            verbose('边缘端上报被拒（401）：%s' % payload[:200].decode('utf-8', 'replace'))
+            verbose('  → 把服务端 GET /api/teacher/edge-key 返回的 key 填到 proxy.conf 的 edge.key')
+            return
+        if status != 200:
+            verbose('边缘端上报异常：HTTP %s · %s' % (status, payload[:160].decode('utf-8', 'replace')))
+            return
         verbose('快照已上报：%d 人（在线 %d · 看投屏 %d）' % (
             len(entries), sum(1 for e in entries if e['online']),
             sum(1 for e in entries if e['casting'])))
@@ -1904,6 +1931,12 @@ def print_banner():
     if EDGE_SNAPSHOT:
         print('  到场通道：本地连（不占公网连接）· 每 %d 秒聚合上报一次快照'
               % EDGE_SNAPSHOT_INTERVAL)
+        if EDGE_KEY:
+            print('  上报签名：有（edge.key 已配 · 来源名 %s）' % EDGE_SOURCE)
+        else:
+            print('  上报签名：**没配 edge.key** —— 服务端会拒绝上报（在场名单只能靠心跳兜底）')
+            print('            去教师端 GET /api/teacher/edge-key 取密钥，填到 proxy.conf')
+    
     else:
         print('  到场通道：逐条直连（一个学生一条，名单最准）')
     print('    读到：port=%s · target=%s · tls.insecure=%s · cache=%s · 扇出=%s' % (

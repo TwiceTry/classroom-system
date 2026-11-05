@@ -32,7 +32,7 @@ const schemeIO = require('../lib/schemeio')
 const compat = require('../lib/compat')
 const sheetLib = require('../lib/sheet')
 const { stringifyGrid } = require('../lib/csv')
-const { Router, ok, fail, json, readJson, readBuffer, readToFile, sendFile, HttpError } = require('../lib/http')
+const { Router, ok, fail, json, readJson, readBody, readBuffer, readToFile, sendFile, HttpError } = require('../lib/http')
 
 /**
  * 收一个大文件到临时文件，跑完自动删。
@@ -1005,10 +1005,65 @@ module.exports = function createApi(db, cast) {
    * 身份以**令牌**为准：客户端只能报「我手上有这些令牌」，
    * 班级/学号/姓名全由服务端从令牌解出来 —— 冒名顶替不了。
    */
+  /**
+   * 边缘端上报密钥：老师把它填到教学机的 proxy.conf（edge.key = …）。
+   * 只有教师令牌能看 —— 它是「代表一群人」的凭据，不能外泄。
+   */
+  r.get('/api/teacher/edge-key', async (req) => {
+    need(req, 'teacher')
+    return {
+      key: config.edgeKey,
+      endpoint: '/api/presence/snapshot',
+      howto:
+        '在教学机的 proxy.conf 里加一行 edge.key = ' + config.edgeKey +
+        '（然后重启代理）。代理每次上报都会用它对请求签名。',
+    }
+  })
+
+  /**
+   * 边缘端（局域网代理）上报「谁在场、谁在看投屏」。
+   *
+   * 这个请求代表的是**一群人**，所以必须凭边缘端密钥调用 ——
+   * 否则任何拿到某个学生令牌的人都能替全班报状态，
+   * 甚至用一个空名单把整个班「踢下线」（applySnapshot 会对消失的人 leave）。
+   *
+   * 校验三件套：
+   *   1) X-Edge-Ts 与服务器时间相差 ≤ 5 分钟（防老包）
+   *   2) X-Edge-Sign = HMAC-SHA256(edgeKey, source + '\n' + ts + '\n' + 原始 body)
+   *   3) 同一个 source + ts 只接受一次（防重放 —— 抓到一次包也踢不了人）
+   */
   r.post('/api/presence/snapshot', async (req) => {
-    const body = await readJson(req)
+    const source = String(req.headers['x-edge-source'] || '').slice(0, 40)
+    const tsText = String(req.headers['x-edge-ts'] || '')
+    const sign = String(req.headers['x-edge-sign'] || '')
+    const rawBody = await readBody(req, 512 * 1024)
+
+    const deny = (msg) => new HttpError(401, msg)
+    if (!source) throw deny('缺少 X-Edge-Source')
+    const ts = Number(tsText)
+    if (!isFinite(ts) || Math.abs(Math.floor(Date.now() / 1000) - ts) > 300) {
+      throw deny('X-Edge-Ts 不对：教学机与服务器的时间差超过 5 分钟，或者请求过期了')
+    }
+    const mac = crypto.createHmac('sha256', config.edgeKey)
+    mac.update(source + '\n' + tsText + '\n')
+    mac.update(rawBody)
+    const expect = Buffer.from(mac.digest('hex'), 'utf8')
+    const got = Buffer.from(sign, 'utf8')
+    if (got.length !== expect.length || !crypto.timingSafeEqual(got, expect)) {
+      throw deny(
+        '边缘端签名不对：教学机 proxy.conf 里的 edge.key 要和服务端一致' +
+          '（教师端 GET /api/teacher/edge-key 可取到当前密钥）'
+      )
+    }
+    if (!presence.markNonce(source, ts)) throw deny('这个上报已经用过了（防重放）')
+
+    let body
+    try {
+      body = JSON.parse(rawBody.toString('utf8') || '{}')
+    } catch (e) {
+      throw new HttpError(400, 'body 不是合法 JSON')
+    }
     const list = Array.isArray(body.students) ? body.students.slice(0, 500) : []
-    const source = String(body.source || 'edge').slice(0, 40)
     const r = presence.applySnapshot(source, list)
     return { ok: true, online: r.online, casting: r.casting }
   })

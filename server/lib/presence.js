@@ -32,7 +32,13 @@ const castSnap = new Map()   // key → true
 // 代理把本地 N 个学生的状态打包成一次请求发上来（省流的关键）；
 // 身份一律以**令牌**为准（客户端只能报「我手上有这些令牌」，
 // 冒名顶替不了 —— 令牌是服务端签发的）。
-const snapshots = new Map() // source -> { online: Set(sid), casting: Set(sid) }
+const snapshots = new Map() // source -> { online: Set(sid), casting: Set(sid), lastAt }
+// 边缘端上报的容量控制：来源不能无限多（source 是外部传进来的字符串），
+// 也不能永远留着（代理关掉以后那些 source 该被忘掉）。
+const MAX_SOURCES = 20
+const SNAPSHOT_TTL = 10 * 60 * 1000 // 10 分钟没上报 → 忘掉这个来源
+const nonces = new Map() // source + ':' + ts -> 到期时间（防重放）
+const MAX_NONCES = 2000
 
 const keyOf = (classId, sid) => classId + ':' + sid
 
@@ -102,6 +108,31 @@ function detachCast(classId, sid) {
 }
 
 /**
+ * 防重放：同一个来源的同一个时间戳只接受一次。
+ *
+ * 为什么需要：签名只保证「这个包是代理发的」，不保证「只发了一次」。
+ * 抓到一包空的「谁都没在看」再放一遍，照样能把全班踢下线。
+ * 所以记一下已经用过的 source+ts（保留 5 分钟，和允许的时钟偏差一致）。
+ */
+function markNonce(source, ts) {
+  const key = source + ':' + ts
+  const now = Date.now()
+  if (nonces.has(key)) return false
+  nonces.set(key, now + 300 * 1000)
+  if (nonces.size > MAX_NONCES) {
+    for (const [k, exp] of nonces) if (exp < now) nonces.delete(k)
+    if (nonces.size > MAX_NONCES) {
+      let extra = nonces.size - MAX_NONCES
+      for (const k of nonces.keys()) {
+        nonces.delete(k)
+        if (--extra <= 0) break
+      }
+    }
+  }
+  return true
+}
+
+/**
  * 边缘端快照：一次性把「谁在场、谁在看投屏」报上来。
  *
  * entries: [{ token, online, casting }] —— token 是**学生令牌**，
@@ -151,7 +182,19 @@ function applySnapshot(source, entries) {
     if (w) castSnap.delete(keyOf(w.classId, sid))
   }
 
-  snapshots.set(source, { online: nextOnline, casting: nextCasting })
+  // 来源数有上限：source 是外部传的字符串，不能让它把内存撑大
+  if (!snapshots.has(source) && snapshots.size >= MAX_SOURCES) {
+    let oldest = null
+    let oldestAt = Infinity
+    for (const [k, v] of snapshots) {
+      if ((v.lastAt || 0) < oldestAt) {
+        oldestAt = v.lastAt || 0
+        oldest = k
+      }
+    }
+    if (oldest !== null) snapshots.delete(oldest)
+  }
+  snapshots.set(source, { online: nextOnline, casting: nextCasting, lastAt: Date.now() })
   return { online: nextOnline.size, casting: nextCasting.size }
 }
 
@@ -189,12 +232,18 @@ function sweep() {
   for (const [key, rec] of seen) {
     if (now - rec.lastSeen >= TTL * 4) seen.delete(key)
   }
+  // 边缘端来源：太久没上报就忘掉（代理关了、换机器了，别一直占着）
+  for (const [src, v] of snapshots) {
+    if (now - (v.lastAt || 0) > SNAPSHOT_TTL) snapshots.delete(src)
+  }
+  for (const [k, exp] of nonces) if (exp < now) nonces.delete(k)
 }
 
 setInterval(sweep, 60 * 1000).unref()
 
 module.exports = {
   applySnapshot,
+  markNonce,
   touch,
   leave,
   attach,

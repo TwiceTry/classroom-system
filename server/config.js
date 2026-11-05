@@ -74,9 +74,20 @@ const COURSE_DIR = resolveCourseDir()
 let tokenSecret = process.env.TS_SECRET || stored.secret || ''
 if (!tokenSecret) tokenSecret = require('crypto').randomBytes(32).toString('hex')
 
+/* 边缘端（局域网代理）上报密钥：TS_EDGE_KEY > config.json 里的 edgeKey > 首次启动生成并落盘。
+ *
+ * 为什么需要它：代理会把「本地 N 个学生谁在场、谁在看投屏」打包成一个请求报上来
+ * （POST /api/presence/snapshot）。这个请求代表的是**一群人**，
+ * 如果不认来源，任何人只要知道某个学生的令牌就能替全班报状态 ——
+ * 甚至用空名单把整个班「踢下线」。所以这个接口必须凭密钥调用。
+ * 密钥由服务端生成，填到教学机的 proxy.conf（edge.key = …）。 */
+let edgeKey = process.env.TS_EDGE_KEY || stored.edgeKey || ''
+if (!edgeKey) edgeKey = require('crypto').randomBytes(24).toString('hex')
+
 const config = {
   appDir: APP_DIR,
   secret: tokenSecret,
+  edgeKey,
   courseDir: COURSE_DIR,
   dataDir: DATA_DIR,
   uploadDir: UPLOAD_DIR,
@@ -113,6 +124,7 @@ const config = {
       cur
     )
     if (!next.secret && !process.env.TS_SECRET) next.secret = config.secret
+    if (!next.edgeKey && !process.env.TS_EDGE_KEY) next.edgeKey = config.edgeKey
     if (!next.courseDir && !process.env.TS_COURSE_DIR) {
       next.courseDir = path.relative(APP_DIR, COURSE_DIR).split(path.sep).join('/') || '.'
     }
