@@ -291,6 +291,14 @@ function sweepOrphanExams() {
   return n
 }
 
+/**
+ * 清掉上一次自检留下的夹具。
+ *
+ * 注意：DELETE 课程**只删记录，不删磁盘上的 content/ 与 schemes/**
+ * （这是故意的：老师删课不该连讲义一起删掉）。但自检必须从干净状态开始，
+ * 否则第二次跑就会撞上「已有同名目录」「内容文件已存在」「方案版本已经涨到 7」
+ * 之类的假失败 —— 所以这里除了调接口，还要直删磁盘上 selftest 的产物。
+ */
 async function sweepLeftovers(token) {
   try {
     const cls = await request('GET', '/api/teacher/classes', undefined, token)
@@ -304,6 +312,28 @@ async function sweepLeftovers(token) {
   } catch (e) {
     /* 扫不干净不影响本次自检 */
   }
+  // 磁盘上的夹具：课程内容目录、方案文件（都是 selftest 专用的名字）
+  const fsx = require('fs')
+  const pathx = require('path')
+  const dataDir = require('./config').dataDir
+  const rmAll = (dir, prefix) => {
+    try {
+      if (!fsx.existsSync(dir)) return
+      for (const name of fsx.readdirSync(dir)) {
+        if (!name.startsWith(prefix)) continue
+        try {
+          fsx.rmSync(pathx.join(dir, name), { recursive: true, force: true })
+        } catch (e) {
+          /* 被占用就下次再说 */
+        }
+      }
+    } catch (e) {
+      /* ignore */
+    }
+  }
+  rmAll(pathx.join(dataDir, 'courses'), 'selftest')
+  rmAll(pathx.join(dataDir, 'schemes'), 'selftest')
+  rmAll(pathx.join(dataDir, 'designs'), 'selftest')
 }
 
 async function testApi() {

@@ -41,26 +41,64 @@ const FALLBACK = {
   ],
 }
 
-let cache = { file: '', mtimeMs: 0, data: null }
-
 /**
- * 当前生效的方案 id（跟着课程走）。
- * 每个请求进来时由 api.js 按「学生班级所属课程 / 教师选中的课程」设一次，
- * 之后 scoring / 方案页 / 模块开关 全部读这一份。
+ * 每个请求一份「当前生效的方案 id」。
+ *
+ * 为什么不能用全局变量：Node 是单线程，但请求会在 await 处让出。
+ * 用全局的话，A 老师请求把方案设成 X → 让出 → B 学生请求设成 Y →
+ * A 恢复执行时读到的是 **Y 的方案** → 按别的课的规则计分/校验。
+ * 单课单师时看不出来，多课并行时就是真 bug。
+ *
+ * 所以用 AsyncLocalStorage：一个请求一个 store，天然隔离，
+ * 而且几百处 scoring.itemByKey / scheme.items() 的调用点一行都不用改。
  */
-let activeId = ''
+const { AsyncLocalStorage } = require('async_hooks')
+const als = new AsyncLocalStorage() // store: { schemeId: '' }
 
+/** 在「一个请求」的上下文里跑（由 index.js 的 /api/ 分支包一层） */
+function runInRequest(fn) {
+  return als.run({ schemeId: '' }, fn)
+}
+
+/** 当前请求要用的方案 id（不在请求里就退回全局，给 CLI / 启动期用） */
+let activeId = '' // 非请求上下文的兜底（启动自检、脚本）
+
+function currentSchemeId() {
+  const st = als.getStore()
+  if (st) return st.schemeId
+  return activeId
+}
+
+/** 设「这次请求」用哪个方案（api.js 的 need() 每个请求调一次） */
 function activate(id) {
   const next = String(id || '')
+  const st = als.getStore()
+  if (st) {
+    if (st.schemeId !== next) st.schemeId = next
+    return next
+  }
   if (next !== activeId) {
     activeId = next
-    cache = { file: '', mtimeMs: 0, data: null }
+    caches.clear()
   }
   return activeId
 }
 
 function activeSchemeId() {
-  return activeId
+  return currentSchemeId()
+}
+
+/* 按方案 id 分桶的缓存（同一个文件只解析一次；切方案不会互相踩） */
+const caches = new Map() // schemeId -> { file, mtimeMs, data }
+const MAX_CACHES = 50
+function cacheOf(id) {
+  let c = caches.get(id)
+  if (!c) {
+    if (caches.size >= MAX_CACHES) caches.clear()
+    c = { file: '', mtimeMs: 0, data: null }
+    caches.set(id, c)
+  }
+  return c
 }
 
 function fileOf(id) {
@@ -69,8 +107,9 @@ function fileOf(id) {
 
 /** 当前方案文件：目录里按 id 找，找不到用默认 id */
 function activeFile() {
-  if (activeId) {
-    const f = fileOf(activeId)
+  const id = currentSchemeId()
+  if (id) {
+    const f = fileOf(id)
     if (fs.existsSync(f)) return f
   }
   const f = fileOf(DEFAULT_ID)
@@ -263,9 +302,10 @@ function materialize(raw) {
  * 文件坏了不会把系统带下来：沿用上一次成功的方案，实在没有就用内置兜底。
  */
 function current() {
+  const c = cacheOf(currentSchemeId())
   const file = activeFile()
   if (!file) {
-    if (!cache.data) {
+    if (!c.data) {
       const target = fileOf(DEFAULT_ID)
       let wrote = false
       try {
@@ -278,32 +318,38 @@ function current() {
       }
       if (wrote) return current()
       console.error('[scheme] 没找到考核方案文件（' + target + '），暂用内置兜底')
-      cache = { file: '', mtimeMs: 0, data: materialize(FALLBACK) }
+      c.file = ''
+      c.mtimeMs = 0
+      c.data = materialize(FALLBACK)
     }
-    return cache.data
+    return c.data
   }
 
   let st
   try {
     st = fs.statSync(file)
   } catch (e) {
-    return cache.data || materialize(FALLBACK)
+    return c.data || materialize(FALLBACK)
   }
-  if (cache.data && cache.file === file && cache.mtimeMs === st.mtimeMs) return cache.data
+  if (c.data && c.file === file && c.mtimeMs === st.mtimeMs) return c.data
 
   const raw = readRaw(file)
   const check = validate(raw)
   if (check.errors.length) {
     console.error('[scheme] 方案文件有问题，暂用上一版：' + check.errors.join('；'))
-    if (cache.data) return cache.data
-    cache = { file, mtimeMs: 0, data: materialize(FALLBACK) }
-    return cache.data
+    if (c.data) return c.data
+    c.file = file
+    c.mtimeMs = 0
+    c.data = materialize(FALLBACK)
+    return c.data
   }
   if (check.warnings.length) console.log('[scheme] 提示：' + check.warnings.join('；'))
 
   const data = materialize(raw)
   data.file = file
-  cache = { file, mtimeMs: st.mtimeMs, data }
+  c.file = file
+  c.mtimeMs = st.mtimeMs
+  c.data = data
   return data
 }
 
@@ -346,7 +392,10 @@ function save(raw, by, note) {
     err.errors = check.errors
     throw err
   }
-  const file = activeFile() || fileOf(DEFAULT_ID)
+  // 写「当前请求的方案 id」对应的文件；文件还没建就新建它。
+  // 不能用 activeFile()：它在「当前 id 的文件不存在」时会回退到默认方案文件，
+  // 于是一次保存会把**默认方案**（别的课程在用的那份）整个覆盖掉。
+  const file = fileOf(currentSchemeId() || DEFAULT_ID)
   const prev = readRaw(file)
   const now = new Date().toISOString()
   const next = Object.assign({}, raw)
@@ -362,7 +411,7 @@ function save(raw, by, note) {
   if (next.changes.length > 50) next.changes = next.changes.slice(-50)
   if (!fs.existsSync(DIR)) fs.mkdirSync(DIR, { recursive: true })
   fs.writeFileSync(file, JSON.stringify(next, null, 2), 'utf8')
-  cache = { file: '', mtimeMs: 0, data: null } // 强制下一次 current() 重新读
+  caches.clear() // 方案文件变了：所有方案缓存作废，下一次 current() 重新读
   return { raw: next, warnings: check.warnings }
 }
 
@@ -395,7 +444,7 @@ function saveAs(raw, id, by, note) {
   if (next.changes.length > 50) next.changes = next.changes.slice(-50)
   if (!fs.existsSync(DIR)) fs.mkdirSync(DIR, { recursive: true })
   fs.writeFileSync(file, JSON.stringify(next, null, 2), 'utf8')
-  cache = { file: '', mtimeMs: 0, data: null }
+  caches.clear()
   return { raw: next, warnings: check.warnings }
 }
 
@@ -410,6 +459,8 @@ const publicInfo = () => {
 
 module.exports = {
   DIR,
+  runInRequest,
+  currentSchemeId,
   DEFAULT_ID,
   fileOf,
   validate,

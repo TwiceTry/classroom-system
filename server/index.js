@@ -16,6 +16,7 @@ const os = require('os')
 const path = require('path')
 
 const config = require('./config')
+const scheme = require('./lib/scheme')
 const { createDb } = require('./lib/db')
 const { createCast } = require('./routes/cast')
 const compat = require('./lib/compat')
@@ -119,7 +120,10 @@ const server = http.createServer(async (req, res) => {
     if (pathname.startsWith('/api/')) {
       const hit = api.router.match(method, pathname)
       if (!hit) return fail(res, 404, '接口不存在：' + method + ' ' + pathname)
-      const out = await hit.handler(req, hit.params, res)
+      // 每个请求一个独立的「当前考核方案」上下文：
+      // need() 在 handler 里设方案，之后所有 scoring / scheme 读取都只看到自己那份，
+      // 并发请求之间不会互相把方案改掉（多课程并行时这是真 bug）。
+      const out = await scheme.runInRequest(() => hit.handler(req, hit.params, res))
       if (out !== undefined && !res.writableEnded) json(res, 200, out)
       return
     }
