@@ -91,7 +91,47 @@ function serveSpa(req, res) {
   if (isInside(config.webDist, file) && sendFile(res, file, cacheOpt)) return
 
   // SPA 回退：/teacher/xxx、/watch 之类的路由都交给 index.html
-  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' })
+  //
+  // 入口页必须「不许直接复用，但可以校验」：
+  //   · 前端重新构建后 index.html 引用的是新的 hash 资源，旧 hash 文件已经不在了
+  //     → 拿到旧 HTML 就是白屏，所以不能给它长缓存
+  //   · 但每次全量下 1~3KB 又没必要 → 给 ETag + Last-Modified，
+  //     浏览器/代理用条件请求换 304（几百字节），既不白屏也很省流量
+  let st = null
+  try {
+    st = fs.statSync(indexHtml)
+  } catch (e) {
+    st = null
+  }
+  if (!st) {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' })
+    fs.createReadStream(indexHtml).pipe(res)
+    return
+  }
+  const etag = 'W/"' + st.size.toString(16) + '-' + Math.floor(st.mtimeMs).toString(16) + '"'
+  const inm = String(req.headers['if-none-match'] || '').trim()
+  const ims = String(req.headers['if-modified-since'] || '').trim()
+  const mtimeSec = Math.floor(st.mtimeMs / 1000) * 1000
+  let notModified = false
+  if (inm) {
+    notModified = inm.split(',').map((x) => x.trim()).indexOf(etag) >= 0
+  } else if (ims) {
+    const t = Date.parse(ims)
+    notModified = isFinite(t) && mtimeSec <= t
+  }
+  const base = {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-cache',
+    'Last-Modified': st.mtime.toUTCString(),
+    ETag: etag,
+  }
+  if (notModified) {
+    res.writeHead(304, base)
+    res.end()
+    return
+  }
+  base['Content-Length'] = st.size
+  res.writeHead(200, base)
   fs.createReadStream(indexHtml).pipe(res)
 }
 

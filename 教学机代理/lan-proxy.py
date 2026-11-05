@@ -200,6 +200,11 @@ TTL_ASSETS = int(float(conf_get('cache.ttl.assets', str(365 * 24 * 3600))))
 TTL_STATIC = int(float(conf_get('cache.ttl.static', str(24 * 3600))))
 TTL_CONTENT = int(float(conf_get('cache.ttl.content', '60')))
 TTL_HTML = int(float(conf_get('cache.ttl.html', '300')))
+# 入口页（index.html）多久回上游校验一次。
+# 上游明确标了 no-cache（前端一重新构建，旧 hash 资源就没了 → 拿旧 HTML 会白屏），
+# 所以不能长期不闻不问；但也没必要每个学生都全量拉一遍 ——
+# 代理替**全班**去验一次，没变的话一次 304 只要几百字节。
+REVALIDATE_SEC = int(float(conf_get('cache.ttl.html.verify', '30')))
 
 
 class CacheStore(object):
@@ -281,7 +286,9 @@ def cache_policy(path):
     # 判据：路径最后一段没有扩展名（不是 .js/.css/.png…）→ 就是 SPA 路由。
     last = p.rsplit('/', 1)[-1]
     if '.' not in last:
-        return TTL_HTML, TTL_HTML
+        # 代理侧缓存（省得每个学生都出公网），但**不给浏览器长缓存**：
+        # 浏览器每次都回来问一句，走本地几毫秒；真正的新旧由代理按上游 ETag 判定。
+        return TTL_HTML, 0
     if p.startswith('/api/content/doc'):
         # 课程材料（学生讲义）是公开内容 → 可缓存；讲义（教师讲稿）明确不缓存
         if 'type=lecture' in (path or ''):
@@ -864,7 +871,81 @@ class Handler(BaseHTTPRequestHandler):
             return 0, 0
         if self.command not in ('GET', 'HEAD'):
             return 0, 0
+        p = (self.path or '').split('?')[0]
+        last = p.rsplit('/', 1)[-1]
+        # SPA 的任何路由（/student/materials、/teacher/lecture、/watch…）都是同一个入口页
+        self.need_revalidate = ('.' not in last) and not p.startswith('/api/')
         return cache_policy(self.path)
+
+    def revalidate_cached(self, entry):
+        """拿缓存里的 ETag / Last-Modified 回上游问一次：没变就继续用，变了就换。
+
+        返回 True 表示「响应已经发出去了（无论用的新内容还是旧内容）」，
+        调用方不用再发；返回 False 表示「没处理成，按原流程用缓存」。
+        """
+        target = UP
+        try:
+            conn, reused = self.open_upstream(target, reuse=True)
+        except Exception as e:
+            verbose('校验入口页失败（先用手上的缓存）：%s' % e)
+            return False
+        try:
+            headers = self.build_upstream_headers(target)
+            if entry.get('upstream_etag'):
+                headers['If-None-Match'] = entry['upstream_etag']
+            elif entry.get('last_modified'):
+                headers['If-Modified-Since'] = entry['last_modified']
+            conn.putrequest('GET', target.base_path + self.path,
+                            skip_host=True, skip_accept_encoding=True)
+            for k, v in headers.items():
+                conn.putheader(k, v)
+            conn.endheaders()
+            resp = conn.getresponse()
+            now = time.time()
+            if resp.status == 304:
+                resp.read()
+                entry['verified_at'] = now
+                entry['expires'] = now + TTL_HTML
+                verbose('入口页没变（304，%d 字节），继续用缓存' % (resp.length or 0))
+                self.send_cached(entry, True)
+                return True
+            if resp.status == 200:
+                buf = self.read_all(resp)
+                up_cc = (resp.getheader('Cache-Control') or '').lower()
+                if 'no-store' in up_cc or 'private' in up_cc:
+                    # 上游改主意不让缓存了：这次先用手上的（下个周期还会再验）
+                    verbose('上游不再允许缓存入口页（%s），本次先用旧副本' % up_cc)
+                    entry['verified_at'] = now
+                    self.send_cached(entry, True)
+                    return True
+                entry['body'] = buf
+                entry['size'] = len(buf)
+                entry['etag'] = '"%s"' % hashlib.md5(buf).hexdigest()
+                entry['upstream_etag'] = resp.getheader('ETag') or ''
+                entry['last_modified'] = resp.getheader('Last-Modified') or ''
+                entry['verified_at'] = now
+                entry['expires'] = now + TTL_HTML
+                entry['stored'] = now
+                CACHE.put(self.cache_key(), entry)
+                verbose('入口页更新了（重新拉取 %d 字节）—— 全班换新的' % len(buf))
+                self.send_cached(entry, True)
+                return True
+            # 5xx / 403 等：用旧缓存兜底，别让一次抖动把全班页面打不开
+            try:
+                resp.read()
+            except Exception:
+                pass
+            verbose('校验入口页得到 %s，先用手上的缓存' % resp.status)
+            return False
+        except Exception as e:
+            verbose('校验入口页出错（先用手上的缓存）：%s' % e)
+            return False
+        finally:
+            try:
+                if not conn.sock or conn.sock.fileno() >= 0:
+                    POOL.put(target, conn)
+            except Exception:
+                pass
 
     def send_cached(self, entry, hit):
         """把缓存里的内容回给浏览器；顺便把 Cache-Control 改成我们自己的，
@@ -903,6 +984,12 @@ class Handler(BaseHTTPRequestHandler):
         if ttl > 0:
             entry = CACHE.get(key)
             if entry is not None:
+                if getattr(self, 'need_revalidate', False) and REVALIDATE_SEC > 0:
+                    stale = (time.time() - float(entry.get('verified_at') or 0)) >= REVALIDATE_SEC
+                    if stale:
+                        handled = self.revalidate_cached(entry)
+                        if handled:
+                            return
                 verbose('缓存命中 %s' % self.path)
                 try:
                     self.send_cached(entry, True)
@@ -948,6 +1035,9 @@ class Handler(BaseHTTPRequestHandler):
                     'body': buf,
                     'size': len(buf),
                     'etag': '"%s"' % hashlib.md5(buf).hexdigest(),
+                    'upstream_etag': resp.getheader('ETag') or '',
+                    'last_modified': resp.getheader('Last-Modified') or '',
+                    'verified_at': time.time(),
                     'cache_control': cc,
                     'expires': time.time() + ttl,
                     'stored': time.time(),
@@ -1948,7 +2038,10 @@ def print_banner():
             fmt_ttl(TTL_CONTENT), fmt_ttl(TTL_HTML)))
     if is_https(UP):
         print('  上游证书：%s' % ('已忽略校验（tls.insecure = yes）' if INSECURE else '严格校验（自签证书要加 tls.insecure = yes）'))
-    else:
+    # 上游是明文 http（本机/内网直连调试）→ 不用提示证书。
+    # 这里原来错挂了一句「缓存：关（cache.enabled = no）」，配的是 https 判断，
+    # 走 http 时会误导人以为缓存没开 —— 删掉。
+    if not CACHE_ENABLED:
         print('  缓存：关（cache.enabled = no）')
     # 上游自检：顺带验证 https 分支没写错（明文打到 TLS 端口会被回 501）
     _st, _body = probe_upstream()

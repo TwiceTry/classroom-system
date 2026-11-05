@@ -3772,7 +3772,15 @@ module.exports = function createApi(db, cast) {
     res.end(Buffer.from(csv, 'utf8'))
   })
 
-  r.get('/api/cast/status', async () => (cast ? cast.state() : { students: 0, mode: 'idle' }))
+  /**
+   * 投屏状态：谁都能读到「老师有没有在投屏」的话，等于把课堂状态公开了
+   * （在投、几个人在看、上行带宽）。学生端要用它决定「要不要弹投屏横幅」，
+   * 所以这里只要求**登录**（学生或教师都行），不限定角色。
+   */
+  r.get('/api/cast/status', async (req) => {
+    need(req)
+    return cast ? cast.state() : { students: 0, mode: 'idle' }
+  })
 
   return { router: r, ok, fail, HttpError }
 }

@@ -1040,6 +1040,47 @@ async function testCast(ctx) {
 
   }
 
+  // 投屏状态：谁都能读到「老师有没有在投屏」就等于把课堂状态公开了
+  {
+    const anon = await request('GET', '/api/cast/status')
+    check('cast status: anonymous -> 401', anon.status === 401, 'status=' + anon.status)
+    const asStu = await request('GET', '/api/cast/status', undefined, stuToken)
+    check('cast status: student can read', asStu.status === 200, 'status=' + asStu.status)
+  }
+
+  // 入口页：带 ETag 且支持条件请求 —— 代理靠它替**全班**做 304 校验
+  // （入口页是 no-cache：前端一重新构建，旧 hash 资源就没了，拿旧 HTML 会白屏；
+  //  但每次全量下也没必要，所以给 ETag 换 304）
+  {
+    const rawGet = (headers) =>
+      new Promise((resolve, reject) => {
+        const rq = http.request(
+          { host: HOST, port: PORT, path: '/', method: 'GET', headers: headers || {} },
+          (res2) => {
+            let buf = ''
+            res2.on('data', (d) => (buf += d))
+            res2.on('end', () => resolve({ status: res2.statusCode, headers: res2.headers, body: buf }))
+          }
+        )
+        rq.on('error', reject)
+        rq.end()
+      })
+    const first = await rawGet({})
+    if (first.body.indexOf('前端还没构建') >= 0) {
+      skip('spa entry has ETag', '这台机器还没构建前端（web/dist 不存在）')
+    } else {
+      const etag = first.headers.etag
+      check('spa entry: has ETag', first.status === 200 && !!etag, 'etag=' + (etag || '(无)'))
+      check('spa entry: Cache-Control is no-cache',
+        /no-cache/.test(String(first.headers['cache-control'] || '')),
+        String(first.headers['cache-control'] || '(无)'))
+      if (etag) {
+        const second = await rawGet({ 'If-None-Match': etag })
+        check('spa entry: conditional request -> 304', second.status === 304, 'status=' + second.status)
+      }
+    }
+  }
+
   // 边缘端快照：代理把本地 N 个学生的状态打包成**一次**请求发上来。
   // 这个请求代表「一群人」，所以必须凭边缘端密钥签名（见 config.edgeKey）。
   // 这里同时验证「签名有效才收」和「没有签名一律拒」。

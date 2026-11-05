@@ -224,8 +224,34 @@ function sendFile(res, filePath, opts) {
     'Cache-Control': o.cache || 'no-cache',
     'Last-Modified': stat.mtime.toUTCString(),
   }
+  // ETag 用「大小 + 毫秒级 mtime」：文件换了就换，不换就一直是同一个值。
+  // 有了它，浏览器/教育局那台代理就能用**条件请求**问「变了吗」——
+  // 没变回 304（几百字节），不用每次把整个文件重下一遍。
+  const etag = 'W/"' + stat.size.toString(16) + '-' + Math.floor(stat.mtimeMs).toString(16) + '"'
+  headers['ETag'] = etag
   // opts.download = 想让浏览器存下来时的文件名（证据 / 附件这类点一下就下的）
   if (o.download) headers['Content-Disposition'] = "attachment; filename*=UTF-8''" + encodeURIComponent(String(o.download))
+
+  // 条件请求：没变就 304。注意 304 不能带 Content-Length。
+  const req = res.req
+  const h = (req && req.headers) || {}
+  const inm = String(h['if-none-match'] || '').trim()
+  const ims = String(h['if-modified-since'] || '').trim()
+  let notModified = false
+  if (inm) {
+    notModified = inm.split(',').map((x) => x.trim()).indexOf(etag) >= 0
+  } else if (ims) {
+    const t = Date.parse(ims)
+    notModified = isFinite(t) && Math.floor(stat.mtimeMs / 1000) * 1000 <= t
+  }
+  if (notModified) {
+    const h304 = Object.assign({}, headers)
+    delete h304['Content-Length']
+    res.writeHead(304, h304)
+    res.end()
+    return true
+  }
+
   res.writeHead(200, headers)
   fs.createReadStream(filePath).pipe(res)
   return true

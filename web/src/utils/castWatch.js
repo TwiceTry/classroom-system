@@ -13,6 +13,7 @@
  * 状态从两条路来：在场通道的 WS 推送（秒级），加上心跳回包里的 cast 字段（兜底）。
  */
 import { reactive } from 'vue'
+import { getToken } from '../api'
 import { onPresenceMessage } from './presence'
 
 const WATCH_PATH = '/watch'
@@ -97,7 +98,10 @@ function apply(mode) {
 
 async function poll() {
   try {
-    const r = await fetch('/api/cast/status')
+    // 这个接口要登录（不登录的话课堂状态就成公开信息了）
+    const token = getToken()
+    if (!token) return
+    const r = await fetch('/api/cast/status', { headers: { Authorization: 'Bearer ' + token } })
     if (!r.ok) return
     const j = await r.json()
     if (j && j.mode) apply(j.mode)
