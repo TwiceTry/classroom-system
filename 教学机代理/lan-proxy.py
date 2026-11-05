@@ -1485,6 +1485,7 @@ class WsConn(object):
         self.buf = b''
         self.closed = False
         self._latest = None   # 背压：只保留最新一帧
+        self._key_queue = []   # 整屏关键帧排队（差量帧顶不掉它）
         self._flushing = False
         self._thread = None
 
@@ -1526,10 +1527,21 @@ class WsConn(object):
 
         慢的学生机只会自己少收几帧，不会拖垮别人，内存也不会堆积。
         （与服务端 server/lib/ws.js 的 sendBinaryLatest 同一个思路）
+
+        但**整屏关键帧要保住**（帧头 flags & 1）：差量模式下整屏帧是学生的
+        基准画面，被顶掉就再也补不回来 —— 学生端会黑屏、只有变化处有内容。
+        所以整屏帧排队（最多 3 张），排队期间差量帧直接丢。
         """
         if self.closed:
             return False
-        self._latest = buf
+        is_key = bool(buf) and len(buf) > 1 and (buf[1] & 1)
+        if is_key:
+            if len(self._key_queue) < 3:
+                self._key_queue.append(buf)
+        else:
+            if self._key_queue:
+                return True
+            self._latest = buf
         if not self._flushing:
             self._flush()
         return True
@@ -1539,8 +1551,13 @@ class WsConn(object):
             self._latest = None
             self._flushing = False
             return
-        buf = self._latest
-        self._latest = None
+        # 整屏关键帧优先发；没有排队帧才发差量帧
+        buf = None
+        if self._key_queue:
+            buf = self._key_queue.pop(0)
+        else:
+            buf = self._latest
+            self._latest = None
         if not buf:
             self._flushing = False
             return
@@ -1550,7 +1567,7 @@ class WsConn(object):
             # 写完接着发下一帧
             def done():
                 self._flushing = False
-                if self._latest:
+                if self._latest or self._key_queue:
                     self._flush()
             try:
                 self.sock.settimeout(0.001)

@@ -67,8 +67,9 @@ class Conn {
     this.fragChunks = []
     this.fragLen = 0
 
-    // 二进制背压：只保留最新一帧
+    // 二进制背压：只保留最新一帧（差量帧）；整屏关键帧另排队，不会被顶掉
     this._latest = null
+    this._keyQueue = []
     this._flushing = false
 
     this.remote = (req.socket.remoteAddress || '').replace(/^::ffff:/, '')
@@ -201,10 +202,26 @@ class Conn {
    * 发二进制帧，带「只保留最新一帧」的背压：
    * 上一帧还没写完（socket 缓冲未排空）时，新帧直接覆盖待发的那一帧，
    * 绝不排队堆积 —— 个别学生机卡住不能拖垮整间教室。
+   *
+   * 但「整屏关键帧」必须保住（帧头 flags & 1）：
+   *   差量模式下，一帧整屏就是学生的**基准画面**（差量块要画在它上面）。
+   *   慢链路（公网隧道）上整屏帧大、差量帧小 —— 如果一视同仁地覆盖，
+   *   整屏帧会被后来的差量帧顶掉、永远发不出去 → 学生端黑屏，
+   *   只有鼠标动到的地方才显示（差量块更新了那块）。
+   *   所以：整屏帧排队（最多留 3 张防堆积），排队期间差量帧直接丢。
    */
   sendBinaryLatest(buf) {
     if (!this.isOpen) return false
-    this._latest = buf
+    const isKey = !!(buf && buf.length > 1 && (buf[1] & 1))
+    if (isKey) {
+      // 整屏关键帧：排队（最多 3 张防堆积），差量帧顶不掉它
+      if (!this._keyQueue) this._keyQueue = []
+      if (this._keyQueue.length < 3) this._keyQueue.push(buf)
+    } else {
+      // 有整屏帧在排队 → 丢掉这个差量帧（保住基准画面）
+      if (this._keyQueue && this._keyQueue.length) return true
+      this._latest = buf
+    }
     if (!this._flushing) this._flushLatest()
     return true
   }
@@ -215,8 +232,13 @@ class Conn {
       this._flushing = false
       return
     }
-    const buf = this._latest
-    this._latest = null
+    // 整屏关键帧优先发；没有排队帧才发差量帧
+    let buf = null
+    if (this._keyQueue && this._keyQueue.length) buf = this._keyQueue.shift()
+    else {
+      buf = this._latest
+      this._latest = null
+    }
     if (!buf) {
       this._flushing = false
       return
@@ -226,7 +248,7 @@ class Conn {
     try {
       this.socket.write(frame, () => {
         this._flushing = false
-        if (this._latest) this._flushLatest()
+        if (this._latest || (this._keyQueue && this._keyQueue.length)) this._flushLatest()
       })
     } catch (e) {
       this._flushing = false

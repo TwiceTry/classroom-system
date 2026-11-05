@@ -974,6 +974,85 @@ async function testCast(ctx) {
   check('unknown role is closed', bad.closed === true)
   bad.close()
 }
+  // 差量模式下，一帧「整屏」就是学生的基准画面（差量块画在它上面）。
+  // 慢链路（公网隧道）上整屏帧大、差量帧小 —— 背压若一视同仁地覆盖，
+  // 整屏帧会被后来的差量帧顶掉、永远发不出去 → 学生端黑屏，只有变化处有内容。
+  {
+    const { Conn } = require('./lib/ws')
+    const written = []
+    const pending = []
+    const sock = {
+      writable: true,
+      remoteAddress: '127.0.0.1',
+      write(data, cb) {
+        written.push(data)
+        if (cb) pending.push(cb)
+        return true
+      },
+      on() {},
+      once() {},
+      removeListener() {},
+      end() {},
+      destroy() {},
+      setNoDelay() {},
+      setTimeout() {},
+    }
+    const req = { socket: sock, headers: {}, url: '/ws?role=student' }
+    const keyFrame = (tag) => {
+      const b = Buffer.alloc(16 + 400 * 1024)
+      b[0] = 1
+      b[1] = 1 // flags: 整屏
+      b.writeUInt16LE(1, 2)
+      b.writeUInt16LE(1280, 4)
+      b.writeUInt16LE(720, 6)
+      b[15] = tag
+      return b
+    }
+    const tileFrame = (tag) => {
+      const b = Buffer.alloc(16 + 2 * 1024)
+      b[0] = 1
+      b[1] = 0 // flags: 差量
+      b.writeUInt16LE(2, 2)
+      b[15] = tag
+      return b
+    }
+    const kinds = () => {
+      let keys = 0
+      let tiles = 0
+      for (const w of written) {
+        let off = 2
+        const l = w[1] & 0x7f
+        if (l === 126) off = 4
+        else if (l === 127) off = 10
+        if (w[off + 1] & 1) keys++
+        else tiles++
+      }
+      return { keys, tiles }
+    }
+    const drain = () => {
+      let g = 0
+      while (pending.length && g++ < 120) {
+        const cb = pending.shift()
+        if (cb) cb()
+      }
+    }
+    // 慢链路：整屏帧正在写时，连送 5 帧差量 → 整屏帧必须还在
+    const conn = new Conn(sock, req, () => {}, () => {})
+    conn.sendBinaryLatest(keyFrame(1))
+    for (let k = 0; k < 5; k++) conn.sendBinaryLatest(tileFrame(k + 2))
+    drain()
+    const kk = kinds()
+    check('cast key frame survives slow link', kk.keys >= 1, '整屏帧 ' + kk.keys + ' 张 · 差量帧 ' + kk.tiles + ' 张')
+    // 关键帧队列有上限，不堆积
+    written.length = 0
+    pending.length = 0
+    const conn2 = new Conn(sock, req, () => {}, () => {})
+    for (let k = 0; k < 8; k++) conn2.sendBinaryLatest(keyFrame(k))
+    drain()
+    const k2 = kinds()
+    check('cast key frame queue is bounded', k2.keys <= 6, '写了 ' + k2.keys + ' 张整屏帧')
+  }
+
 
 async function testAssignments(tt, st, classId, sid, dir) {
   console.log('\n[A2] classroom assignments')
