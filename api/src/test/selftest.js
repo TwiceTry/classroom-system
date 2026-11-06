@@ -410,8 +410,8 @@ let assignmentId = ''
     payload: { title: '自检作业', itemKey: 'homework', courseId, note: '交一份 md' },
   })
   const cj = json(created)
-  assignmentId = cj && cj.id
-  check('建作业 → 201（默认未开放）', created.statusCode === 201 && !!assignmentId && cj.status === 'closed', 'kind=' + (cj && cj.kind))
+  assignmentId = cj && cj.assignment.id
+  check('建作业 → 201（默认未开放）', created.statusCode === 201 && !!assignmentId && cj.assignment.status === 'closed', 'kind=' + (cj && cj.kind))
 
   const badItem = await inject({
     method: 'POST',
@@ -424,8 +424,8 @@ let assignmentId = ''
   const listClosed = await inject({ method: 'GET', url: '/api/student/assignments', headers: stuHead })
   check('未开放时学生看不到', listClosed.statusCode === 200 && json(listClosed).items.length === 0, 'total=' + (json(listClosed) && json(listClosed).total))
 
-  const open = await inject({ method: 'POST', url: '/api/assignments/' + assignmentId + '/open', headers: head })
-  check('开放 → status=open', open.statusCode === 200 && json(open).status === 'open', 'status=' + (json(open) && json(open).status))
+  const open = await inject({ method: 'POST', url: '/api/assignments/' + assignmentId + '/start', headers: head })
+  check('开放 → status=open', open.statusCode === 200 && json(open).assignment.status === 'open', 'status=' + ((json(open) && json(open).assignment || {}).status))
 
   const listOpen = await inject({ method: 'GET', url: '/api/student/assignments', headers: stuHead })
   check('开放后学生能看到 1 条', listOpen.statusCode === 200 && json(listOpen).items.length === 1, 'total=' + (json(listOpen) && json(listOpen).total))
@@ -505,8 +505,8 @@ let assignmentId = ''
   })
   check('打回重做 → 分数清空', redo.statusCode === 200 && json(redo).submission.score === undefined, JSON.stringify(json(redo).submission.score))
 
-  const close = await inject({ method: 'POST', url: '/api/assignments/' + assignmentId + '/close', headers: head })
-  check('关闭作业 → status=closed', close.statusCode === 200 && json(close).status === 'closed', '')
+  const close = await inject({ method: 'POST', url: '/api/assignments/' + assignmentId + '/stop', headers: head })
+  check('关闭作业 → status=closed', close.statusCode === 200 && json(close).assignment.status === 'closed', '')
   const submitAfterClose = await inject({
     method: 'POST',
     url: '/api/student/assignments/' + assignmentId + '/submit',
@@ -529,8 +529,8 @@ let examAssignmentId = ''
     payload: { title: '自检机试', itemKey: 'exam', courseId },
   })
   const cj = json(created)
-  examAssignmentId = cj && cj.id
-  check('建机试 → kind=paper', created.statusCode === 201 && cj.kind === 'paper', 'kind=' + (cj && cj.kind))
+  examAssignmentId = cj && cj.assignment.id
+  check('建机试 → kind=paper', created.statusCode === 201 && cj.assignment.kind === 'paper', 'kind=' + (cj && cj.kind))
 
   const paper = {
     kind: 'paper',
@@ -571,7 +571,7 @@ let examAssignmentId = ''
   const startBefore = await inject({ method: 'POST', url: '/api/student/exams/' + examAssignmentId + '/start', headers: stuHead })
   check('没开考就开考 → 403', startBefore.statusCode === 403, 'status=' + startBefore.statusCode)
 
-  await inject({ method: 'POST', url: '/api/assignments/' + examAssignmentId + '/open', headers: head })
+  await inject({ method: 'POST', url: '/api/assignments/' + examAssignmentId + '/start', headers: head })
 
   const started = await inject({ method: 'POST', url: '/api/student/exams/' + examAssignmentId + '/start', headers: stuHead })
   const stj = json(started)
@@ -619,7 +619,7 @@ let examAssignmentId = ''
 
   const paperFile = await inject({
     method: 'GET',
-    url: '/api/exams/' + examAssignmentId + '/paper-file?fmt=md',
+    url: '/api/exams/' + examAssignmentId + '/paper-file/md',
     headers: head,
   })
   check('下载空白卷 → 200 md', paperFile.statusCode === 200 && paperFile.body.indexOf('1 + 1') >= 0, 'len=' + paperFile.body.length)

@@ -58,8 +58,8 @@
               :disabled="submitted"
               @change="pick(q.id, letter(oi))"
               />
-              {{ o }}
-            </label>
+              {{ typeof o === 'string' ? o : o.text || o.label || o.key }}
+              </label>
           </div>
 
           <!-- 判断 -->
@@ -139,6 +139,8 @@ let saveTimer = null
 let tick = null
 
 const submitted = computed(() => state.submitted)
+// 模板里用的是 answers[q.id] —— 必须在这里导出，否则渲染时读到的是 undefined
+const answers = computed(() => state.answers)
 const sections = computed(() => (state.paper ? state.paper.sections : []))
 const totalCount = computed(() => sections.value.reduce((n, s) => n + s.questions.length, 0))
 const clockText = computed(() => {

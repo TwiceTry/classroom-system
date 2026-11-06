@@ -11,6 +11,7 @@ import { requireAuth } from '../plugins/auth.js'
 import { fromRequest } from '../lib/auth.js'
 import { ApiError, badRequest, notFound, forbidden } from '../lib/errors.js'
 import * as repo from '../lib/repo.js'
+import { UPLOAD_DIR } from '../config.js'
 import * as store from '../lib/submitstore.js'
 import { scoring, scheme, withCourseScheme } from '../lib/scheme.js'
 import { content } from '../lib/legacy.js'
@@ -113,19 +114,38 @@ export default async function compatRoutes(app) {
 
   /* ---------------- 代码示例 ---------------- */
 
+  /**
+   * 代码示例清单（代码工作台左侧的目录下拉）。
+   * 前端读的是 `res.lessons`（每项要有 dir）—— 字段名一变，
+   * 工作台就永远停在「正在读取示例清单…」。
+   */
   app.get('/api/examples', { preHandler: requireAuth() }, async (req) => {
     const course = req.query.courseId
       ? repo.getCourse(String(req.query.courseId))
       : repo.listCourses().find((c) => !c.archived) || null
-    if (!course) return { examples: [], dirs: [] }
+    if (!course) return { lessons: [] }
     const root = contentRootOf(course)
-    const list = content.listExamples(root).map((x) => ({
-      dir: x.dir,
-      title: x.title,
-      no: x.no,
-      fileCount: x.fileCount,
-    }))
-    return { examples: list, dirs: list }
+    return {
+      lessons: content.listExamples(root).map((x) => ({
+        dir: x.dir,
+        title: x.title,
+        no: x.no,
+        fileCount: x.fileCount,
+      })),
+    }
+  })
+
+  /** 某个示例目录的完整文件（代码工作台载入用；前端要 res.files[{path,text}]） */
+  app.get('/api/examples/:dir', { preHandler: requireAuth() }, async (req) => {
+    const course = req.query.courseId
+      ? repo.getCourse(String(req.query.courseId))
+      : repo.listCourses().find((c) => !c.archived) || null
+    if (!course) throw notFound('还没有课程')
+    const root = contentRootOf(course)
+    // 注意参数顺序：content.getExampleBundle(dir, root)
+    const bundle = content.getExampleBundle(String(req.params.dir), root)
+    if (!bundle) throw notFound('这个示例目录不存在：' + req.params.dir)
+    return bundle
   })
 
   /* ---------------- 学生成绩（只有他自己） ---------------- */
@@ -240,19 +260,53 @@ export default async function compatRoutes(app) {
       .send(fs.createReadStream(full))
   })
 
-  /* ---------------- 重构中暂未开放的（明确告知，别让前端白屏） ---------------- */
+  /* ---------------- 证据图片上传（记分时贴截图） ---------------- */
 
-  const NOT_YET = (what) => async () => {
-    throw new ApiError(501, 'not_implemented', what + '：重构中暂未开放（旧后端 server/ 仍在，可回滚使用）')
-  }
+  /**
+   * body: { name, dataUrl } → 存进 data/uploads/，返回可访问地址。
+   * 走 base64 而不是 multipart：前端只有这一处 file→dataUrl 的调用，
+   * 为它加一套 multipart 解析器不划算。
+   */
+  app.post('/api/teacher/upload', {
+    preHandler: requireAuth('teacher'),
+    schema: {
+      body: {
+        type: 'object',
+        required: ['dataUrl'],
+        properties: { name: { type: 'string', maxLength: 100 }, dataUrl: { type: 'string' } },
+      },
+    },
+    handler: async (req) => {
+      const m = /^data:([\w/+.-]+);base64,(.+)$/.exec(String(req.body.dataUrl))
+      if (!m) throw badRequest('文件格式不正确')
+      const buf = Buffer.from(m[2], 'base64')
+      if (buf.length > 6 * 1024 * 1024) throw new ApiError(413, 'too_large', '单个图片不能超过 6MB')
 
-  // 方案编辑（inspect / preview / apply / export.json）已在 routes/scheme-edit.js 真实实现
-  app.get('/api/compat', async () => {
-    const { compat } = await import('../lib/legacy.js')
-    return compat ? compat.info() : { minChrome: 109, bundles: [], contact: '' }
+      const safe = String(req.body.name || 'shot').replace(/[\\/:*?"<>|]/g, '_').slice(-80)
+      const stored = Date.now().toString(36) + '-' + safe
+      fs.mkdirSync(UPLOAD_DIR, { recursive: true })
+      fs.writeFileSync(path.join(UPLOAD_DIR, stored), buf)
+      return { ok: true, name: safe, stored, size: buf.length, url: '/api/uploads/' + encodeURIComponent(stored) }
+    },
   })
-  app.post('/api/teacher/upload', { preHandler: requireAuth('teacher') }, NOT_YET('图片上传'))
-  app.post('/api/pgsync', { preHandler: requireAuth() }, NOT_YET('代码工作台同步'))
+
+  /** 上面返回的 url 落到这里 */
+  app.get('/api/uploads/:name', { preHandler: requireAuth() }, async (req, reply) => {
+    const safe = path.basename(String(req.params.name))
+    const full = path.join(UPLOAD_DIR, safe)
+    if (!fs.existsSync(full)) throw notFound('文件不存在')
+    const st = fs.statSync(full)
+    const ext = path.extname(full).toLowerCase()
+    const MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' }
+    return reply
+      .status(200)
+      .headers({
+        'Content-Type': MIME[ext] || 'application/octet-stream',
+        'Content-Length': st.size,
+        'Cache-Control': 'private, max-age=600',
+      })
+      .send(fs.createReadStream(full))
+  })
 
   /* ---------------- 附件下载（旧路径别名） ---------------- */
 
@@ -277,8 +331,6 @@ export default async function compatRoutes(app) {
       .send(fs.createReadStream(full))
   }
 
-  app.get('/api/files/project/:aid/:sid/:name', { preHandler: requireAuth() }, (req, reply) => sendStudentFile(req, reply, 'project'))
-  app.get('/api/files/evidence/:aid/:sid/:name', { preHandler: requireAuth() }, (req, reply) => sendStudentFile(req, reply, null))
 
   /** 讲义里的图片：?courseId=&path=lecture/img/a.png（讲义仅教师） */
   app.get('/api/content/asset', async (req, reply) => {

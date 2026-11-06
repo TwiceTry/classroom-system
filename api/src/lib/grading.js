@@ -136,6 +136,9 @@ export function submissionView(s, className) {
     createdAt: s.createdAt || '',
     files: s.files || [],
     changed: s.changed || [],
+    // 列表里的「改动 / 文件」列、抽屉底部的「整份交了 N 个、其中改了 M 个」都要用
+    fileCount: (s.files || []).length,
+    changedCount: (s.changed || []).length,
     note: s.note || '',
     url: s.url || '',
     eventId: s.eventId || '',

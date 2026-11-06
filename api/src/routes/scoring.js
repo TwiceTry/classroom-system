@@ -113,15 +113,28 @@ export default async function scoringRoutes(app) {
 
       return {
         scheme: { id: s.id, name: s.name, version: s.version, totalFull: s.totalFull, passLine: s.passLine, cap: s.cap },
-        items: items.map((i) => ({
-          key: i.key,
-          name: i.name,
-          short: i.short,
-          full: i.full,
-          extra: !!i.extra,
-          form: i.form,
-          module: !!i.module && !!i.module.enabled,
-        })),
+        items: items.map((i) => {
+          const p = (i.rule && i.rule.params) || {}
+          return {
+            key: i.key,
+            name: i.name,
+            short: i.short,
+            full: i.full,
+            extra: !!i.extra,
+            form: i.form,
+            module: !!i.module && !!i.module.enabled,
+            // 保持对象形状（前端有地方读 item.rule.type）
+            rule: i.rule || null,
+            // 打分控件要用的：等级（avg）或量规维度（rubric）
+            // 不摊平出来，GradeBox 就只渲染出一个空框，老师没法打分
+            grades: Array.isArray(p.grades) ? p.grades : [],
+            dims: Array.isArray(p.dims) ? p.dims : [],
+            rawFull: p.rawFull === undefined ? null : Number(p.rawFull),
+            hint: i.hint || '',
+            reasonRequired: !!i.reasonRequired,
+            reasonLabel: i.reasonLabel || '',
+          }
+        }),
         modules,
         hidden,
         // 方案编辑器要的是「原文 + 可选规则/形态清单」：

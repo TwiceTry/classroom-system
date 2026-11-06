@@ -68,6 +68,24 @@ function writeState(a, sub, state) {
   }
 }
 
+/**
+ * 选项统一成**字符串数组**。
+ * 前端模板写的是 `{{ o }}`（历史格式就是 ["2","3"]），
+ * 如果老师导入的卷子用 [{key,text}]，学生端就会显示成 [object Object]。
+ * 在后端归一一次，比让每个页面都写兼容判断稳。
+ */
+function normalizeOptions(paper) {
+  if (!paper || !Array.isArray(paper.sections)) return paper
+  for (const s of paper.sections) {
+    for (const q of s.questions || []) {
+      if (Array.isArray(q.options)) {
+        q.options = q.options.map((o) => (typeof o === 'string' ? o : o.text || o.label || o.key || ''))
+      }
+    }
+  }
+  return paper
+}
+
 function remainingOf(state) {
   if (!state.paper || !state.paper.duration) return null
   const end = new Date(state.startedAt).getTime() + state.paper.duration * 60000
@@ -169,12 +187,24 @@ export default async function examRoutes(app) {
     if (!a) throw notFound('作业不存在')
     examItemOf(a)
     const raw = examLib.readJson(examLib.sourceFile(a.id), null)
+    // 给前端**完整**试卷结构：教师页要读 paper.kind / paper.sections.length 来渲染摘要，
+    // 少一个字段页面就炸在 undefined.length。
+    const norm = raw ? examLib.normalize(raw) : null
     const subs = repo.submissionsOf(a.id)
     const names = new Map(repo.listClasses().map((c) => [c.id, c.name]))
     return {
       assignment: { id: a.id, title: a.title, status: a.status, itemKey: a.itemKey },
       imported: !!raw,
-      paper: raw ? { title: (raw.title || ''), fullScore: raw.fullScore, duration: raw.duration } : null,
+      paper: norm
+        ? {
+            kind: norm.kind,
+            title: norm.title,
+            fullScore: norm.fullScore,
+            duration: norm.duration,
+            // 摘要里显示「单选(2 题)」：pick 为空时用实际题数兜底
+            sections: norm.sections.map((s) => Object.assign({}, s, { count: (s.questions || []).length })),
+          }
+        : null,
       rows: subs.map((s) => {
         const st = readState(a, s)
         return Object.assign(submissionView(s, names.get(s.classId)), {
@@ -188,11 +218,11 @@ export default async function examRoutes(app) {
   })
 
   /** 下载纸质卷（?answer=1 取答案卷；fmt=md|html） */
-  app.get('/api/exams/:id/paper-file', { preHandler: requireAuth('teacher') }, async (req, reply) => {
+  app.get('/api/exams/:id/paper-file/:fmt', { preHandler: requireAuth('teacher') }, async (req, reply) => {
     const a = repo.getAssignment(req.params.id)
     if (!a) throw notFound('作业不存在')
     const answer = String(req.query.answer || '') === '1'
-    const fmt = String(req.query.fmt || 'md').toLowerCase() === 'html' ? 'html' : 'md'
+    const fmt = String(req.params.fmt || 'md').toLowerCase() === 'html' ? 'html' : 'md'
     const file = path.join(paperDirOf(a.id), (answer ? '答案卷.' : '试卷.') + fmt)
     if (!fs.existsSync(file)) throw notFound('还没导入试卷')
     const st = fs.statSync(file)
@@ -239,12 +269,12 @@ export default async function examRoutes(app) {
     return {
       submission: submissionView(sub),
       state: st ? { answers: st.answers, startedAt: st.startedAt, submittedAt: st.submittedAt, graded: st.graded } : null,
-      paper: st ? examLib.publicPaper(st.paper) : null,
+      paper: st ? normalizeOptions(examLib.publicPaper(st.paper)) : null,
     }
   })
 
   /** 教师下载某份答卷（渲染成 md/html） */
-  app.get('/api/exams/:id/submissions/:subId/paper-file', { preHandler: requireAuth('teacher') }, async (req, reply) => {
+  app.get('/api/exams/:id/submissions/:subId/paper-file/:fmt', { preHandler: requireAuth('teacher') }, async (req, reply) => {
     const a = repo.getAssignment(req.params.id)
     if (!a) throw notFound('作业不存在')
     const sub = repo.findSubmission(a.id, req.params.subId) || hydrateById(req.params.subId)
@@ -260,7 +290,7 @@ export default async function examRoutes(app) {
       state: st,
       graded: st.graded,
     }
-    const fmt = String(req.query.fmt || 'md').toLowerCase() === 'html' ? 'html' : 'md'
+    const fmt = String(req.params.fmt || 'md').toLowerCase() === 'html' ? 'html' : 'md'
     const body = fmt === 'html' ? examLib.renderHtml(ctx) : examLib.renderReport(ctx)
     return reply
       .status(200)
@@ -274,7 +304,7 @@ export default async function examRoutes(app) {
   /* ============================ 学生侧 ============================ */
 
   /** 学生下载自己的答卷 */
-  app.get('/api/student/exams/:id/paper-file', { preHandler: requireAuth('student') }, async (req, reply) => {
+  app.get('/api/student/exams/:id/paper-file/:fmt', { preHandler: requireAuth('student') }, async (req, reply) => {
     const t = req.user
     const a = repo.getAssignment(req.params.id)
     if (!a) throw notFound('作业不存在')
@@ -292,7 +322,7 @@ export default async function examRoutes(app) {
       state: st,
       graded: st.graded,
     }
-    const fmt = String(req.query.fmt || 'md').toLowerCase() === 'html' ? 'html' : 'md'
+    const fmt = String(req.params.fmt || 'md').toLowerCase() === 'html' ? 'html' : 'md'
     return reply
       .status(200)
       .headers({
@@ -312,7 +342,7 @@ export default async function examRoutes(app) {
     const { sub, state } = ensureSubmission(a, t)
     return {
       submissionId: sub.id,
-      paper: examLib.publicPaper(state.paper),
+      paper: normalizeOptions(examLib.publicPaper(state.paper)),
       answers: state.answers || {},
       startedAt: state.startedAt,
       submittedAt: state.submittedAt || '',
@@ -327,13 +357,14 @@ export default async function examRoutes(app) {
     if (!a) throw notFound('作业不存在')
     const mine = repo.submissionsOf(a.id).filter((s) => s.sid === t.sid && s.classId === t.classId)
     const sub = mine[mine.length - 1]
-    if (!sub) return { started: false }
+    // 没开考也要给空壳字段：前端会直接读 answers[qid]，少一个键就炸在 undefined
+    if (!sub) return { started: false, answers: {}, paper: null, submittedAt: '', remaining: null }
     const st = readState(a, sub)
-    if (!st) return { started: false }
+    if (!st) return { started: false, answers: {}, paper: null, submittedAt: '', remaining: null }
     return {
       started: true,
       submissionId: sub.id,
-      paper: examLib.publicPaper(st.paper),
+      paper: normalizeOptions(examLib.publicPaper(st.paper)),
       answers: st.answers || {},
       startedAt: st.startedAt,
       submittedAt: st.submittedAt || '',

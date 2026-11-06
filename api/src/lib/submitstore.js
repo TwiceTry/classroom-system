@@ -40,13 +40,16 @@ function targetInside(dir, name) {
   return full
 }
 
-/** 写入一批文件：entries = [{ name, text }] 或 [{ name, dataUrl }] */
+/**
+ * 写入一批文件：entries = [{ path|name, text }] 或 [{ name, dataUrl }]
+ * 代码工作台传的是 `path`（相对路径），附件传的是 `name` —— 两个都认。
+ */
 export function writeFiles(kind, classId, sid, assignmentId, entries) {
   const dir = dirOf(kind, classId, sid, assignmentId)
   fs.mkdirSync(dir, { recursive: true })
   const written = []
   for (const e of entries || []) {
-    const name = safeName(e.name)
+    const name = safeName(e.path || e.name)
     const full = targetInside(dir, name)
     let buf
     if (typeof e.text === 'string') {
@@ -83,14 +86,16 @@ export function readTextFiles(kind, classId, sid, assignmentId, names) {
     const full = targetInside(dir, name)
     if (!fs.existsSync(full)) continue
     const st = fs.statSync(full)
+    // 前端工作台用 `path` 当文件标识（文件树/编辑器都按它找），
+    // 附件下载那边用 `name` —— 两个都带上，免得两个页面各缺一个。
     if (st.size > 512 * 1024) {
-      out.push({ name, size: st.size, text: '', note: '文件较大，请下载查看' })
+      out.push({ name, path: name, size: st.size, text: '', note: '文件较大，请下载查看' })
       continue
     }
     try {
-      out.push({ name, size: st.size, text: fs.readFileSync(full, 'utf8') })
+      out.push({ name, path: name, size: st.size, text: fs.readFileSync(full, 'utf8') })
     } catch (e) {
-      out.push({ name, size: st.size, text: '', note: '不是文本文件' })
+      out.push({ name, path: name, size: st.size, text: '', note: '不是文本文件' })
     }
   }
   return out

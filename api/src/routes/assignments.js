@@ -13,19 +13,55 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { requireAuth } from '../plugins/auth.js'
 import { ApiError, badRequest, notFound, conflict, forbidden } from '../lib/errors.js'
-import { UPLOAD_DIR } from '../config.js'
+import { UPLOAD_DIR, config } from '../config.js'
 import * as repo from '../lib/repo.js'
 import * as store from '../lib/submitstore.js'
 import { scheme, withCourseScheme } from '../lib/scheme.js'
-import { gradeSubmission, kindOfItem, courseOfClass, courseOfAssignment } from '../lib/grading.js'
+import { broadcast } from './cast.js'
+import {
+  submissionView,
+  gradeSubmission,
+  kindOfItem,
+  courseOfClass,
+  courseOfAssignment,
+} from '../lib/grading.js'
 import { content } from '../lib/legacy.js'
 import { contentRootOf } from './courses.js'
 
 const uid = (p) => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 const MAX_TEXT_FILES = 40
 
+/**
+ * 取一份提交：路径里的 `:sid` 前端传的是**提交 id**（submissions[i].id），
+ * 不是学号。这里两种都认（按 id 优先），避免前端换个参数就没法用。
+ */
+function findSubOf(a, key) {
+  const row = repo.db().prepare(`SELECT * FROM submissions WHERE id = ?`).get(String(key))
+  if (row && row.assignment_id === a.id) return repo.hydrate(row)
+  return repo.findSubmission(a.id, key)
+}
+
+/**
+ * 作业挂着的那一课示例的标题（老师端显示「对应示例：第 3 课 · …」）。
+ * 挂不上（空白设计稿）就返回空串，前端会显示「作业自带代码」。
+ */
+function dirTitleOf(a) {
+  if (!a.dir) return ''
+  try {
+    const course = a.courseId ? repo.getCourse(a.courseId) : repo.listCourses().find((c) => !c.archived)
+    if (!course) return ''
+    const hit = content.listExamples(contentRootOf(course)).find((x) => x.dir === a.dir)
+    return hit ? hit.title || hit.dir : a.dir
+  } catch (e) {
+    return a.dir
+  }
+}
+
 const view = (a) => ({
   id: a.id,
+  // 有没有「自己那份代码」：没挂示例就是建课时复制的一份
+  selfCode: !a.dir,
+  dirTitle: dirTitleOf(a),
   kind: a.kind || 'work',
   itemKey: a.itemKey || '',
   courseId: a.courseId || '',
@@ -42,29 +78,8 @@ const view = (a) => ({
   allowLate: !!a.allowLate,
 })
 
-const subView = (s, className) => ({
-  id: s.id,
-  assignmentId: s.assignmentId,
-  classId: s.classId,
-  className: className || '',
-  sid: s.sid,
-  name: s.name || '',
-  dir: s.dir || '',
-  createdAt: s.createdAt || '',
-  files: s.files || [],
-  changed: s.changed || [],
-  note: s.note || '',
-  url: s.url || '',
-  eventId: s.eventId || '',
-  grade: s.grade || '',
-  late: !!s.late,
-  raw: s.raw === null || s.raw === undefined ? undefined : Number(s.raw),
-  dims: s.dims || undefined,
-  score: s.score === null || s.score === undefined ? undefined : Number(s.score),
-  comment: s.comment || '',
-  gradedAt: s.gradedAt || '',
-  gradedBy: s.gradedBy || '',
-})
+/** 提交记录的对外形状：统一用 lib/grading.js 里那一份（别在这里再写一个） */
+const subView = submissionView
 
 export default async function assignmentRoutes(app) {
   /* ============================ 教师侧 ============================ */
@@ -156,7 +171,7 @@ export default async function assignmentRoutes(app) {
           allowLate: !!b.allowLate,
         })
         reply.status(201)
-        return view(a)
+        return { assignment: view(a) }
       })
     },
   })
@@ -184,21 +199,27 @@ export default async function assignmentRoutes(app) {
       for (const k of ['title', 'note', 'weight', 'dueAt', 'allowLate', 'dir']) {
         if (req.body[k] !== undefined) next[k] = req.body[k]
       }
-      return view(repo.updateAssignment(a.id, next))
+      return { assignment: view(repo.updateAssignment(a.id, next)) }
     },
   })
 
   /** 开 / 关（关掉之后学生不能提交） */
-  app.post('/api/assignments/:id/open', { preHandler: requireAuth('teacher') }, async (req) => {
+  /** 开始收作业：开放 + 通知全班（学生端立刻能进来；delivered 是送达人数） */
+  app.post('/api/assignments/:id/start', { preHandler: requireAuth('teacher') }, async (req) => {
     const a = repo.getAssignment(req.params.id)
     if (!a) throw notFound('作业不存在')
-    return view(repo.updateAssignment(a.id, { status: 'open', openedAt: new Date().toISOString() }))
+    const next = repo.updateAssignment(a.id, { status: 'open', openedAt: new Date().toISOString() })
+    const delivered = broadcast({ t: 'assignment', action: 'open', id: a.id, title: a.title, itemKey: a.itemKey })
+    return { assignment: view(next), delivered }
   })
 
-  app.post('/api/assignments/:id/close', { preHandler: requireAuth('teacher') }, async (req) => {
+  /** 结束：关闭 + 通知全班 */
+  app.post('/api/assignments/:id/stop', { preHandler: requireAuth('teacher') }, async (req) => {
     const a = repo.getAssignment(req.params.id)
     if (!a) throw notFound('作业不存在')
-    return view(repo.updateAssignment(a.id, { status: 'closed', closedAt: new Date().toISOString() }))
+    const next = repo.updateAssignment(a.id, { status: 'closed', closedAt: new Date().toISOString() })
+    const delivered = broadcast({ t: 'assignment', action: 'close', id: a.id, title: a.title, itemKey: a.itemKey })
+    return { assignment: view(next), delivered }
   })
 
   /** 删作业：连提交记录 + 磁盘文件 + 已记的分一起清 */
@@ -216,6 +237,19 @@ export default async function assignmentRoutes(app) {
 
     const classes = repo.listClasses().map((c) => ({ id: c.id, students: repo.rosterOf(c.id) }))
     const folders = store.removeAssignmentEverywhere(a.kind, a.id, classes)
+
+    // 机试还要清试卷源文件 + 纸质卷目录（不然 data/exams 里会一直堆）
+    if (a.kind === 'paper') {
+      try {
+        const { examLib } = await import('../lib/legacy.js')
+        const src = examLib.sourceFile(a.id)
+        if (src && fs.existsSync(src)) fs.unlinkSync(src)
+        const dir = path.join(config.dataDir, 'exams', String(a.id).replace(/[^A-Za-z0-9_.-]/g, '_'))
+        if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true })
+      } catch (e) {
+        /* 清不掉也不该让删除失败 */
+      }
+    }
 
     repo.deleteSubmissionsOf(a.id)
     repo.deleteAssignment(a.id)
@@ -261,7 +295,7 @@ export default async function assignmentRoutes(app) {
   app.get('/api/assignments/:id/submissions/:sid', { preHandler: requireAuth('teacher') }, async (req) => {
     const a = repo.getAssignment(req.params.id)
     if (!a) throw notFound('作业不存在')
-    const sub = repo.findSubmission(a.id, req.params.sid)
+    const sub = findSubOf(a, req.params.sid)
     if (!sub) throw notFound('提交记录不存在')
     const files = a.kind === 'project' ? [] : store.readTextFiles(a.kind, sub.classId, sub.sid, a.id, sub.files)
     return { submission: subView(sub), files }
@@ -276,7 +310,8 @@ export default async function assignmentRoutes(app) {
         properties: {
           grade: { type: 'string', maxLength: 8 },
           late: { type: 'boolean' },
-          raw: { type: 'number' },
+          // 前端「卷面分」输入框空着时会发 ''，只认 number 就会 400（rubric/等级作业根本不填这个）
+          raw: { anyOf: [{ type: 'number' }, { type: 'string' }] },
           dims: { anyOf: [{ type: 'object' }, { type: 'string' }] },
           comment: { type: 'string', maxLength: 1000 },
           weight: { type: 'number' },
@@ -286,7 +321,7 @@ export default async function assignmentRoutes(app) {
     handler: async (req) => {
       const a = repo.getAssignment(req.params.id)
       if (!a) throw notFound('作业不存在')
-      const sub = repo.findSubmission(a.id, req.params.sid)
+      const sub = findSubOf(a, req.params.sid)
       if (!sub) throw notFound('提交记录不存在')
       return { submission: gradeSubmission(a, sub, req.user.name || '教师', req.body) }
     },
@@ -296,7 +331,7 @@ export default async function assignmentRoutes(app) {
   app.post('/api/assignments/:id/submissions/:sid/redo', { preHandler: requireAuth('teacher') }, async (req) => {
     const a = repo.getAssignment(req.params.id)
     if (!a) throw notFound('作业不存在')
-    const sub = repo.findSubmission(a.id, req.params.sid)
+    const sub = findSubOf(a, req.params.sid)
     if (!sub) throw notFound('提交记录不存在')
     const course = courseOfClass(sub.classId) || courseOfAssignment(a)
     const item = withCourseScheme(course, () => scheme.itemByKey(a.itemKey) || {})
@@ -348,7 +383,7 @@ export default async function assignmentRoutes(app) {
   app.delete('/api/assignments/:id/submissions/:sid', { preHandler: requireAuth('teacher') }, async (req, reply) => {
     const a = repo.getAssignment(req.params.id)
     if (!a) throw notFound('作业不存在')
-    const sub = repo.findSubmission(a.id, req.params.sid)
+    const sub = findSubOf(a, req.params.sid)
     if (!sub) throw notFound('提交记录不存在')
     if (sub.eventId) {
       const ev = repo.findEvent(sub.classId, sub.eventId)
@@ -380,7 +415,7 @@ export default async function assignmentRoutes(app) {
     handler: async (req) => {
       const a = repo.getAssignment(req.params.id)
       if (!a) throw notFound('作业不存在')
-      const sub = repo.findSubmission(a.id, req.params.sid)
+      const sub = findSubOf(a, req.params.sid)
       if (!sub) throw notFound('提交记录不存在')
       if (!sub.eventId) throw badRequest('先给分，再传证据（证据要挂在这次评分上）')
       const ev = repo.findEvent(sub.classId, sub.eventId)
@@ -411,7 +446,7 @@ export default async function assignmentRoutes(app) {
     handler: async (req) => {
       const a = repo.getAssignment(req.params.id)
       if (!a) throw notFound('作业不存在')
-      const sub = repo.findSubmission(a.id, req.params.sid)
+      const sub = findSubOf(a, req.params.sid)
       if (!sub || !sub.eventId) throw notFound('没有可删的证据')
       const ev = repo.findEvent(sub.classId, sub.eventId)
       if (!ev) throw notFound('计分记录不存在')
@@ -480,8 +515,9 @@ export default async function assignmentRoutes(app) {
 
   /**
    * 学生提交。
-   *   files: [{ name, text }]        课堂作业（交代码/文本）
+   *   files: [{ path, text }]        课堂作业（交代码/文本，path 是工作台里的相对路径）
    *   files: [{ name, dataUrl }]     大作业（交附件）
+   * changed: ['index.html', …]      这次改了哪几个（老师一眼看出改了什么）
    * 重复提交 = 覆盖（旧文件先清掉，免得多交的文件永远留着）
    */
   app.post('/api/student/assignments/:id/submit', {
@@ -495,10 +531,17 @@ export default async function assignmentRoutes(app) {
             maxItems: MAX_TEXT_FILES,
             items: {
               type: 'object',
-              required: ['name'],
-              properties: { name: { type: 'string' }, text: { type: 'string' }, dataUrl: { type: 'string' } },
+              // 代码工作台传的是 path，附件传的是 name —— 两个都认
+              anyOf: [{ required: ['path'] }, { required: ['name'] }],
+              properties: {
+                path: { type: 'string' },
+                name: { type: 'string' },
+                text: { type: 'string' },
+                dataUrl: { type: 'string' },
+              },
             },
           },
+          changed: { type: 'array', items: { type: 'string' } },
           note: { type: 'string', maxLength: 1000 },
           url: { type: 'string', maxLength: 300 },
         },
@@ -539,7 +582,7 @@ export default async function assignmentRoutes(app) {
         name: t.name || '',
         dir: a.dir || '',
         files: written.map((w) => w.name),
-        changed: [],
+        changed: Array.isArray(req.body.changed) ? req.body.changed.map(String).slice(0, MAX_TEXT_FILES) : [],
         note: String(req.body.note || '').slice(0, 1000),
         url: String(req.body.url || '').slice(0, 300),
         late,
