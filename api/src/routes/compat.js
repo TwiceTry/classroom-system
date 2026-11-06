@@ -151,6 +151,74 @@ export default async function compatRoutes(app) {
     return bundle
   })
 
+  /**
+   * 示例工程的静态文件服务（预览 iframe 的 <base> 指到这里）。
+   *
+   * 为什么需要它：示例页面写的是 `<script src="../vue.global.js">` ——
+   * vue.global.js / vue3-sfc-loader.js / playground/sfc-boot.js 这些**共享运行时**
+   * 放在「代码示例/」根目录，不在每个示例目录里。
+   *
+   * 预览是 iframe srcdoc，相对路径按 <base> 解析；如果 base 指向一个取不到文件的地址，
+   * `../vue.global.js` 会落到 SPA 兜底、拿回 index.html，
+   * 于是控制台报 `Uncaught SyntaxError: Unexpected token '<'` —— Vue 示例全部渲染不出来。
+   *
+   * 这里直接把「代码示例/」当静态目录提供服务：
+   *   · 内存文件字典优先（学生改动走内存），没命中的才走这个接口
+   *   · 浏览器可缓存，不必把 2.4MB 的 sfc-loader 塞进 /api/examples 的 JSON 里
+   */
+  /*
+   * 这三个是**共享运行时**（第三方库 + 启动脚本），不是老师的课程内容：
+   *   vue.global.js        Vue 3 全局构建
+   *   vue3-sfc-loader.js   浏览器里编译 .vue
+   *   playground/sfc-boot.js 把窗口里的 .vue 挂上去
+   * 它们由模板里的 `<script src="../xxx">` 直接加载 —— 那是**浏览器原生请求，
+   * 带不了 Authorization 头**，所以不能要求登录，否则 Vue 示例全部白屏。
+   * 其余文件（老师写的示例代码）仍然要登录才给。
+   */
+  const SHARED_RUNTIME = new Set(['vue.global.js', 'vue3-sfc-loader.js', 'playground/sfc-boot.js'])
+
+  app.get('/api/example-files/*', async (req, reply) => {
+    const rel = String(req.params['*'] || '').replace(/\\/g, '/')
+    if (!rel) throw badRequest('缺少文件路径')
+
+    const isShared = SHARED_RUNTIME.has(rel)
+    if (!isShared && !fromRequest(req.raw)) throw new ApiError(401, 'unauthorized', '需要登录')
+
+    const course = req.query.courseId
+      ? repo.getCourse(String(req.query.courseId))
+      : repo.listCourses().find((c) => !c.archived) || null
+    if (!course) throw notFound('还没有课程')
+
+    const exRoot = content.dirsOf(contentRootOf(course)).examples
+
+    // 路径安全：不允许 ..、不允许绝对路径、不允许跳出示例根
+    const full = path.resolve(exRoot, rel)
+    const rootAbs = path.resolve(exRoot)
+    if (full !== rootAbs && !full.startsWith(rootAbs + path.sep)) throw forbidden('路径越界')
+    if (!fs.existsSync(full) || !fs.statSync(full).isFile()) throw notFound('文件不存在：' + rel)
+
+    const ext = path.extname(full).toLowerCase()
+    const MIME = {
+      '.js': 'application/javascript; charset=utf-8',
+      '.mjs': 'application/javascript; charset=utf-8',
+      '.css': 'text/css; charset=utf-8',
+      '.json': 'application/json; charset=utf-8',
+      '.html': 'text/html; charset=utf-8',
+      '.svg': 'image/svg+xml',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp',
+      '.woff': 'font/woff',
+      '.woff2': 'font/woff2',
+      '.ttf': 'font/ttf',
+    }
+    reply.type(MIME[ext] || 'text/plain; charset=utf-8')
+    reply.header('cache-control', 'private, max-age=300')
+    return fs.createReadStream(full)
+  })
+
   /* ---------------- 学生成绩（只有他自己） ---------------- */
 
   app.get('/api/student/score', { preHandler: requireAuth('student') }, async (req) => {

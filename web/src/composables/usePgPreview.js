@@ -227,7 +227,15 @@ export function usePgPreview(opts) {
     lastRunPage = page.value
     try {
       await ensureSfcSrcdoc()
-      frame.value.srcdoc = buildPreviewDoc(allFiles.value, page.value, '/examples/' + encodeURI(dir.value) + '/')
+      /*
+       * base 指向 /api/example-files/ 而不是 /examples/：
+       * 示例页面里的 `../vue.global.js`、`../playground/sfc-boot.js` 是**共享运行时**
+       * （放在「代码示例/」根目录，不在每个示例目录里）。
+       * base 指错地方，这些 script 会落到 SPA 兜底拿回 index.html，
+       * 浏览器报 `Unexpected token '<'`，所有 Vue 示例都渲染成空白。
+       * 内存文件字典仍然优先（学生改动走内存），没命中的才走这个接口。
+       */
+      frame.value.srcdoc = buildPreviewDoc(allFiles.value, page.value, '/api/example-files/' + encodeURI(dir.value) + '/')
       running.value = true
     } catch (e) {
       error.value = '预览失败：' + e.message

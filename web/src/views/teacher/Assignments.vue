@@ -604,7 +604,8 @@ async function runPreview() {
   try {
     await ensureSfcSrcdoc()
     const dirName = (viewing.value && viewing.value.dir) || (d.value && d.value.assignment.dir) || ''
-    iframe.srcdoc = buildPreviewDoc(subFiles.value, previewPage.value, '/examples/' + encodeURI(dirName) + '/')
+    // base 指向能真取到共享运行时的接口（vue.global.js / sfc-boot.js 在示例目录的上级）
+    iframe.srcdoc = buildPreviewDoc(subFiles.value, previewPage.value, '/api/example-files/' + encodeURI(dirName) + '/')
     previewOk.value = true
   } catch (e) {
     previewError.value = '预览失败：' + e.message

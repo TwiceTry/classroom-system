@@ -6,7 +6,7 @@
       <span class="spacer"></span>
       <span v-if="npmPage" class="tag warn">npm 工程</span>
       <span v-else-if="running" class="tag ok">已渲染</span>
-      <a v-if="page" :href="'/examples/' + encodeURI(dir) + '/' + page" target="_blank" rel="noopener" class="btn mini">
+      <a v-if="page" :href="'/api/example-files/' + encodeURI(dir) + '/' + page" target="_blank" rel="noopener" class="btn mini">
         新窗口
       </a>
     </div>
