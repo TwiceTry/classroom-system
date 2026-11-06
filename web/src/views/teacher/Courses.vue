@@ -5,10 +5,12 @@
         <template #title>课程管理</template>
         <template #sub>一门课 = 自己的讲义 / 材料 / 代码示例 / 试卷 + 自己的考核方案 + 若干班级。可以手工建壳，也可以上传课程包一次配好</template>
         <template #right>
+          <!--
+            「下载模板」不放在这一层：它只在「要导入」时才有意义，
+            摆在页头和「导出课程包」并排会让人以为是个独立的导出功能。
+            挪到导入弹窗里（模板就在导入按钮旁边）。
+          -->
           <button class="btn mini" :disabled="loading" @click="load">刷新</button>
-          <button class="btn mini" @click="downloadTemplate" title="空壳课程包：改完 course.json 与名单，往 content/ 放文件，再导回来">
-            下载模板
-          </button>
           <button class="btn mini" @click="openImport">导入课程包</button>
           <button class="btn primary" @click="openNew">＋ 新建课程</button>
         </template>
@@ -207,30 +209,39 @@
     </div>
 
     <!-- 导入课程包（zip）：先只读解析给差异报告，确认后才落盘 -->
-    <div v-if="importing" class="mask" @click.self="closeImport">
-      <div class="modal wide">
-        <div class="modal-head">
-          <h3>导入课程包</h3>
-          <button class="btn mini" style="margin-left: auto" @click="closeImport">关闭</button>
+    <ImportDialog
+      v-model="importing"
+      title="导入课程包"
+      :file-name="packFile"
+      accept=".zip"
+      :busy="saving || uploading"
+      :error="packErr"
+      :errors="packErrList"
+      :has-report="!!report"
+      pick-text="⤒ 选择课程包 zip"
+      template-label="⤓ 没有包？下载空模板"
+      template-hint="模板里有 course.json、名单目录、content/ 四类空目录与说明。"
+      wide
+      @pick="onFile"
+      @template="downloadTemplate"
+      @close="closeImport"
+    >
+      <template #hint>
+        <p class="dim mini" style="margin-top: 0">
+          选一个 <code>*.coursepack.zip</code>（「导出课程包」得到的那个）。系统会先只读解析出一份差异报告：
+          哪些新建、哪些更新、多少文件没变 —— 你看过再决定怎么导。
+        </p>
+      </template>
+
+      <template #progress>
+        <div v-if="uploading" class="up">
+          <div class="up-track"><div class="up-bar" :style="{ width: uploadPct + '%' }"></div></div>
+          <span class="dim mini">{{ uploadPct < 100 ? '上传中 ' + uploadPct + '%' : '正在解析…' }}</span>
+          <button class="btn mini" @click="cancelUpload">取消</button>
         </div>
-        <div class="modal-body form">
-          <input ref="fileInput" type="file" accept=".zip" @change="onFile" />
-          <p class="dim mini">
-            选一个 <code>*.coursepack.zip</code>（「导出课程包」得到的那个）。系统会先只读解析出一份差异报告：
-            哪些新建、哪些更新、多少文件没变 —— 你看过再决定怎么导。
-          </p>
+      </template>
 
-          <div v-if="uploading" class="up">
-            <div class="up-track"><div class="up-bar" :style="{ width: uploadPct + '%' }"></div></div>
-            <span class="dim mini">{{ uploadPct < 100 ? '上传中 ' + uploadPct + '%' : '正在解析…' }}</span>
-            <button class="btn mini" @click="cancelUpload">取消</button>
-          </div>
-
-          <div v-if="packErr" class="hint err">{{ packErr }}</div>
-          <ul v-if="packErrList.length" class="pk-errs">
-            <li v-for="e in packErrList.slice(0, 12)" :key="e">{{ e }}</li>
-          </ul>
-
+      <template #report>
           <!-- 干跑报告 -->
           <div v-if="report" class="pk">
             <p v-if="report.parts" class="hint" style="margin-bottom: 8px">
@@ -323,24 +334,24 @@
             写入 {{ applied.files.written }} 个文件<template v-if="applied.files.removed">
               ，移走 {{ applied.files.removed }} 个（在 data/{{ applied.files.trash ? applied.files.trash.dir : '.trash/' }}，可随时捞回）</template>
           </div>
-        </div>
-        <div class="modal-foot">
-          <span class="spacer"></span>
-          <button v-if="!report" class="btn" @click="closeImport">关闭</button>
-          <template v-else>
-            <button class="btn" :disabled="saving" title="换一个新 id 另建一份，不动现有课程" @click="doApply('fork')">
-              另建一份
-            </button>
-            <button class="btn" :disabled="saving" title="内容整体替换（包里没有的会删掉），名单同步成包里的" @click="doApply('replace')">
-              整体替换
-            </button>
-            <button class="btn primary" :disabled="saving" title="覆盖同名文件，名单只增不减（推荐）" @click="doApply('merge')">
-              {{ saving ? '导入中…' : '按此导入' }}
-            </button>
-          </template>
-        </div>
-      </div>
-    </div>
+      </template>
+
+      <!-- 课程包有三种导入策略，底部不是普通「取消 / 确认」，用 actions 插槽覆盖 -->
+      <template #actions>
+        <button v-if="!report" class="btn" @click="closeImport">关闭</button>
+        <template v-else>
+          <button class="btn" :disabled="saving" title="换一个新 id 另建一份，不动现有课程" @click="doApply('fork')">
+            另建一份
+          </button>
+          <button class="btn" :disabled="saving" title="内容整体替换（包里没有的会删掉），名单同步成包里的" @click="doApply('replace')">
+            整体替换
+          </button>
+          <button class="btn primary" :disabled="saving" title="覆盖同名文件，名单只增不减（推荐）" @click="doApply('merge')">
+            {{ saving ? '导入中…' : '按此导入' }}
+          </button>
+        </template>
+      </template>
+    </ImportDialog>
     <Toast :text="toast" @close="toast = ''" />
   </PageShell>
 </template>
@@ -361,6 +372,7 @@ import Toast from '../../components/Toast.vue'
 import PageHead from '../../components/PageHead.vue'
 import CardHead from '../../components/CardHead.vue'
 import PageShell from '../../components/PageShell.vue'
+import ImportDialog from '../../components/ImportDialog.vue'
 
 const list = ref([])
 const schemes = ref([])
@@ -373,10 +385,11 @@ const editing = ref(false)
 const form = reactive({ isNew: true, id: '', name: '', note: '', semester: '', copySchemeFrom: '' })
 
 const importing = ref(false)
-const fileInput = ref(null)
+
 const packErr = ref('')
 const packErrList = ref([])
 const zipBuf = ref(null) // 选中的 zip 原始字节
+const packFile = ref('') // 选中的 zip 文件名（标题上要显示）
 const report = ref(null) // 干跑报告（服务端算出来的差异）
 const applied = ref(null)
 const showExtra = ref(false) // 导入报告里「本地多出」的完整清单是否展开
@@ -598,20 +611,22 @@ function openImport() {
   report.value = null
   applied.value = null
   schemeMode.value = 'use'
-  if (fileInput.value) fileInput.value.value = ''
 }
 
 function closeImport() {
   importing.value = false
 }
 
-/** 把 zip 发给服务端「只读解析」，拿回差异报告；一个字节都不落盘 */
-async function onFile(e) {
-  const f = e.target.files && e.target.files[0]
+/**
+ * 把 zip 发给服务端「只读解析」，拿回差异报告；一个字节都不落盘。
+ * 文件由 ImportDialog 的隐藏 input 选好后 emit 过来。
+ */
+async function onFile(f) {
   packErr.value = ''
   packErrList.value = []
   report.value = null
   applied.value = null
+  packFile.value = f ? f.name : ''
   if (!f) return
   if (f.size > 500 * 1024 * 1024) {
     packErr.value = '文件太大（' + Math.round(f.size / 1024 / 1024) + 'MB），单包上限 500MB'

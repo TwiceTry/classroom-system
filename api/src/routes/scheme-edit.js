@@ -67,14 +67,32 @@ export default async function schemeEditRoutes(app) {
     },
   })
 
+  /**
+   * 从请求体里取出「方案对象」。
+   *
+   * 三种形状都要认（都真实出现过）：
+   *   · `{ scheme: {...} }`  —— 早期约定
+   *   · `{ raw: {...} }`     —— 前端「导入方案」上传文件后包的一层（raw 是编辑器里方案原文的叫法）
+   *   · 直接就是方案对象     —— 导出的 scheme.json 原样 POST
+   *
+   * 只认前两种之外的一种时，第三种会被当成「一个没有 items 的对象」→
+   * 预检报告成「文件: (未命名) · 0 项，所有考核项都被删了」，老师一点确认方案就空了。
+   */
+  function schemeFromBody(body) {
+    const b = body || {}
+    if (b.scheme && typeof b.scheme === 'object') return b.scheme
+    if (b.raw && typeof b.raw === 'object') return b.raw
+    return b
+  }
+
   /** 预检：这份方案能不能用（不改任何东西） */
   app.post('/api/scheme/inspect', {
     preHandler: requireAuth('teacher'),
     schema: { body: { type: 'object', properties: { scheme: { type: 'object' } }, additionalProperties: true } },
     handler: async (req) => {
       const course = courseOf(req)
-      const incoming = req.body.scheme || req.body
-      if (!incoming || typeof incoming !== 'object') throw badRequest('body 里没有方案对象')
+      const incoming = schemeFromBody(req.body)
+      if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) throw badRequest('body 里没有方案对象')
       return withCourseScheme(course, () => schemeio.inspect(incoming))
     },
   })
@@ -140,8 +158,8 @@ export default async function schemeEditRoutes(app) {
     },
     handler: async (req) => {
       const course = courseOf(req)
-      const incoming = req.body.scheme || req.body
-      if (!incoming || typeof incoming !== 'object') throw badRequest('body 里没有方案对象')
+      const incoming = schemeFromBody(req.body)
+      if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) throw badRequest('body 里没有方案对象')
       return withCourseScheme(course, () =>
         schemeio.apply(incoming, { force: !!req.body.force, by: req.user.name || '教师', note: req.body.note || '' })
       )

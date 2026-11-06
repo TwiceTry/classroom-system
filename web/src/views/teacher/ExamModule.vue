@@ -5,7 +5,13 @@
         <template #title>{{ moduleTitle }}</template>
         <template #sub>导入试卷 / 题库 → 开始 → 学生限时作答 → 客观题自动判、主观题你判 → 自动出答卷文件</template>
         <template #right>
-          <DirIO dir="exams" label="试卷" />
+          <!--
+            label 用「试卷库」而不是「试卷」：
+            这里是**整个 content/exams 目录**的搬运（批量搬走/搬入试卷库），
+            而列表里每个机试还有「导入这份卷子」的按钮（只给那一个作业装卷子）——
+            两个都叫「导入试卷」会点错。
+          -->
+          <DirIO dir="exams" label="试卷库" />
           <button class="btn mini" :disabled="loading" @click="loadAll">刷新</button>
           <button class="btn primary" @click="openEditor">＋ 新建机试</button>
         </template>
@@ -43,11 +49,17 @@
           <template v-if="d.paper.duration"> · 限时 {{ d.paper.duration }} 分钟</template>
           <template v-if="d.paper.sections.length"> · {{ d.paper.sections.map((s) => s.title + '(' + (s.pick || s.count) + '题)').join('、') }}</template>
         </p>
-        <p class="dim mini" v-else>还没导入试卷。</p>
+        <p class="dim mini" v-else>还没装卷子。点下面的「导入这份卷子」，或先用右上角的「⤒ 导入试卷库」批量搬。</p>
       </div>
       <div class="ctrl-r">
         <input ref="fileInput" type="file" accept=".json" style="display: none" @change="onFile" />
-        <button class="btn mini" @click="fileInput.click()">{{ d.paper ? '换试卷 / 题库' : '导入试卷 / 题库（JSON）' }}</button>
+        <button
+          class="btn mini"
+          title="只给这一个机试装卷子：支持试卷 JSON 或题库 JSON"
+          @click="fileInput.click()"
+        >
+          {{ d.paper ? '换这份卷子（JSON）' : '导入这份卷子（JSON）' }}
+        </button>
         <button v-if="d.paper" class="btn mini" title="排好版的空白卷，打印或存 PDF" @click="openPaper(false)">试卷</button>
         <button v-if="d.paper" class="btn mini" title="带参考答案与解析，只给老师" @click="openPaper(true)">答案卷</button>
         <button v-if="d.assignment.status !== 'open'" class="btn primary" :disabled="!d.paper" @click="start">▶ 开始考试</button>

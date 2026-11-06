@@ -11,6 +11,7 @@
 
 import fs from 'fs'
 import path from 'path'
+import { createHash } from 'node:crypto'
 import { config } from '../config.js'
 import { HttpError } from './legacy-http.js'
 import { makeZip, readZip } from './zip.js'
@@ -201,10 +202,13 @@ function applyDir(course, dir, buf, mode) {
 }
 
 /* ---------------- 模板：新部署时「该放什么、叫什么名字」 ----------------
- * 模板正文放在 server/templates/<目录>/ 里，是**真文件** —— 改模板就是改那些文件，
+ * 模板正文放在 api/templates/<目录>/ 里，是**真文件** —— 改模板就是改那些文件，
  * 不用在 JS 里拼 Markdown 字符串（也不怕正文里的反引号）。
+ *
+ * 路径是 `..`/`..`（lib → src → api）：删掉旧 server/ 之后这一层跟着搬过来了，
+ * 少跳一级就会去 api/src/templates 找，然后报「模板文件缺失」。
  */
-const TPL_ROOT = path.join(import.meta.dirname, '..', 'templates')
+const TPL_ROOT = path.join(import.meta.dirname, '..', '..', 'templates')
 
 function walkTemplate(abs, rel, out) {
   for (const it of fs.readdirSync(abs, { withFileTypes: true })) {
@@ -235,7 +239,7 @@ function templateZip(dir) {
       /* 没有就只给 README */
     }
   }
-  if (!entries.length) throw new HttpError(500, '模板文件缺失：server/templates/' + d + '/')
+  if (!entries.length) throw new HttpError(500, '模板文件缺失：api/templates/' + d + '/（这是部署文件，不该丢）')
   return { filename: 'template-' + d + '.zip', buffer: makeZip(entries), dir: d, files: entries.length }
 }
 

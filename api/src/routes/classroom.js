@@ -29,12 +29,25 @@ function announceSpotlight(classId, payload) {
 }
 
 /** 名册解析：支持 [{sid,name}] 或一段「学号,姓名」文本 */
+/**
+ * 表头里的常见词。老师的表格第一行往往是「学号,姓名,备注」，
+ * 直接当数据会把「学号」当成一个学生导进去 —— 名单里凭空多一个人。
+ */
+const HEADER_WORDS = new Set(['学号', '姓名', '备注', '序号', '名字', 'sid', 'name', 'no', 'id', '备注说明'])
+
+function looksLikeHeader(sid, name) {
+  const a = String(sid || '').trim().toLowerCase()
+  const b = String(name || '').trim().toLowerCase()
+  return HEADER_WORDS.has(a) || (HEADER_WORDS.has(a) && HEADER_WORDS.has(b))
+}
+
 function parseRoster(body) {
   const out = []
   if (Array.isArray(body.students)) {
     for (const s of body.students) {
       const sid = String((s && s.sid) || '').trim()
-      if (sid) out.push({ sid, name: String((s && s.name) || '').trim() })
+      const name = String((s && s.name) || '').trim()
+      if (sid && !looksLikeHeader(sid, name)) out.push({ sid, name })
     }
     return out
   }
@@ -43,8 +56,11 @@ function parseRoster(body) {
     const t = line.trim()
     if (!t) continue
     const parts = t.split(/[,\t;，、]/).map((x) => x.trim())
-    if (parts.length === 1) out.push({ sid: parts[0], name: '' })
-    else out.push({ sid: parts[0], name: parts.slice(1).join(' ') })
+    const sid = parts[0]
+    // 第二列之后可能有「备注」等空列，join 完要在末尾再 trim 一次
+    const name = parts.length === 1 ? '' : parts.slice(1).join(' ').trim()
+    if (looksLikeHeader(sid, name)) continue
+    out.push({ sid, name })
   }
   return out
 }

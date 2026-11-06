@@ -53,10 +53,17 @@ function rowsFromText(text) {
   return rows
 }
 
-/** .xlsx → 二维字符串数组（读第一个工作表；日期转成 yyyy-mm-dd） */
-async function rowsFromXlsx(filePath) {
+/**
+ * .xlsx → 二维字符串数组（读第一个工作表；日期转成 yyyy-mm-dd）
+ *
+ * 既收文件路径也收 Buffer：
+ * 上传来的表格是收进内存的 Buffer，`readFile` 只认路径 ——
+ * 传 Buffer 进去会报 `The "path" argument must be of type string. Received an instance of Buffer`。
+ */
+async function rowsFromXlsx(input) {
   const wb = new ExcelJS.Workbook()
-  await wb.xlsx.readFile(filePath)
+  if (Buffer.isBuffer(input)) await wb.xlsx.load(input)
+  else await wb.xlsx.readFile(input)
   const ws = wb.worksheets[0]
   if (!ws) return []
   const rows = []
@@ -92,24 +99,25 @@ function cellText(v) {
 
 /**
  * 读一个上传的文件：按魔数判断（PK = xlsx(zip)，否则当文本）。
+ *
+ * 参数可以是文件路径，也可以是内存里的 Buffer（HTTP 上传走的就是 Buffer，
+ * 不落临时文件）。原来的实现只认路径，老师上传 .xlsx 一律报
+ * 「The "path" argument must be of type string」。
+ *
  * @returns {Promise<{rows: Array<Array<string>>, kind: 'xlsx'|'text'}>}
  */
-async function readUploaded(filePath) {
+async function readUploaded(input) {
+  const isBuf = Buffer.isBuffer(input)
+  const data = isBuf ? input : fs.readFileSync(input)
   let kind = 'text'
-  try {
-    const fd = fs.openSync(filePath, 'r')
-    const head = Buffer.alloc(2)
-    fs.readSync(fd, head, 0, 2, 0)
-    fs.closeSync(fd)
-    if (head.toString('latin1') === 'PK') kind = 'xlsx'
-  } catch (e) {
-    /* 读不到就按文本试 */
-  }
-  if (/\.xlsx$/i.test(path.extname(filePath)) && kind !== 'xlsx') {
+  // 魔数优先：xlsx 本质是 zip，头两个字节是 "PK"
+  if (data.length >= 2 && data.slice(0, 2).toString('latin1') === 'PK') kind = 'xlsx'
+  else if (!isBuf && /\.xlsx$/i.test(path.extname(input))) {
+    // 文件名说是 xlsx、内容却不是 —— 这种要明确报错，不能当文本读
     throw new Error('这个 .xlsx 文件读不出来（可能不是真正的 Excel 文件，或已损坏）')
   }
-  if (kind === 'xlsx') return { rows: await rowsFromXlsx(filePath), kind }
-  return { rows: rowsFromText(fs.readFileSync(filePath, 'utf8')), kind }
+  if (kind === 'xlsx') return { rows: await rowsFromXlsx(data), kind }
+  return { rows: rowsFromText(data.toString('utf8')), kind }
 }
 
 /* ---------------- 2) 二维数组 → 名单 ---------------- */

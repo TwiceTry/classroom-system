@@ -16,12 +16,16 @@ const HERE = import.meta.dirname
 
 const SETS = {
   unit: [
-    ['后端自检（84 项）', 'selftest.js'],
+    ['后端自检', 'selftest.js'],
     ['计分固定用例', 'score-cases.mjs'],
   ],
   e2e: [
     ['课程包格式规范', 'coursepack-spec.mjs'],
     ['班级包（导出/预检/模板）', 'classpack-e2e.mjs'],
+    ['导出全量（课程包/内容/模板/班级/方案）', 'e2e-export-all.mjs'],
+    ['导入全量（自己导出的再导回去）', 'e2e-import-all.mjs'],
+    ['作业库设计包（模板→改→传→导出→清理）', 'e2e-design-pack.mjs'],
+    ['xlsx 名单上传（干跑）', 'e2e-xlsx-roster.mjs'],
   ],
 }
 

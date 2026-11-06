@@ -334,21 +334,27 @@
     </div>
 
     <!-- 导入方案：先看差异，再决定怎么用 -->
-    <div v-if="io.open" class="mask" @click.self="io.open = false">
-    <div class="modal wide">
-      <div class="modal-head">
-        <h3>导入方案</h3>
-        <button class="btn mini" style="margin-left: auto" @click="io.open = false">关闭</button>
-      </div>
-      <div class="modal-body">
-        <div class="row">
-          <button class="btn mini" @click="ioPick.click()">选择 scheme.json</button>
-          <input ref="ioPick" type="file" accept=".json" style="display: none" @change="onIOFile" />
-          <span class="dim mini">只导方案，不动讲义 / 名单 / 记分</span>
-        </div>
-
-        <p v-if="io.err" class="hint err">{{ io.err }}</p>
-
+    <ImportDialog
+      v-model="io.open"
+      title="导入方案"
+      :file-name="io.file"
+      accept=".json"
+      :busy="io.busy"
+      :error="io.err"
+      :has-report="!!io.report"
+      pick-text="⤒ 选择 scheme.json"
+      :template-label="'⤓ 没有文件？下载本机方案当模板'"
+      :template-disabled="!scheme.loaded"
+      template-hint="方案没有「空模板」——模板就是一份方案本身，把本机这份存下来改好再导回来即可。"
+      :confirm-text="io.busy ? '导入中…' : io.mode === 'keep' ? '仍然关闭' : '确认导入'"
+      :confirm-disabled="!io.report || io.report.diff.same || !io.report.ok"
+      foot-hint="只导方案，不动讲义 / 名单 / 记分"
+      wide
+      @pick="onIOFile"
+      @template="downloadScheme"
+      @confirm="applyIO"
+    >
+      <template #report>
         <div v-if="io.report" class="sio">
           <div class="sio-row">
             <span class="sio-k">本机</span>
@@ -401,20 +407,8 @@
             </div>
           </template>
         </div>
-      </div>
-      <div class="modal-foot">
-        <span class="spacer"></span>
-        <button class="btn" @click="io.open = false">取消</button>
-        <button
-          class="btn primary"
-          :disabled="!io.report || io.report.diff.same || io.busy || !io.report.ok"
-          @click="applyIO"
-        >
-          {{ io.busy ? '导入中…' : io.mode === 'keep' ? '仍然关闭' : '确认导入' }}
-        </button>
-      </div>
-    </div>
-    </div>
+      </template>
+    </ImportDialog>
 
     <Toast :text="toast" @close="toast = ''" />
   </PageShell>
@@ -442,6 +436,7 @@ import DataTable from '../../components/DataTable.vue'
 import CardHead from '../../components/CardHead.vue'
 import PageShell from '../../components/PageShell.vue'
 import Icon from '../../components/Icon.vue'
+import ImportDialog from '../../components/ImportDialog.vue'
 import { isHidden, loadStuVis, toggleStuVis } from '../../utils/stuvis'
 
 const raw = ref(null)
@@ -462,7 +457,7 @@ const classes = ref([])
 const previewing = ref(false)
 
 /* ---------------- 方案单独导入 / 导出 ---------------- */
-const ioPick = ref(null)
+
 const io = reactive({ open: false, mode: 'use', file: '', raw: null, report: null, err: '', busy: false })
 
 const SIO_FIELD = { name: '名称', full: '满分', form: '交什么', rule: '计分规则', module: '模块', order: '顺序' }
@@ -491,12 +486,10 @@ function openIO() {
   io.raw = null
   io.report = null
   io.err = ''
-  if (ioPick.value) ioPick.value.value = ''
 }
 
-/** 选文件 → 干跑（只算差异，不写盘） */
-async function onIOFile(e) {
-  const f = e.target.files && e.target.files[0]
+/** 选文件 → 干跑（只算差异，不写盘）。文件由 ImportDialog 的隐藏 input emit 过来 */
+async function onIOFile(f) {
   if (!f) return
   io.err = ''
   io.report = null

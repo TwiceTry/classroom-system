@@ -53,11 +53,26 @@ export async function buildApp(opts = {}) {
   })
 
   /**
-   * 二进制 body（zip 包、图片上传）：原样收进 Buffer。
-   * 课程包导入、内容上传都走这条 —— 不能让 Fastify 当成 JSON 去解析。
+   * 二进制 body（zip 包、Excel 名单、图片上传）：原样收进 Buffer。
+   * 课程包导入、内容上传、名单表格都走这条 —— 不能让 Fastify 当成 JSON 去解析。
+   *
+   * 除了 zip，还要收表格的 MIME：老师从系统里下载 .xlsx 再传回来时，
+   * 浏览器/客户端会带 `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`，
+   * 不在这个列表里就是 415 Unsupported Media Type —— 看着像"功能坏了"，其实是没接住 body。
+   * （前端自己上传时用的是 octet-stream，所以只测前端发现不了这个问题。）
    */
   app.addContentTypeParser(
-    ['application/zip', 'application/x-zip-compressed', 'application/octet-stream'],
+    [
+      'application/zip',
+      'application/x-zip-compressed',
+      'application/octet-stream',
+      // Excel / CSV 名单
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel',
+      'application/vnd.ms-excel.sheet.macroenabled.12',
+      'text/csv',
+      'text/plain',
+    ],
     { parseAs: 'buffer' },
     (req, body, done) => {
       req.rawBodyBuffer = body

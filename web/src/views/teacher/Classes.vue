@@ -5,8 +5,26 @@
         <template #title>班级管理 · 名单与分数</template>
         <template #sub>{{ itemsLine }}；这一页只看分，记分在各模块页 / 考勤页里做</template>
         <template #right>
-          <button class="btn mini" @click="openIO" title="整门课的班级与名单打成一个 zip：导出、导入、下载模板">班级与名单</button>
-    <button class="btn mini" :disabled="!active" @click="openImport">导入名单</button>
+          <!--
+            页头只留「整门课」级别的操作，而且导出与导入分成两个按钮 ——
+            和内容目录那条工具栏（⤓ 导出 / ⤒ 导入）保持同一套语言。
+            导出原来藏在导入弹窗里，等于「想导出得先点导入」，方向是反的。
+          -->
+          <button
+            class="btn mini"
+            :disabled="!hasClasses"
+            @click="ioExport"
+            title="把本课程所有班级与名单打成一个 zip（换机器 / 交给同事）"
+          >
+            ⤓ 导出班级与名单
+          </button>
+          <button
+            class="btn mini"
+            @click="openIO"
+            title="从一个 zip 导入班级与名单（先给逐班报告，确认后才写）"
+          >
+            ⤒ 导入班级与名单
+          </button>
           <button class="btn mini" @click="newClass">＋ 新建班级</button>
         </template>
       </PageHead>
@@ -15,7 +33,7 @@
 
     <div v-if="!classes.length" class="card">
       <div class="empty">
-        还没有班级。点右上角「＋ 新建班级」，再「导入名单」（支持 .xlsx / .csv，也可直接粘贴）。
+        还没有班级。点右上角「＋ 新建班级」，建好后在名单卡片上点「⤒ 导入名单」（支持 .xlsx / .csv，也可直接粘贴）。
       </div>
     </div>
 
@@ -50,7 +68,16 @@
             {{ board.totalAvg || 0 }} · 及格率 {{ board.passRate || 0 }}%
           </span></template>
         <template #right>
+          <!-- 这一组都是「这个班」的操作，和页头的「整门课」分开 -->
           <button class="btn mini" :disabled="!active" @click="openStudent(null)">＋ 添加学生</button>
+          <button
+            class="btn mini"
+            :disabled="!active"
+            @click="openImport"
+            title="导入这一个班的名单：支持 .xlsx / .csv，也可以直接粘贴"
+          >
+            ⤒ 导入名单
+          </button>
           <button class="btn mini" :disabled="!active" @click="exportCsv('total')">导出总评</button>
           <span class="dim">点一行看明细 · 在线状态每 8 秒刷新</span>
         </template>
@@ -203,72 +230,70 @@
     </div>
     </div>
 
-    <!-- 班级与名单：整门课一起搬（导出 / 导入 / 模板） -->
-    <div v-if="cio.open" class="mask" @click.self="closeIO">
-      <div class="modal wide">
-        <div class="modal-head">
-          <h3>班级与名单 · {{ courseName }}</h3>
-          <button class="btn mini" style="margin-left: auto" @click="closeIO">关闭</button>
-        </div>
-        <div class="modal-body">
-          <p class="dim mini" style="margin-top: 0">
-            一个 csv = 一个班，<b>文件名就是班名</b>（如 <code>示例1班.roster.csv</code>），三列「学号,姓名,备注」。
-            新部署时先「下载模板」，照格式填好各班名单，压缩成 zip 再导进来 —— 一次把整门课配齐。
-          </p>
+    <!-- 班级与名单：整门课一起搬。导出已移到页头，这里是纯导入 -->
+    <ImportDialog
+      v-model="cio.open"
+      :title="'导入班级与名单'"
+      :file-name="cio.name"
+      accept=".zip"
+      :busy="cio.busy"
+      :error="cio.err"
+      :has-report="!!cio.report"
+      pick-text="⤒ 选择 zip 文件"
+      template-label="⤓ 没有包？下载空模板"
+      template-hint="空模板里有一个示例班 + 命名与格式说明：一个 csv = 一个班，文件名就是班名。"
+      :confirm-disabled="!cio.report"
+      foot-hint="点确认之前一个字节都没写"
+      wide
+      @pick="ioFile"
+      @template="ioTemplate"
+      @confirm="ioApply"
+      @close="closeIO"
+    >
+      <template #hint>
+        <p class="dim mini" style="margin-top: 0">
+          一个 csv = 一个班，<b>文件名就是班名</b>（如 <code>示例1班.roster.csv</code>），三列「学号,姓名,备注」。
+          照模板填好各班名单、压缩成 zip 导进来，一次把整门课配齐。
+        </p>
+        <p class="hint mini" style="margin-top: 0">
+          只想换 <b>一个班</b> 的名单？关掉这里，用名单卡片上的「⤒ 导入名单」——那个直接吃 .xlsx / .csv，不用打包。
+        </p>
+      </template>
 
-          <div class="row" style="margin-bottom: 12px">
-            <button class="btn mini" :disabled="cio.busy || !hasClasses" @click="ioExport" title="把当前所有班级与名单打成一个 zip">⤓ 导出全部班级与名单</button>
-            <button class="btn mini" :disabled="cio.busy" @click="ioTemplate" title="空模板：一个示例班 + 命名与格式说明">⤓ 下载模板</button>
-            <button class="btn mini primary" :disabled="cio.busy" @click="ioPick.click()">⤒ 选择 zip 导入</button>
-            <input ref="ioPick" type="file" accept=".zip" style="display: none" @change="ioFile" />
-          </div>
-
-          <div v-if="cio.err" class="hint err">{{ cio.err }}</div>
-          <div v-if="cio.busy" class="hint">正在解析…</div>
-
-          <div v-if="cio.report">
-            <p class="hint" style="margin: 0 0 6px">
-              {{ cio.name }}：新建 <b class="add">{{ cio.report.totals.create }}</b> 个班 ·
-              更新 {{ cio.report.totals.update }} 个班 ·
-              新增 {{ cio.report.totals.added }} 人 · 改名 {{ cio.report.totals.renamed }} 人
-              <template v-if="cio.report.totals.removed">· <b class="del">移出 {{ cio.report.totals.removed }}</b> 人</template>
-            </p>
-            <div class="cio-list">
-              <div v-for="c in cio.report.classes" :key="c.name" class="cio-row">
-                <span class="cio-name">{{ c.name }}</span>
-                <span class="cio-act" :class="{ add: c.action === 'create' }">{{ c.action === 'create' ? '新建' : '已有' }}</span>
-                <span class="dim">
-                  {{ c.before }} → <b>{{ c.after }}</b> 人 ·
-                  新增 {{ c.added }} · 改名 {{ c.updated }}<template v-if="c.removed"> · 移出 {{ c.removed }}</template>
-                </span>
-              </div>
-            </div>
-            <div v-if="cio.report.issues.length" class="hint warn" style="margin-top: 8px">
-              <b>有 {{ cio.report.issues.length }} 处有问题（相关班可能少人）：</b>
-              <ul class="iss">
-                <li v-for="(it, i) in cio.report.issues.slice(0, 8)" :key="i">{{ it.cls }}：<template v-if="it.line">第 {{ it.line }} 行 </template>{{ it.msg }}</li>
-              </ul>
-            </div>
-            <p v-if="cio.report.notInPack && cio.report.notInPack.length" class="dim mini">
-              包里没有这些班，本地保留不动：{{ cio.report.notInPack.join('、') }}
-            </p>
-
-            <div class="row" style="margin-top: 10px">
-              <label class="check"><input v-model="cio.mode" type="radio" value="merge" /> 合并（名单只增不减，推荐）</label>
-              <label class="check"><input v-model="cio.mode" type="radio" value="replace" /> 整体替换（名单同步成包里的）</label>
-            </div>
-            <p class="dim mini">这一步之前一个字节都没写。整体替换只换名单，已有记分记录不删。</p>
+      <template #report>
+        <p class="hint" style="margin: 0 0 6px">
+          {{ cio.name }}：新建 <b class="add">{{ cio.report.totals.create }}</b> 个班 ·
+          更新 {{ cio.report.totals.update }} 个班 ·
+          新增 {{ cio.report.totals.added }} 人 · 改名 {{ cio.report.totals.renamed }} 人
+          <template v-if="cio.report.totals.removed">· <b class="del">移出 {{ cio.report.totals.removed }}</b> 人</template>
+        </p>
+        <div class="cio-list">
+          <div v-for="c in cio.report.classes" :key="c.name" class="cio-row">
+            <span class="cio-name">{{ c.name }}</span>
+            <span class="cio-act" :class="{ add: c.action === 'create' }">{{ c.action === 'create' ? '新建' : '已有' }}</span>
+            <span class="dim">
+              {{ c.before }} → <b>{{ c.after }}</b> 人 ·
+              新增 {{ c.added }} · 改名 {{ c.updated }}<template v-if="c.removed"> · 移出 {{ c.removed }}</template>
+            </span>
           </div>
         </div>
-        <div class="modal-foot">
-          <span class="spacer"></span>
-          <button class="btn ghost" @click="closeIO">取消</button>
-          <button class="btn primary" :disabled="!cio.report || cio.busy" @click="ioApply">
-            {{ cio.busy ? '导入中…' : '确认导入' }}
-          </button>
+        <div v-if="cio.report.issues.length" class="hint warn" style="margin-top: 8px">
+          <b>有 {{ cio.report.issues.length }} 处有问题（相关班可能少人）：</b>
+          <ul class="iss">
+            <li v-for="(it, i) in cio.report.issues.slice(0, 8)" :key="i">{{ it.cls }}：<template v-if="it.line">第 {{ it.line }} 行 </template>{{ it.msg }}</li>
+          </ul>
         </div>
-      </div>
-    </div>
+        <p v-if="cio.report.notInPack && cio.report.notInPack.length" class="dim mini">
+          包里没有这些班，本地保留不动：{{ cio.report.notInPack.join('、') }}
+        </p>
+
+        <div class="row" style="margin-top: 10px">
+          <label class="check"><input v-model="cio.mode" type="radio" value="merge" /> 合并（名单只增不减，推荐）</label>
+          <label class="check"><input v-model="cio.mode" type="radio" value="replace" /> 整体替换（名单同步成包里的）</label>
+        </div>
+        <p class="dim mini">整体替换只换名单，已有记分记录不删。</p>
+      </template>
+    </ImportDialog>
 
     <!-- 导入名单 -->
     <div v-if="importing" class="mask" @click.self="importing = false">
@@ -389,6 +414,7 @@ import CardHead from '../../components/CardHead.vue'
 import FilterBar from '../../components/FilterBar.vue'
 import PageShell from '../../components/PageShell.vue'
 import DataTable from '../../components/DataTable.vue'
+import ImportDialog from '../../components/ImportDialog.vue'
 
 const classes = computed(() => state.classes)
 const courseId = computed(() => getCourse())
@@ -742,7 +768,6 @@ function exportCsv(kind) {
 
 /* 班级与名单（整门课一起搬） */
 const cio = reactive({ open: false, busy: false, err: '', name: '', report: null, mode: 'merge' })
-const ioPick = ref(null)
 let ioBuf = null
 
 async function openIO() {
@@ -781,9 +806,8 @@ function ioTemplate() {
   toast.value = '模板已下载：填好各班名单，压缩成 zip 再导进来'
 }
 
-async function ioFile(e) {
-  const f = e.target.files && e.target.files[0]
-  e.target.value = ''
+/** 文件由 ImportDialog 的隐藏 input 选好后 emit 过来 */
+async function ioFile(f) {
   if (!f || !courseId.value) return
   cio.busy = true
   cio.err = ''
