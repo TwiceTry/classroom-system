@@ -11,8 +11,6 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "db:schema": "node src/db/migrate.js",
-    "db:from-csv": "node src/db/import-csv.js",
-    "db:check": "node src/db/import-csv.js --check",
     "test": "node src/test/run-all.mjs unit",
     "test:e2e": "node src/test/run-all.mjs e2e",
     "test:all": "node src/test/run-all.mjs"

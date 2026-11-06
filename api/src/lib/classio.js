@@ -229,7 +229,7 @@ function apply(db, course, buf, mode) {
       removed = target.students.length - kept.length
       target.students = kept
     }
-    db.save()
+    // 以前这里要 db.save() 手动落盘（CSV 时代）；SQLite 是即时写入，不需要
     studentsLib.ensureMany(target.id, target.students)
     done.push({ name: target.name, action, added, updated, removed, total: target.students.length })
   }

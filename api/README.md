@@ -40,10 +40,9 @@ api/
     app.js               装配（统一错误体 / raw body / 404 / SPA 回退）
     config.js            配置（复用 data/config.json）
     db/
-      schema.sql         8 张表 + 注释说明每条约定
+      schema.sql         9 张表 + 注释说明每条约定（表结构的唯一来源）
       index.js           连接 / PRAGMA / applySchema / tableCounts
       migrate.js         建库 CLI
-      import-csv.js      CSV → SQLite（--check 只校验）
     lib/
       auth.js            令牌签发/校验/撤销（与旧格式一致）
       errors.js          统一错误类型
@@ -99,9 +98,7 @@ api/
 cd api
 npm install
 node src/db/migrate.js          # 建库（幂等）
-node src/db/import-csv.js       # CSV → SQLite
-node src/db/import-csv.js --check   # 只校验
-npm test                        # 84 项自检
+npm test                        # 自检（进程内，不占端口）
 ```
 
 **旧 CSV 一个字节不改**（只读），随时可回滚。
@@ -182,7 +179,6 @@ SPA 入口页 200 + 304
 cd api
 npm install
 node src/db/migrate.js
-node src/db/import-csv.js     # 有旧数据才需要
 npm start                     # 默认 18730
 
 npm test                      # 84 项自检（inject，不占端口，临时数据目录）

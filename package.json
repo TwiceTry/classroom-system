@@ -9,7 +9,6 @@
     "dev:web": "npm --prefix web run dev",
     "test": "node api/src/test/run-all.mjs unit",
     "migrate": "node api/src/db/migrate.js",
-    "import-csv": "node api/src/db/import-csv.js",
     "test:e2e": "node api/src/test/run-all.mjs e2e",
     "test:all": "node api/src/test/run-all.mjs"
   },

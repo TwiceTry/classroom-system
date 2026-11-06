@@ -38,6 +38,6 @@ export const dbAdapter = {
     return Object.assign({}, row, { students: [] })
   },
 
-  /** CSV 时代的手动落盘；SQLite 是即时写入，这里什么都不用做 */
-  save: () => {},
+  // 原来这里有个 `save: () => {}`，是为了接住旧代码里的 `db.save()`（CSV 时代要手动落盘）。
+  // SQLite 是即时写入，它一直是空操作；调用点也已经删掉，这里不再假装提供这个接口。
 }
