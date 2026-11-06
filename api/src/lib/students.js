@@ -14,27 +14,10 @@
  * 删掉也能重新生成；作业正文反过来只有磁盘这一份，所以那部分别手删。
  */
 
-/**
- * 生成 CSV 文本（原 lib/csv.js 的 stringifyGrid）。
- *
- * 这里只用来写「给学生看的派生快照」（总评.csv / 明细.csv …）——
- * 真源是数据库里的记分记录，这些 CSV 删了会自动重建。
- * 为它维护一整个 CSV 模块不值当，所以内联了。
- */
-
 import fs from 'node:fs'
 import path from 'node:path'
 import { config } from '../config.js'
-import * as scoring from './scoring.js'
 import { addStudents } from './repo.js'
-
-function stringifyGrid(rows) {
-  const esc = (v) => {
-    const s = v === undefined || v === null ? '' : String(v)
-    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s
-  }
-  return (rows || []).map((r) => (Array.isArray(r) ? r : [r]).map(esc).join(',')).join('\r\n') + '\r\n'
-}
 
 const ROOT = path.join(config.dataDir, 'students')
 
@@ -132,84 +115,4 @@ function classDir(classId) {
   return path.join(ROOT, safeSeg(classId))
 }
 
-/**
- * 刷新一个学生的档案快照：
- *   记分/总评.csv、记分/明细.csv、机试/成绩.csv、大作业/证据清单.csv
- * 全是派生数据（由 events.csv 算出来），随时可重建；写失败只记日志，绝不打断记分。
- */
-function writeScoreSheet(cls, stu, events) {
-  if (!cls || !stu || !stu.sid) return false
-  try {
-    const dir = subOf(cls.id, stu.sid, 'scores')
-    fs.mkdirSync(dir, { recursive: true })
-
-    const mine = (events || []).filter((e) => e.sid === stu.sid)
-    const sc = scoring.computeStudent(mine, stu.sid)
-    const pick = (key) => {
-      const row = sc.rows.find((r) => r.item.key === key)
-      return row ? row.score : 0
-    }
-    const now = new Date().toISOString()
-
-    const totalRows = [
-      ['学号', '姓名', '班级', '考勤', '互动', '作业', '机试', '大作业', '加分', '总评', '更新时间'],
-      [
-        stu.sid,
-        stu.name || '',
-        cls.name || '',
-        pick('attend'),
-        pick('interact'),
-        pick('homework'),
-        pick('exam'),
-        pick('project'),
-        pick('bonus'),
-        sc.total,
-        now,
-      ],
-    ]
-
-    const detailRows = [['时间', '计分项', '变更', '事由', '操作人', '状态']]
-    const sorted = mine.slice().sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0))
-    for (const e of sorted) {
-      const item = scoring.itemByKey(e.item)
-      detailRows.push([
-        e.createdAt || '',
-        item ? item.name : e.item,
-        scoring.eventSummary(e),
-        e.reason || '',
-        e.operator || '',
-        e.voided ? '已撤销' : '有效',
-      ])
-    }
-
-    fs.writeFileSync(path.join(dir, '总评.csv'), stringifyGrid(totalRows), 'utf8')
-    fs.writeFileSync(path.join(dir, '明细.csv'), stringifyGrid(detailRows), 'utf8')
-
-    // 机试：每次录入的卷面分与折算（真源同样是 events.csv）
-    const examRows = [['时间', '卷面分', '折算（×0.3）', '事由', '操作人', '状态']]
-    for (const e of sorted) {
-      if (e.item !== 'exam' || typeof e.raw !== 'number') continue
-      examRows.push([e.createdAt || '', e.raw, scoring.round1(e.raw * 0.3), e.reason || '', e.operator || '', e.voided ? '已撤销' : '有效'])
-    }
-    const examDir = subOf(cls.id, stu.sid, 'exam')
-    fs.mkdirSync(examDir, { recursive: true })
-    fs.writeFileSync(path.join(examDir, '成绩.csv'), stringifyGrid(examRows), 'utf8')
-
-    // 大作业：证据文件清单（文件本体在 data/uploads/，这里只留索引，方便整包交出去时按清单找）
-    const projRows = [['时间', '事由', '文件名', '链接', '操作人']]
-    for (const e of sorted) {
-      for (const f of e.evidence || []) {
-        projRows.push([e.createdAt || '', e.reason || '', f.name || '', f.url || '', e.operator || ''])
-      }
-    }
-    const projDir = subOf(cls.id, stu.sid, 'project')
-    fs.mkdirSync(projDir, { recursive: true })
-    fs.writeFileSync(path.join(projDir, '证据清单.csv'), stringifyGrid(projRows), 'utf8')
-    return true
-  } catch (e) {
-    console.error('[students] 写记分快照失败 ' + (stu && stu.sid) + '：' + e.message)
-    return false
-  }
-}
-
-export { ROOT, SUB, safeSeg, dirOf, subOf, workDir, classDir, ensure, ensureMany, ensureAll, writeScoreSheet }
+export { ROOT, SUB, safeSeg, dirOf, subOf, workDir, classDir, ensure, ensureMany, ensureAll }

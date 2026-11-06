@@ -10,6 +10,7 @@ import * as repo from '../lib/repo.js'
 import * as scheme from '../lib/scheme.js'
 import { scoring, withCourseScheme } from '../lib/scheme.js'
 import * as sheetLib from '../lib/sheet.js'
+import { rowsToXlsx, stampedName } from '../lib/xlsx.js'
 import { broadcast } from './cast.js'
 
 /** 上传类接口的体积上限（与《课程包格式规范》§8 一致：整包 500MB） */
@@ -35,18 +36,25 @@ function announceSpotlight(classId, payload) {
  */
 const HEADER_WORDS = new Set(['学号', '姓名', '备注', '序号', '名字', 'sid', 'name', 'no', 'id', '备注说明'])
 
+/** 去掉 BOM 与零宽字符：本系统导出的 CSV 带 UTF-8 BOM（Excel 打开才不乱码） */
+function cleanCell(v) {
+  return String(v === undefined || v === null ? '' : v)
+    .replace(/^\uFEFF/, '')
+    .replace(/[\u200B-\u200D]/g, '')
+    .trim()
+}
+
 function looksLikeHeader(sid, name) {
-  const a = String(sid || '').trim().toLowerCase()
-  const b = String(name || '').trim().toLowerCase()
-  return HEADER_WORDS.has(a) || (HEADER_WORDS.has(a) && HEADER_WORDS.has(b))
+  const a = cleanCell(sid).toLowerCase()
+  return HEADER_WORDS.has(a)
 }
 
 function parseRoster(body) {
   const out = []
   if (Array.isArray(body.students)) {
     for (const s of body.students) {
-      const sid = String((s && s.sid) || '').trim()
-      const name = String((s && s.name) || '').trim()
+      const sid = cleanCell(s && s.sid)
+      const name = cleanCell(s && s.name)
       if (sid && !looksLikeHeader(sid, name)) out.push({ sid, name })
     }
     return out
@@ -55,7 +63,7 @@ function parseRoster(body) {
   for (const line of text.split(/\r?\n/)) {
     const t = line.trim()
     if (!t) continue
-    const parts = t.split(/[,\t;，、]/).map((x) => x.trim())
+    const parts = t.split(/[,\t;，、]/).map(cleanCell)
     const sid = parts[0]
     // 第二列之后可能有「备注」等空列，join 完要在末尾再 trim 一次
     const name = parts.length === 1 ? '' : parts.slice(1).join(' ').trim()
@@ -382,7 +390,14 @@ export default async function classroomRoutes(app) {
     },
   })
 
-  /* ---------------- 导出成绩 / 记分 CSV ---------------- */
+  /* ---------------- 导出成绩 / 记分（xlsx） ----------------
+   * 统一成 xlsx 而不是 CSV：
+   *   · 学号是长数字，CSV 被 Excel 转成科学计数法；姓名里的中文还可能乱码
+   *   · 老师拿到表多半要排序/求和/加列，xlsx 才顺手
+   * 包格式里的 *.roster.csv 不受影响（那是课程包的一部分，改了旧包打不开）。
+   */
+
+  const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
   app.get('/api/classes/:id/export', { preHandler: requireAuth('teacher') }, async (req, reply) => {
     const cls = repo.getClass(req.params.id)
@@ -392,52 +407,84 @@ export default async function classroomRoutes(app) {
     const roster = repo.rosterOf(cls.id)
     const events = repo.eventsOf(cls.id, { limit: 1000 }).items
 
-    const esc = (v) => {
-      const s = String(v === undefined || v === null ? '' : v)
-      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s
-    }
-    const lines = []
-    const stamp = new Date().toISOString().slice(0, 10)
+    let rows = []
+    let name = ''
 
     if (kind === 'events') {
-      lines.push(['时间', '学号', '姓名', '项目', '摘要', '原因', '操作人', '状态'].map(esc).join(','))
+      rows.push(['时间', '学号', '姓名', '项目', '摘要', '原因', '操作人', '状态'])
       const nameOf = new Map(roster.map((s) => [s.sid, s.name]))
       for (const e of events.slice().sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))) {
-        lines.push(
-          [
-            e.createdAt,
-            e.sid,
-            nameOf.get(e.sid) || '',
-            e.item,
-            [e.kind, e.grade, e.delta, e.reason].filter(Boolean).join(' '),
-            e.reason || '',
-            e.operator || '',
-            e.voided ? '已撤销' : '有效',
-          ]
-            .map(esc)
-            .join(',')
-        )
+        rows.push([
+          e.createdAt,
+          e.sid,
+          nameOf.get(e.sid) || '',
+          e.item,
+          [e.kind, e.grade, e.delta, e.reason].filter(Boolean).join(' '),
+          e.reason || '',
+          e.operator || '',
+          e.voided ? '已撤销' : '有效',
+        ])
       }
+      name = stampedName((cls.name || '班级') + '-记分记录', 'xlsx')
     } else {
       const board = withCourseScheme(course, () => scoring.computeClass(roster, events))
       const items = withCourseScheme(course, () => scheme.items())
-      lines.push(['学号', '姓名', ...items.map((i) => i.name), '总评'].map(esc).join(','))
+      rows.push(['学号', '姓名', ...items.map((i) => i.name), '总评'])
       for (const row of board.list) {
-        const cell = (k) => (row.rows.find((x) => x.item.key === k) || {}).score || 0
-        lines.push([row.student.sid, row.student.name || '', ...items.map((i) => cell(i.key)), row.total].map(esc).join(','))
+        const cellScore = (k) => (row.rows.find((x) => x.item.key === k) || {}).score || 0
+        rows.push([row.student.sid, row.student.name || '', ...items.map((i) => cellScore(i.key)), row.total])
       }
+      name = stampedName((cls.name || '班级') + '-总评', 'xlsx')
     }
 
-    const body = '\ufeff' + lines.join('\r\n') + '\r\n' // BOM：Excel 打开不乱码
-    const name = (cls.name || 'class') + '-' + (kind === 'events' ? '记分记录' : '总评') + '-' + stamp + '.csv'
+    // 第 0 列（学号）按文本写；流水的时间列也按文本，别让 Excel 改格式
+    const buf = await rowsToXlsx(rows, { sheetName: kind === 'events' ? '记分记录' : '总评', textCols: [0] })
     return reply
       .status(200)
       .headers({
-        'Content-Type': 'text/csv; charset=utf-8',
-        'Content-Length': Buffer.byteLength(body),
+        'Content-Type': XLSX_TYPE,
+        'Content-Length': buf.length,
         'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent(name),
       })
-      .send(body)
+      .send(buf)
+  })
+
+  /** 当前名单导出（xlsx）：老师拿到就能改几个人再导回来 */
+  app.get('/api/classes/:id/roster.xlsx', { preHandler: requireAuth('teacher') }, async (req, reply) => {
+    const cls = repo.getClass(req.params.id)
+    if (!cls) throw notFound('班级不存在')
+    const roster = repo.rosterOf(cls.id)
+    const rows = [['学号', '姓名', '备注']]
+    for (const s of roster) rows.push([s.sid, s.name || '', ''])
+    const buf = await rowsToXlsx(rows, { sheetName: '名单', textCols: [0] })
+    const name = stampedName((cls.name || '班级') + '-名单', 'xlsx')
+    return reply
+      .status(200)
+      .headers({
+        'Content-Type': XLSX_TYPE,
+        'Content-Length': buf.length,
+        'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent(name),
+      })
+      .send(buf)
+  })
+
+  /** 名单空模板（xlsx）：三列表头 + 两行示例，填完直接上传 */
+  app.get('/api/classes/:id/roster/template.xlsx', { preHandler: requireAuth('teacher') }, async (req, reply) => {
+    const rows = [
+      ['学号', '姓名', '备注'],
+      ['2025000001', '张三', '班长'],
+      ['2025000002', '李四', ''],
+    ]
+    const buf = await rowsToXlsx(rows, { sheetName: '名单', textCols: [0] })
+    const name = '名单模板.xlsx'
+    return reply
+      .status(200)
+      .headers({
+        'Content-Type': XLSX_TYPE,
+        'Content-Length': buf.length,
+        'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent(name),
+      })
+      .send(buf)
   })
 
   /* ---------------- 名册导入 ---------------- */

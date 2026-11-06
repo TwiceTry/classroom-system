@@ -94,11 +94,16 @@ for (const [label, url] of [
 console.log('\n=== 4. 班级包 / 成绩表 ===')
 await getZip('班级包导出 classes.zip', '/api/courses/' + cid + '/classes.zip')
 {
-  // 这个是 CSV（成绩表），不是 zip —— 单独判
+  // 成绩表已从 CSV 改成 xlsx（学号是长数字，CSV 进 Excel 会变科学计数法）
   const r = await fetch(BASE + '/api/classes/' + cls.id + '/export', { headers: H })
-  const txt = await r.text()
-  const head = txt.split(/\r?\n/)[0] || ''
-  ok('成绩表导出是 CSV', r.status === 200 && /学号/.test(head), r.status + ' · 首行: ' + head.slice(0, 60))
+  const buf = Buffer.from(await r.arrayBuffer())
+  const ct = r.headers.get('content-type') || ''
+  const isXlsx =
+    r.status === 200 &&
+    buf[0] === 0x50 &&
+    buf[1] === 0x4b &&
+    ct.indexOf('spreadsheetml') !== -1
+  ok('成绩表导出是 xlsx', isXlsx, r.status + ' · ' + (buf.length / 1024).toFixed(1) + 'KB · ' + ct.split(';')[0])
 }
 
 console.log('\n=== 5. 方案导出 ===')

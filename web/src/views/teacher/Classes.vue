@@ -78,7 +78,9 @@
           >
             ⤒ 导入名单
           </button>
-          <button class="btn mini" :disabled="!active" @click="exportCsv('total')">导出总评</button>
+          <button class="btn mini" :disabled="!active" @click="exportSheet('totals')" title="导出本班总评（xlsx，Excel 直接打开）">
+            导出总评
+          </button>
           <span class="dim">点一行看明细 · 在线状态每 8 秒刷新</span>
         </template>
       </CardHead>
@@ -155,7 +157,9 @@
         <option v-for="it in items" :key="it.key" :value="it.key">{{ it.name }}</option>
       </select>
       <input v-model.trim="logQ" class="input" placeholder="搜姓名 / 学号 / 原因" style="width: 200px" />
-      <button class="btn mini" :disabled="!active" @click="exportCsv('events')">导出流水</button>
+      <button class="btn mini" :disabled="!active" @click="exportSheet('events')" title="导出本班记分记录（xlsx，Excel 直接打开）">
+        导出流水
+      </button>
       <span class="dim">有效 {{ liveCount }} 条</span>
     </template>
     </CardHead>
@@ -304,10 +308,14 @@
     </div>
     <div class="modal-body">
     <div class="row" style="margin-bottom: 10px">
-      <button class="btn mini" @click="downloadTemplate" title="3 列：学号,姓名,备注（UTF-8 CSV，Excel 能直接打开）">
+      <button class="btn mini" @click="downloadTemplate" title="3 列：学号,姓名,备注（xlsx，Excel 直接打开）">
         下载空模板
       </button>
-      <button class="btn mini" @click="downloadCurrent" :disabled="!(active && active.students && active.students.length)" title="导出本班现有名单，改完再传回来">
+      <!--
+        disabled 之前判的是 active.students —— 那个字段从来没被赋值（classes 里只有 count），
+        所以这个按钮一直是灰的，老师永远点不了。改成看页面上真实的名单数组。
+      -->
+      <button class="btn mini" @click="downloadCurrent" :disabled="!students.length" title="导出本班现有名单（xlsx），改完再传回来">
         下载当前名单
       </button>
       <span class="dim">表格按「学号,姓名,备注」填，存成 .xlsx 或 .csv 都行</span>
@@ -759,9 +767,11 @@ function fmt(iso) {
   return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes())
 }
 
-function exportCsv(kind) {
+/** 导出总评 / 流水（服务端出 xlsx；kind = totals | events） */
+function exportSheet(kind) {
   if (!active.value) return
-  download('/api/classes/' + active.value.id + '/export?kind=' + kind)
+  const suffix = kind === 'events' ? '记分记录' : '总评'
+  download('/api/classes/' + active.value.id + '/export?kind=' + kind, (active.value.name || '班级') + '-' + suffix + '.xlsx')
 }
 
 /* ---------------- 导入名单 ---------------- */
@@ -895,37 +905,31 @@ function openImport() {
   importError.value = ''
 }
 
-/* 按「学号,姓名,备注」拼一份 CSV（带 BOM，Excel 双击不乱码） */
-function rosterCsv(students) {
-  const head = '学号,姓名,备注'
-  const rows = (students || []).map((s) => [s.sid, s.name, ''])
-  const body = rows
-    .map((r) => r.map((v) => (/[",\r\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : v)).join(','))
-    .join('\r\n')
-  return '\ufeff' + head + '\r\n' + body + (body ? '\r\n' : '')
-}
-
-function saveText(name, text) {
-  const blob = new Blob([text], { type: 'text/csv;charset=utf-8' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = name
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(a.href), 4000)
-}
+/*
+ * 原来这里有 rosterCsv() 和 saveText()：在前端拼 CSV 再触发下载。
+ * 名单与模板改成服务端出 xlsx 之后，这两个函数就没有调用方了，已删。
+ * （拼 CSV 的问题：学号是长数字，进 Excel 变科学计数法；中文姓名还可能乱码。）
+ */
 
 /** 空模板：只有表头 + 两行示例，照着填 */
+/**
+ * 模板与名单都改成 xlsx（由服务端生成）。
+ *
+ * 为什么不再前端拼 CSV：
+ *   · 学号是长数字，CSV 进 Excel 会变成科学计数法（2.02E+09），老师一排序就毁
+ *   · 中文姓名在部分 Excel 上还会乱码
+ *   · xlsx 能把学号列锁成文本，列宽也排好了
+ * 服务端已有 ExcelJS（读名单用它），生成也用它，一份实现。
+ */
 function downloadTemplate() {
-  saveText('名单模板.csv', '\ufeff学号,姓名,备注\r\n2025000001,张三,\r\n2025000002,李四,班长\r\n')
+  if (!active.value) return
+  download('/api/classes/' + active.value.id + '/roster/template.xlsx', '名单模板.xlsx')
 }
 
 /** 当前名单：导出本班的，改完再传回来（改名字、加人、删人） */
 function downloadCurrent() {
   if (!active.value) return
-  const name = (active.value.name || '班级') + '-名单.csv'
-  saveText(name, rosterCsv(active.value.students))
+  download('/api/classes/' + active.value.id + '/roster.xlsx', (active.value.name || '班级') + '-名单.xlsx')
 }
 
 function parsePaste() {
