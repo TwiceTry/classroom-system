@@ -285,7 +285,16 @@ if (rosterFiles.length >= 2) {
 console.log('\n=== 12. 导出文件名 ===')
 const resp = await fetch(BASE + '/api/courses/' + REAL + '/package.zip', { headers: H })
 const cd = resp.headers.get('content-disposition') || ''
-const today = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+/*
+ * 用**本地日期**，不能用 toISOString()。
+ * 服务端按本地时间生成 <YYYYMMDD>；toISOString 是 UTC。
+ * 东八区凌晨 0~8 点这两者差一天，断言会在这个时段必然失败 —— 与被测代码无关。
+ */
+const _d = new Date()
+const today =
+  String(_d.getFullYear()) +
+  String(_d.getMonth() + 1).padStart(2, '0') +
+  String(_d.getDate()).padStart(2, '0')
 const nameOk = /\.coursepack\.zip/.test(cd) && cd.includes(today)
 ok('文件名形如 <id>_<YYYYMMDD>.coursepack.zip', nameOk, decodeURIComponent(cd))
 
