@@ -45,6 +45,20 @@ export function openDb(file) {
   db.pragma('foreign_keys = ON')
   db.pragma('busy_timeout = 5000')
   db.pragma('synchronous = NORMAL')
+
+  /*
+   * 建表放在这里，而不是只留给 migrate.js。
+   *
+   * 原来 applySchema 只有 CLI（migrate.js）和测试会调，server.js 启动时**不建表**。
+   * 本地一直没事，是因为 data/teach.db 是从 CSV 迁移过来的老库、表早就在；
+   * 但 Docker 挂一个空卷时，teach.db 是个空文件，
+   * 于是第一个查询就炸：SqliteError: no such table: courses。
+   *
+   * 放在 openDb 里意味着**任何入口都会建表**（服务 / CLI / 测试 / 临时库），
+   * 不会再出现「某个路径忘了迁移」。schema.sql 全是 CREATE ... IF NOT EXISTS，
+   * 对已有库是空操作，代价只有启动时多读一次文件。
+   */
+  applySchema(db)
   return db
 }
 

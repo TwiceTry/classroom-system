@@ -29,6 +29,7 @@ const SETS = {
     ['导出总评/流水/名单/模板 xlsx（内容 + 单元格类型）', 'xlsx-export.mjs'],
     ['学生目录分数表（给分后自动刷新）', 'scoresheet-hook.mjs'],
     ['教师口令（修改 / 生效 / 落盘 / 还原）', 'teacher-password.mjs'],
+    ['空库自建表（容器首次启动）', 'db-init.mjs'],
   ],
 }
 
