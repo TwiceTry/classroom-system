@@ -12,8 +12,10 @@ import { config, ROOT } from '../config.js'
 import { requireAuth } from '../plugins/auth.js'
 import { fromRequest } from '../lib/auth.js'
 import * as repo from '../lib/repo.js'
-import { scoring, scheme, withCourseScheme } from '../lib/scheme.js'
-import { content, timetable } from '../lib/legacy.js'
+import * as scheme from '../lib/scheme.js'
+import { scoring, withCourseScheme } from '../lib/scheme.js'
+import * as content from '../lib/content.js'
+import * as timetable from '../lib/timetable.js'
 import { contentRootOf } from './courses.js'
 import { castState } from './cast.js'
 
@@ -92,7 +94,7 @@ export default async function miscRoutes(app) {
           .listClasses(course ? course.id : undefined)
           .filter((c) => (course ? c.courseId === course.id || !c.courseId : true))
           .map(publicClass),
-        items: scoring.ITEMS,
+        items: scheme.items(),
         scheme: scheme.publicInfo(),
         passwordIsDefault: !!config.passwordIsDefault,
         cast: castState(),

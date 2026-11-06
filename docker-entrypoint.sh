@@ -22,4 +22,4 @@ if ! mkdir -p "$DATA/uploads" 2>/dev/null || [ ! -w "$DATA" ]; then
 fi
 
 echo "课堂系统启动：数据目录 $DATA · 端口 ${TS_PORT:-18730}"
-exec node server/index.js
+exec node api/src/server.js

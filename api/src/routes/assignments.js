@@ -16,7 +16,8 @@ import { ApiError, badRequest, notFound, conflict, forbidden } from '../lib/erro
 import { UPLOAD_DIR, config } from '../config.js'
 import * as repo from '../lib/repo.js'
 import * as store from '../lib/submitstore.js'
-import { scheme, withCourseScheme } from '../lib/scheme.js'
+import * as scheme from '../lib/scheme.js'
+import { withCourseScheme } from '../lib/scheme.js'
 import { broadcast } from './cast.js'
 import {
   submissionView,
@@ -25,7 +26,7 @@ import {
   courseOfClass,
   courseOfAssignment,
 } from '../lib/grading.js'
-import { content } from '../lib/legacy.js'
+import * as content from '../lib/content.js'
 import { contentRootOf } from './courses.js'
 
 const uid = (p) => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
@@ -241,7 +242,7 @@ export default async function assignmentRoutes(app) {
     // 机试还要清试卷源文件 + 纸质卷目录（不然 data/exams 里会一直堆）
     if (a.kind === 'paper') {
       try {
-        const { examLib } = await import('../lib/legacy.js')
+        const examLib = await import('../lib/exam.js')
         const src = examLib.sourceFile(a.id)
         if (src && fs.existsSync(src)) fs.unlinkSync(src)
         const dir = path.join(config.dataDir, 'exams', String(a.id).replace(/[^A-Za-z0-9_.-]/g, '_'))

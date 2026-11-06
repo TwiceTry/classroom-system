@@ -9,8 +9,9 @@ import { requireAuth } from '../plugins/auth.js'
 import { notFound } from '../lib/errors.js'
 import * as repo from '../lib/repo.js'
 import * as presence from '../lib/presence.js'
-import { scoring, withCourseScheme, scheme } from '../lib/scheme.js'
-import { schemeio } from '../lib/legacy.js'
+import * as scheme from '../lib/scheme.js'
+import { scoring, withCourseScheme } from '../lib/scheme.js'
+import * as schemeio from '../lib/schemeio.js'
 
 /**
  * 当前方案的原文（编辑器要完整对象，不能是解析后的裁剪版）。

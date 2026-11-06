@@ -7,6 +7,7 @@
  * 为什么不做成 JWT：少一个依赖，payload 只有 classId/sid/name/role/exp，
  * HMAC + exp 已经够用；JWT 的多出来的东西（alg 协商、jwk）反而是攻击面。
  */
+
 import crypto from 'node:crypto'
 import { config } from '../config.js'
 

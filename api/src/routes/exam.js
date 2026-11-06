@@ -16,8 +16,9 @@ import { requireAuth } from '../plugins/auth.js'
 import { badRequest, notFound, forbidden, conflict } from '../lib/errors.js'
 import * as repo from '../lib/repo.js'
 import { gradeSubmission, submissionView, courseOfAssignment } from '../lib/grading.js'
-import { withCourseScheme, scheme } from '../lib/scheme.js'
-import { examLib } from '../lib/legacy.js'
+import * as scheme from '../lib/scheme.js'
+import { withCourseScheme } from '../lib/scheme.js'
+import * as examLib from '../lib/exam.js'
 
 const uid = (p) => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 

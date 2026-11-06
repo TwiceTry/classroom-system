@@ -15,17 +15,14 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { openDb, applySchema, dataDir, dbPath, tableCounts } from './index.js'
 
-const require = createRequire(import.meta.url)
 const HERE = path.dirname(fileURLToPath(import.meta.url)) // api/src/db
 const ROOT = path.resolve(HERE, '..', '..', '..') // 课堂系统/
-const LEGACY = path.join(ROOT, 'server', 'lib')
 
-const { CsvTable } = require(path.join(LEGACY, 'csv.js'))
-const { SCHEMA } = require(path.join(LEGACY, 'db.js'))
+import { CsvTable } from './csv.js'
+import { SCHEMA } from './schema.js'
 
 const args = process.argv.slice(2)
 const CHECK = args.includes('--check')

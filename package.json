@@ -4,11 +4,14 @@
   "version": "1.0.0",
   "description": "课堂系统（教师端 / 学生端 / 投屏 / 计分 / 点名 / 代码练习 / 作业批阅）",
   "scripts": {
-    "start": "node server/index.js",
+    "start": "node api/src/server.js",
     "build": "npm --prefix web install && npm --prefix web run build",
     "dev:web": "npm --prefix web run dev",
-    "check:sections": "node server/check-sections.js",
-    "test": "node server/selftest.js"
+    "test": "node api/src/test/run-all.mjs unit",
+    "migrate": "node api/src/db/migrate.js",
+    "import-csv": "node api/src/db/import-csv.js",
+    "test:e2e": "node api/src/test/run-all.mjs e2e",
+    "test:all": "node api/src/test/run-all.mjs"
   },
   "engines": {
     "node": ">=13.6.0"

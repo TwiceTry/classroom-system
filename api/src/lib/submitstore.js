@@ -10,11 +10,13 @@
  *   · 文件名一律清洗（去路径分隔符 + 保留末 80 字符），不允许 `../`
  *   · 落盘前校验最终路径仍在学生的作业目录之内
  */
+
+/** 作业类型 → 目录名（与旧布局一致） */
+
 import fs from 'node:fs'
 import path from 'node:path'
 import { config } from '../config.js'
 
-/** 作业类型 → 目录名（与旧布局一致） */
 const DIR_OF_KIND = { work: '作业', project: '大作业', paper: '机试' }
 
 const dirName = (kind) => DIR_OF_KIND[kind] || '作业'

@@ -12,7 +12,7 @@ import { requireAuth } from '../plugins/auth.js'
 import { badRequest, notFound, conflict } from '../lib/errors.js'
 import * as repo from '../lib/repo.js'
 import { config } from '../config.js'
-import { scheme as schemeLib } from '../lib/scheme.js'
+import * as schemeLib from '../lib/scheme.js'
 
 /** 新课程的内容目录骨架 */
 const CONTENT_DIRS = ['lecture', 'materials', '代码示例', 'exams', 'assets']

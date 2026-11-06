@@ -11,7 +11,7 @@
 import { requireAuth } from '../plugins/auth.js'
 import { badRequest, notFound } from '../lib/errors.js'
 import * as repo from '../lib/repo.js'
-import { assignlib } from '../lib/legacy.js'
+import * as assignlib from '../lib/assignlib.js'
 
 /** homework（代码工作台）或 project（材料表单） */
 function kindOf(req) {

@@ -11,7 +11,8 @@ import { requireAuth } from '../plugins/auth.js'
 import { badRequest, notFound, forbidden } from '../lib/errors.js'
 import * as repo from '../lib/repo.js'
 import { contentRootOf } from './courses.js'
-import { coursefiles, contentio } from '../lib/legacy.js'
+import * as coursefiles from '../lib/coursefiles.js'
+import * as contentio from '../lib/contentio.js'
 
 /** 上传类接口的体积上限（与《课程包格式规范》§8 一致：整包 500MB） */
 const BIG_BODY = 512 * 1024 * 1024

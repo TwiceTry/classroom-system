@@ -12,8 +12,9 @@
 import { requireAuth } from '../plugins/auth.js'
 import { badRequest, notFound } from '../lib/errors.js'
 import * as repo from '../lib/repo.js'
-import { scoring, scheme, withCourseScheme } from '../lib/scheme.js'
-import { schemeio } from '../lib/legacy.js'
+import * as scheme from '../lib/scheme.js'
+import { scoring, withCourseScheme } from '../lib/scheme.js'
+import * as schemeio from '../lib/schemeio.js'
 
 /** 当前课程（?courseId= 或第一门未归档的课） */
 function courseOf(req) {

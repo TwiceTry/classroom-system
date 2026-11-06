@@ -7,10 +7,10 @@ content/
 
 # 依赖与构建产物（镜像里自己装、自己构建）
 node_modules/
+api/node_modules/
 web/node_modules/
 web/dist/
 web/dist-build/
-server/templates/**/node_modules/
 
 # 版本库与工具
 .git/

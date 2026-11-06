@@ -12,7 +12,9 @@ import { requireAuth } from '../plugins/auth.js'
 import { badRequest, notFound } from '../lib/errors.js'
 import * as repo from '../lib/repo.js'
 import { dbAdapter } from '../lib/db-adapter.js'
-import { coursepack, coursepackImport, classio } from '../lib/legacy.js'
+import * as coursepack from '../lib/coursepack.js'
+import * as coursepackImport from '../lib/coursepack-import.js'
+import * as classio from '../lib/classio.js'
 
 /** 上传类接口的体积上限（与《课程包格式规范》§8 一致：整包 500MB） */
 const BIG_BODY = 512 * 1024 * 1024

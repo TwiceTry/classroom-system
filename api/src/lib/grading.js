@@ -9,8 +9,10 @@
  *   4) 把分数/等级/评语回写提交记录
  * 计分表始终「只追加 + 撤销」，不会两条同时生效。
  */
+
 import * as repo from './repo.js'
-import { scoring, scheme, withCourseScheme } from './scheme.js'
+import * as scheme from './scheme.js'
+import { scoring, withCourseScheme } from './scheme.js'
 import { badRequest } from './errors.js'
 
 const uid = (p) => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)

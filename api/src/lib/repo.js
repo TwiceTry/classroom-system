@@ -7,6 +7,7 @@
  * 这一层只做「取/存」，不放业务规则（算分、名单校验那些在 service 层），
  * 免得以后想换库时要跟着改业务逻辑。
  */
+
 import { openDb, dbPath, tableCounts } from '../db/index.js'
 
 let _db = null

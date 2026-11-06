@@ -119,19 +119,19 @@ jobs:
         run: |
           set -euo pipefail
           echo "--- /app 顶层"
-          docker run --rm --entrypoint sh teach-system:ci -c 'ls -la /app && du -sh /app/server /app/web/dist'
+          docker run --rm --entrypoint sh teach-system:ci -c 'ls -la /app && du -sh /app/api /app/web/dist'
 
           bad=0
           for p in /app/data /app/downloads /app/content \
-                   /app/server/lecture /app/server/materials "/app/server/代码示例" \
-                   /app/content; do
+                   /app/api/lecture /app/api/materials "/app/api/代码示例" \
+                   /app/api/data; do
             if docker run --rm --entrypoint sh teach-system:ci -c "test -e '$p'"; then
               echo "::error::镜像里不该有 $p（课程内容 / 数据 / 分发文件不进镜像）"
               bad=1
             fi
           done
           if [ "$bad" != "0" ]; then exit 1; fi
-          echo "OK 镜像里只有系统本身（server + web/dist + 依赖 + 空白模板）"
+          echo "OK 镜像里只有系统本身（api + web/dist + 两套依赖）"
 
       - name: 导出成可直接导入的 .tar
         run: |
@@ -217,7 +217,7 @@ jobs:
             echo "docker pull $IMAGE"
             echo '```'
             echo ""
-            echo "> 镜像里只有系统本身（server + web/dist + 依赖 + 空白模板），"
+            echo "> 镜像里只有系统本身（api + web/dist + 依赖 + 空白模板），"
             echo "> 不含任何课程内容、学生数据、Chrome 分发文件；那些在运行时用 -v ...:/data 挂进来。"
           } >> "$GITHUB_STEP_SUMMARY"
 
