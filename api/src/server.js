@@ -5,7 +5,17 @@
 import { buildApp } from './app.js'
 import { config } from './config.js'
 import { dbPath } from './db/index.js'
-import { closeDb } from './lib/repo.js'
+import { closeDb, setEventHook } from './lib/repo.js'
+import { schedule as scheduleSheet } from './lib/scoresheet.js'
+
+/*
+ * 记分记录一变，就把该学生目录下的分数表（总评/明细/机试/证据清单）刷一次。
+ *
+ * 这是派生数据（真源在数据库里），所以 fire-and-forget：
+ * 不阻塞给分响应，失败只记日志。scoresheet.schedule 里有 300ms 去抖，
+ * 点名一次改 60 人不会写 240 次文件。
+ */
+setEventHook((classId, sid) => scheduleSheet(classId, sid))
 
 const app = await buildApp()
 

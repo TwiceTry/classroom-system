@@ -27,6 +27,7 @@ const SETS = {
     ['作业库设计包（模板→改→传→导出→清理）', 'e2e-design-pack.mjs'],
     ['xlsx 名单上传（干跑）', 'e2e-xlsx-roster.mjs'],
     ['导出总评/流水/名单/模板 xlsx（内容 + 单元格类型）', 'xlsx-export.mjs'],
+    ['学生目录分数表（给分后自动刷新）', 'scoresheet-hook.mjs'],
   ],
 }
 

@@ -403,6 +403,52 @@ export default async function compatRoutes(app) {
   }
 
 
+  /**
+   * 素材目录的静态服务：`/api/assets/brands/vue.svg` → `content/assets/brands/vue.svg`
+   *
+   * 为什么需要：讲义 / 材料 / 示例里写的是相对路径 `../assets/brands/vue.svg`。
+   *   · 讲义页：相对 `/teacher/lecture` 解析 → `/assets/...`（不存在）
+   *   · 代码练习的预览 iframe：<base> 是 `/api/example-files/<dir>/`，
+   *     `../../assets/...` 上跳两级 → `/api/assets/...`
+   * 于是图片全 404（代码练习页控制台就有一条 `vue.svg 404`）。
+   *
+   * **不需要登录**：`assets/` 是公开素材 —— 课程材料（materials）对游客可见，
+   * 它引用的图必须能显示。（讲义专属的图请放 lecture/ 下，那里仍旧只给教师。）
+   */
+  app.get('/api/assets/*', async (req, reply) => {
+    const rel = String(req.params['*'] || '').replace(/\\/g, '/')
+    if (!rel) throw badRequest('缺少文件路径')
+
+    const course = req.query.courseId
+      ? repo.getCourse(String(req.query.courseId))
+      : repo.listCourses().find((c) => !c.archived) || null
+    if (!course) throw notFound('还没有课程')
+
+    const assetsRoot = path.join(contentRootOf(course), 'assets')
+    const full = path.resolve(assetsRoot, rel)
+    const base = path.resolve(assetsRoot)
+    if (full !== base && !full.startsWith(base + path.sep)) throw badRequest('路径越界')
+    if (!fs.existsSync(full) || !fs.statSync(full).isFile()) throw notFound('文件不存在：' + rel)
+
+    const ext = path.extname(full).toLowerCase()
+    const MIME = {
+      '.svg': 'image/svg+xml',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp',
+      '.ico': 'image/x-icon',
+      '.pdf': 'application/pdf',
+      '.mp4': 'video/mp4',
+      '.woff': 'font/woff',
+      '.woff2': 'font/woff2',
+    }
+    reply.type(MIME[ext] || 'application/octet-stream')
+    reply.header('cache-control', 'public, max-age=600')
+    return fs.createReadStream(full)
+  })
+
   /** 讲义里的图片：?courseId=&path=lecture/img/a.png（讲义仅教师） */
   app.get('/api/content/asset', async (req, reply) => {
     const t = fromRequest(req.raw)

@@ -238,6 +238,30 @@ export function findEvent(classId, eid) {
   return hydrate(db().prepare(`SELECT * FROM events WHERE class_id = ? AND id = ?`).get(String(classId), String(eid)))
 }
 
+/*
+ * 记分记录变更钩子。
+ *
+ * 为什么要钩子：给分/撤分/恢复分散在 5 处（批阅、手动给分、考勤、删除作业/提交、学生重交），
+ * 每个地方各自去刷新学生目录里的分数表，一定会漏。
+ * 这里在**唯一的数据写入点**上通知一次，覆盖全部路径。
+ *
+ * 钩子只做派生表（xlsx 快照），失败绝不影响记分 —— 所以这里 try/catch 吞掉。
+ */
+let eventHook = null
+
+export function setEventHook(fn) {
+  eventHook = typeof fn === 'function' ? fn : null
+}
+
+function notifyEvent(classId, sid) {
+  if (!eventHook) return
+  try {
+    eventHook(classId, sid)
+  } catch (e) {
+    /* 钩子本身不许打断记分 */
+  }
+}
+
 export function insertEvent(e) {
   db()
     .prepare(
@@ -268,6 +292,7 @@ export function insertEvent(e) {
       evidence: e.evidence ? JSON.stringify(e.evidence) : null,
       schemeVersion: e.schemeVersion || '',
     })
+  notifyEvent(e.classId, e.sid)
   return findEvent(e.classId, e.id)
 }
 
@@ -276,7 +301,10 @@ export function voidEvent(classId, eid, by) {
   const n = db()
     .prepare(`UPDATE events SET voided = 1, voided_at = ?, voided_by = ? WHERE class_id = ? AND id = ?`)
     .run(new Date().toISOString(), String(by || ''), String(classId), String(eid)).changes
-  return n > 0 ? findEvent(classId, eid) : null
+  if (n <= 0) return null
+  const ev = findEvent(classId, eid)
+  if (ev) notifyEvent(ev.classId, ev.sid)
+  return ev
 }
 
 /** 恢复一条被撤销的记分 */
@@ -284,7 +312,10 @@ export function restoreEvent(classId, eid) {
   const n = db()
     .prepare(`UPDATE events SET voided = 0, voided_at = '', voided_by = '' WHERE class_id = ? AND id = ?`)
     .run(String(classId), String(eid)).changes
-  return n > 0 ? findEvent(classId, eid) : null
+  if (n <= 0) return null
+  const ev = findEvent(classId, eid)
+  if (ev) notifyEvent(ev.classId, ev.sid)
+  return ev
 }
 
 /* ------------------------------ 点名 ------------------------------ */

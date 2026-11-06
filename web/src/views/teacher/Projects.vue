@@ -800,7 +800,8 @@ async function uploadEvidence(e) {
       if (i >= 0) d.value.submissions[i] = res.submission
       viewing.value = res.submission
     }
-    toast.value = '证据已保存（同时写进该学生的 大作业/证据清单.csv）'
+    // 证据清单是派生表（xlsx），给分后由数据层钩子自动重写
+    toast.value = '证据已保存（同时更新该学生的 大作业/证据清单.xlsx）'
   } catch (err) {
     toast.value = err.message
   } finally {

@@ -81,6 +81,36 @@ for (const dir of ['lecture', 'materials', '代码示例', 'exams', 'assets']) {
   await getZip('内容导出 ' + dir, '/api/courses/' + cid + '/content.zip?dir=' + encodeURIComponent(dir))
 }
 
+/*
+ * 素材的静态访问：讲义/示例里写的是相对路径 `../assets/xxx`，
+ * 代码练习的预览 iframe 上跳两级会落到 /api/assets/*。
+ * 这个路由不存在时，页面上的图全 404（只在浏览器控制台能看到一条 404，
+ * 接口测试发现不了）。而且它必须**不用登录** —— materials 对游客可见。
+ */
+{
+  const r = await fetch(BASE + '/api/assets/brands/vue.svg')
+  const ct = r.headers.get('content-type') || ''
+  const body = await r.text()
+  ok(
+    '素材静态访问 /api/assets/*（免登录）',
+    r.status === 200 && ct.indexOf('image/svg+xml') !== -1 && body.indexOf('<svg') !== -1,
+    r.status + ' · ' + ct.split(';')[0] + ' · ' + body.length + 'B'
+  )
+  /*
+   * 路径越界要挡住。
+   * 注意必须用**编码形式**（%2e%2e%2f）：写成字面量 `../` 时，
+   * HTTP 客户端会在发出前就把它规范化掉，请求根本到不了路由 ——
+   * 那样测出来永远是 200（落在 SPA 兜底上），等于没测。
+   */
+  const r2 = await fetch(BASE + '/api/assets/%2e%2e%2f%2e%2e%2fdata%2fconfig.json')
+  const body2 = await r2.text()
+  ok(
+    '素材路径越界被拒（编码形式）',
+    (r2.status === 400 || r2.status === 404) && body2.indexOf('teacherPassword') === -1,
+    'status=' + r2.status
+  )
+}
+
 console.log('\n=== 3. 各类模板 ===')
 for (const [label, url] of [
   ['课程包模板', '/api/courses/template.zip'],
