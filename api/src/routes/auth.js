@@ -6,7 +6,7 @@
  * 不接受前端再传 sid（这样改 URL 也看不到别人的东西）。
  */
 import { issue, revoke, checkPassword } from '../lib/auth.js'
-import { config } from '../config.js'
+import { config, setPassword, getPasswordSource } from '../config.js'
 import { requireAuth } from '../plugins/auth.js'
 import { badRequest, unauthorized, forbidden } from '../lib/errors.js'
 import * as repo from '../lib/repo.js'
@@ -98,4 +98,72 @@ export default async function authRoutes(app) {
     if (m) revoke(m[1].trim())
     reply.status(204).send()
   })
+
+  /**
+   * 改教师口令 —— 老师自己在界面上改，不用去动 data/config.json。
+   *
+   * 写进 config.json 后**立即生效**（config 里是 getter，不用重启进程），
+   * 下次启动也是从文件读。
+   *
+   * 注意：已经登录的设备（包括当前这个）**不会掉线** —— 令牌是 JWT，
+   * 签名用的是 secret，跟口令无关。所以换口令 ≠ 踢掉别人，
+   * 想让旧令牌立刻作废，得换 config.json 的 secret（那会让所有人重登）。
+   */
+  app.post('/api/auth/password', {
+    preHandler: requireAuth('teacher'),
+    schema: {
+      body: {
+        type: 'object',
+        required: ['oldPassword', 'newPassword'],
+        properties: {
+          oldPassword: { type: 'string' },
+          newPassword: { type: 'string' },
+        },
+      },
+    },
+    handler: async (req) => {
+      const oldPwd = String(req.body.oldPassword || '')
+      const newPwd = String(req.body.newPassword || '')
+
+    if (!checkPassword(oldPwd)) throw unauthorized('当前口令不正确')
+
+    const err = checkNewPassword(newPwd)
+    if (err) throw badRequest(err)
+    if (newPwd === oldPwd) throw badRequest('新口令和当前口令一样，没有变化')
+
+    let written = false
+    try {
+      setPassword(newPwd)
+      written = true
+    } catch (e) {
+      // 只读介质（U 盘 / 容器只读层）：不能假装成功，否则重启后悄悄变回去
+      throw badRequest('写不进 data/config.json：' + e.message)
+    }
+
+    const notes = []
+    if (newPwd === 'teacher') {
+      // 不硬拦（有人忘了口令、想先改回默认再处理），但要说清楚风险
+      notes.push('你正在把口令改回默认值 teacher —— 任何知道这个系统的人都能进教师端，建议尽快换一个。')
+    }
+    if (getPasswordSource() === 'env-migrated') {
+      notes.push('口令已写入 data/config.json。环境变量 TS_PASSWORD 只在首次启动时生效，以后以文件为准。')
+    }
+    notes.push('已登录的设备不会立即掉线，最多再保持 ' + config.tokenHours + ' 小时；要立刻全部踢掉，需更换 config.json 里的 secret。')
+
+      return { ok: written, tokenHours: config.tokenHours, notes }
+    },
+  })
+}
+
+/**
+ * 新口令的基本要求。
+ * 返回 '' 表示通过，否则返回给老师看的原因。
+ */
+function checkNewPassword(pwd) {
+  const s = String(pwd || '')
+  if (!s.trim()) return '新口令不能为空'
+  if (s.length < 6) return '口令太短，至少 6 位'
+  if (s.length > 64) return '口令太长（最多 64 位）'
+  if (/^\s+$/.test(s)) return '口令不能只有空格'
+  return ''
 }

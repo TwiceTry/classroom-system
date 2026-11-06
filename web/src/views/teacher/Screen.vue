@@ -117,6 +117,31 @@
         把 <code>--kiosk</code> 换成 <code>--start-fullscreen</code> 可以保留退出全屏的退路。
       </p>
     </section>
+
+    <section class="card">
+      <CardHead>
+        <template #title>账号安全</template>
+        <template #meta><span class="dim">改完立刻生效，不用重启服务</span></template>
+      </CardHead>
+      <div class="row">
+        <label class="field">当前口令
+          <input v-model="pwd.old" type="password" class="input" autocomplete="current-password" placeholder="现在的教师口令" />
+        </label>
+        <label class="field">新口令
+          <input v-model="pwd.next" type="password" class="input" autocomplete="new-password" placeholder="至少 6 位" />
+        </label>
+        <label class="field">再输一次
+          <input v-model="pwd.again" type="password" class="input" autocomplete="new-password" placeholder="确认新口令" />
+        </label>
+        <button class="btn" :disabled="pwd.busy" @click="savePwd">{{ pwd.busy ? '提交中…' : '修改口令' }}</button>
+      </div>
+      <p v-if="pwd.msg" class="dim" :style="{ margin: '10px 0 0', color: pwd.ok ? '' : '#c0392b' }">{{ pwd.msg }}</p>
+      <p class="dim" style="margin:10px 0 0">
+        口令存在 <code>data/config.json</code>（明文）。
+        <b>已登录的设备不会立即掉线</b> —— 令牌是 JWT，跟口令无关，最多再保持 {{ pwd.tokenHours }} 小时；
+        要立刻让所有设备重登，需更换 config.json 里的 <code>secret</code>。
+      </p>
+    </section>
   </PageShell>
 </template>
 
@@ -125,6 +150,7 @@ import { computed, onMounted, onUnmounted, reactive } from 'vue'
 // 共用同一份实例：推流由教师端布局持有，本页只读状态、调档位
 import { cast } from '../../utils/screencast'
 import { state as globalState } from '../../store'
+import { api } from '../../api'
 import PageHead from '../../components/PageHead.vue'
 import CardHead from '../../components/CardHead.vue'
 import PageShell from '../../components/PageShell.vue'
@@ -199,6 +225,44 @@ function copy(text) {
   }
 }
 
+/* ---------------- 账号安全：改教师口令 ---------------- */
+const pwd = reactive({ old: '', next: '', again: '', busy: false, msg: '', ok: true, tokenHours: 12 })
+
+async function savePwd() {
+  if (pwd.busy) return
+  pwd.msg = ''
+  pwd.ok = true
+  if (!pwd.old) {
+    pwd.ok = false
+    pwd.msg = '请先填当前口令'
+    return
+  }
+  if (pwd.next.length < 6) {
+    pwd.ok = false
+    pwd.msg = '新口令至少 6 位'
+    return
+  }
+  if (pwd.next !== pwd.again) {
+    pwd.ok = false
+    pwd.msg = '两次输入的新口令不一致'
+    return
+  }
+  pwd.busy = true
+  try {
+    const j = await api.post('/api/auth/password', { oldPassword: pwd.old, newPassword: pwd.next })
+    pwd.ok = true
+    pwd.msg = '口令已修改 —— 下次登录请用新口令。'
+    if (j && j.tokenHours) pwd.tokenHours = j.tokenHours
+    pwd.old = ''
+    pwd.next = ''
+    pwd.again = ''
+  } catch (e) {
+    pwd.ok = false
+    pwd.msg = (e && e.message) || '修改失败，请重试'
+  } finally {
+    pwd.busy = false
+  }
+}
 </script>
 
 <style scoped>
