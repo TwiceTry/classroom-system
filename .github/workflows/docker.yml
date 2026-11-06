@@ -88,7 +88,10 @@ jobs:
       - name: 打版本标签（能复制就复制，复制不到就构建）
         run: |
           set -euo pipefail
-          REPO="ghcr.io/${{ github.repository }}"
+          # Docker 要求仓库名全小写，而 ${{ github.repository }} 可能是 TwiceTry/...
+          # metadata-action 会自动转小写，手写脚本不会 —— 不转就成了
+          # "repository name must be lowercase"，而且 imagetools inspect 也会因为这个查不到已有标签。
+          REPO="$(echo 'ghcr.io/${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
           SHA_TAG="sha-${GITHUB_SHA::7}"
           VER="${GITHUB_REF_NAME#v}"
           SRC="$REPO:$SHA_TAG"
@@ -124,7 +127,10 @@ jobs:
       - name: 拉下来存成可离线导入的 .tar
         run: |
           set -euo pipefail
-          REPO="ghcr.io/${{ github.repository }}"
+          # Docker 要求仓库名全小写，而 ${{ github.repository }} 可能是 TwiceTry/...
+          # metadata-action 会自动转小写，手写脚本不会 —— 不转就成了
+          # "repository name must be lowercase"，而且 imagetools inspect 也会因为这个查不到已有标签。
+          REPO="$(echo 'ghcr.io/${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
           VER="${GITHUB_REF_NAME#v}"
           docker pull "$REPO:$VER"
           docker save "$REPO:$VER" -o "teach-system-${VER}-image.tar"
