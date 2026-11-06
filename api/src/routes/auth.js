@@ -6,7 +6,7 @@
  * 不接受前端再传 sid（这样改 URL 也看不到别人的东西）。
  */
 import { issue, revoke, checkPassword } from '../lib/auth.js'
-import { config, setPassword, getPasswordSource } from '../config.js'
+import { config, setPassword } from '../config.js'
 import { requireAuth } from '../plugins/auth.js'
 import { badRequest, unauthorized, forbidden } from '../lib/errors.js'
 import * as repo from '../lib/repo.js'
@@ -123,16 +123,10 @@ export default async function authRoutes(app) {
     },
     handler: async (req) => {
       /*
-       * 口令由环境变量控制时，界面上改是没用的（下次启动还会被覆盖）。
-       * 与其让老师「改完以为成功、重启又变回去」，不如直接拒绝并说清改哪里。
+       * 这里不再拦「环境变量控制的口令」。
+       * 规则是 config.json 为唯一真源：TS_PASSWORD 只在还没有配置时用一次，
+       * 之后界面上改就是改配置本身，下次启动也从配置读 —— 不会被人挡住。
        */
-      if (getPasswordSource() === 'env') {
-        throw badRequest(
-          '口令由环境变量 TS_PASSWORD 控制，在界面上改不会生效。' +
-            '要改口令：改 docker-compose.yml 里的 TS_PASSWORD（或容器环境变量），然后重启容器。'
-        )
-      }
-
       const oldPwd = String(req.body.oldPassword || '')
       const newPwd = String(req.body.newPassword || '')
 

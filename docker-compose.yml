@@ -25,8 +25,16 @@ services:
 
     environment:
       TZ: Asia/Shanghai
-      # 教师口令（第一次起就设好，别用默认的）
-      TS_PASSWORD: ${TS_PASSWORD:-teacher}
+      # 教师口令
+      #
+      # 只在**第一次启动**（data/config.json 里还没有口令）时生效：
+      # 它会被写进 config.json，之后一律以那个文件为准。
+      # 所以：
+      #   · 首次部署：在这里设好，别留默认的 teacher
+      #   · 以后想改口令：用教师端「投屏设置 → 账号安全」，
+      #     改这里不会生效（也不会覆盖掉你改过的）—— 这是有意的，防止
+      #     一个写死的环境变量把你锁死在改不了口令的状态。
+      TS_PASSWORD: ${TS_PASSWORD:-}
       # 多实例/负载均衡时必须是同一个值；单机留空即可（会自动生成并存进 data/config.json）
       TS_SECRET: ${TS_SECRET:-}
 

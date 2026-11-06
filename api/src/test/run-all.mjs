@@ -30,6 +30,7 @@ const SETS = {
     ['学生目录分数表（给分后自动刷新）', 'scoresheet-hook.mjs'],
     ['教师口令（修改 / 生效 / 落盘 / 还原）', 'teacher-password.mjs'],
     ['空库自建表（容器首次启动）', 'db-init.mjs'],
+    ['口令优先级（config 为准 / 环境变量只初始化）', 'password-priority.mjs'],
   ],
 }
 

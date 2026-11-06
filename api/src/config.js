@@ -64,37 +64,43 @@ function initPassword() {
   const filePwd = String(stored.teacherPassword || '').trim()
 
   /*
-   * **环境变量优先**。
+   * 规则只有一条：**data/config.json 是唯一真源，环境变量只在「还没有配置」时用一次。**
    *
-   * 这里我第一版写反了：让文件优先，理由是「老师界面上改的口令不该被下次启动覆盖」。
-   * 但那样一来，Docker 里 `-e TS_PASSWORD=xxx` 的人会发现 xxx 登不进去
-   * （config.json 里还留着旧口令）—— 显式配置了环境变量却完全不起作用，
-   * 这比「改完被覆盖」更让人摸不着头脑。
+   *   1) config 里已经有 teacherPassword
+   *        → 一律以它为准。环境变量不再参与，只在两者不一致时提示一句。
+   *   2) config 里没有（首次部署，或老配置里没这个字段）
+   *        → 用 TS_PASSWORD，没有就用默认 teacher，**并立刻落盘**，从此它就是配置。
+   *   3) 界面上改口令
+   *        → 直接覆写 config.json，立即生效。
    *
-   * 所以现在的规则：
-   *   · 设了 TS_PASSWORD → 它说了算（界面上改口令会被接口明确拒绝，并告诉你改哪里）
-   *   · 没设 TS_PASSWORD → config.json 说了算（界面上改口令正常）
-   * 两者不会打架，因为「有一条路径会被明确拒绝」，而不是悄悄失效。
+   * 我前两版都没写对，两种错法正好相反：
+   *   · 先写成「文件优先但环境变量仍被当成权威」→ 设了 -e TS_PASSWORD 却登不进去；
+   *   · 再改成「环境变量永远优先」→ 只要 compose 里写了 TS_PASSWORD，
+   *     界面就永远改不了口令（接口还得返回 400 拦住你），等于设置项被环境变量钉死。
+   * 现在按「初始化时用环境变量，之后配置文件说了算」，
+   * 环境变量既能在第一次部署时把口令设进去，也不会挡住以后的修改。
    */
-  if (envPwd) {
-    currentPassword = envPwd
-    passwordSource = 'env'
-    if (!filePwd) {
-      // 顺手落盘一份：以后即使不设环境变量了，口令也不至于回到默认的 teacher
-      try {
-        flushPassword(envPwd)
-      } catch (e) {
-        /* 只读介质：内存里用着就行 */
-      }
-    } else if (envPwd !== filePwd) {
-      console.warn('  [config] 口令以环境变量 TS_PASSWORD 为准（config.json 里那份被忽略）。')
-      console.warn('  [config] 想在界面上改口令，请先去掉 TS_PASSWORD 环境变量。')
+  if (filePwd) {
+    currentPassword = filePwd
+    passwordSource = 'file'
+    if (envPwd && envPwd !== filePwd) {
+      console.warn('  [config] 检测到环境变量 TS_PASSWORD，但 config.json 里已经有口令 —— 以 config.json 为准。')
+      console.warn('  [config] 要改口令：教师端「投屏设置 → 账号安全」，或直接改 data/config.json。')
+      console.warn('  [config] （TS_PASSWORD 只在「还没有 config」的第一次启动时生效，之后不再参与。）')
     }
     return
   }
 
-  currentPassword = filePwd || 'teacher'
-  passwordSource = filePwd ? 'file' : 'default'
+  // 没有配置：用环境变量初始化，然后落盘，让它成为配置
+  currentPassword = envPwd || 'teacher'
+  passwordSource = envPwd ? 'env-init' : 'default'
+  try {
+    flushPassword(currentPassword)
+  } catch (e) {
+    console.warn('  [config] 口令写不进 data/config.json（' + e.message + '）。')
+    console.warn('  [config] 本次运行用 ' + (envPwd ? 'TS_PASSWORD' : '默认口令 teacher') +
+      '；数据目录不可写时，下次启动仍会走这一步。')
+  }
 }
 initPassword()
 
@@ -134,7 +140,9 @@ export const config = {
     return currentPassword
   },
   get passwordIsDefault() {
-    return passwordSource === 'default'
+    // 判的是「当前口令是不是默认值」，不是「它从哪来」。
+    // 首次启动落盘 teacher 之后，来源会变成 file，但口令依然是默认的 —— 得继续提醒。
+    return currentPassword === 'teacher'
   },
 
   dataDir: DATA_DIR,
