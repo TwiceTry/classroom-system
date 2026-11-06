@@ -108,7 +108,7 @@ jobs:
           curl -fsS http://127.0.0.1:18730/ -o /tmp/index.html
           echo "--- 首页前 160 字节"; head -c 160 /tmp/index.html; echo
 
-          curl -fsS -X POST http://127.0.0.1:18730/api/login/teacher \
+          curl -fsS -X POST http://127.0.0.1:18730/api/auth/login/teacher \
             -H 'Content-Type: application/json' \
             -d '{"password":"ci-password"}' -o /tmp/login.json
           echo "--- 登录"; head -c 120 /tmp/login.json; echo
