@@ -44,10 +44,11 @@ if not exist "web\node_modules" (
 )
 
 rem ---------- backend ----------
+rem backend entry is api\src\server.js (the old server\index.js was removed)
 netstat -ano | findstr /r /c:":18730 .*LISTENING" >nul
 if errorlevel 1 (
   echo   starting backend on http://127.0.0.1:18730
-  start "classroom-backend" cmd /k "node server\index.js"
+  start "classroom-backend" cmd /k "node api\src\server.js"
 ) else (
   echo   port 18730 already listening - backend window skipped
 )

@@ -40,9 +40,10 @@ echo switch that screen capture requires. A plain browser can open
 echo http://localhost:%PORT%/ for everything except casting.
 echo.
 
-node server/index.js
+rem backend entry is api/src/server.js (the old server/index.js was removed)
+node api/src/server.js
 if errorlevel 1 (
   echo.
-  echo [ERROR] server exited unexpectedly.
+  echo [ERROR] the backend exited unexpectedly.
   pause
 )
