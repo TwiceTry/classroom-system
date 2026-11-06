@@ -20,6 +20,9 @@ concurrency:
 jobs:
   build:
     name: 构建并推送镜像
+    # 打 tag 时不重建：同一个 commit 在主分支上已经构建过，交给下面的 retag 去移动标签。
+    # 否则推 main + 推 tag 会对同一个 sha 各跑一次完整构建（约 60s 一次，纯浪费）。
+    if: github.ref_type != 'tag'
     runs-on: ubuntu-latest
     steps:
       - name: 取代码
@@ -60,8 +63,79 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  retag:
+    name: 打 tag 时只移动镜像标签（不重建）
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 取代码
+        uses: actions/checkout@v4
+
+      - name: 准备 buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 同一个 commit 在主分支构建时已经打了 sha-<7位> 标签，
+      # 这里只是把它再指一份到版本号上 —— 秒级完成，镜像内容逐字节相同。
+      - name: 从 sha- 标签复制出版本标签
+        run: |
+          set -euo pipefail
+          REPO="ghcr.io/${{ github.repository }}"
+          SHA_TAG="sha-${GITHUB_SHA::7}"
+          VER="${GITHUB_REF_NAME#v}"
+          SRC="$REPO:$SHA_TAG"
+
+          echo "源：$SRC"
+          echo "目标：$REPO:$VER"
+
+          if ! docker buildx imagetools inspect "$SRC" >/dev/null 2>&1; then
+            echo "::error::找不到 $SRC —— 这个 commit 没有在主分支上构建过（或那次被取消了）。"
+            echo "::error::这种情况需要重新构建，请把该 commit 重新推到 main，或手动跑一次 workflow_dispatch。"
+            exit 1
+          fi
+
+          # 版本号（2.0.0）与带 v 的原名（v2.0.0）都指过去，两种写法都能拉
+          docker buildx imagetools create -t "$REPO:$VER" "$SRC"
+          docker buildx imagetools create -t "$REPO:${GITHUB_REF_NAME}" "$SRC"
+
+      - name: 拉下来存成可离线导入的 .tar
+        run: |
+          set -euo pipefail
+          REPO="ghcr.io/${{ github.repository }}"
+          VER="${GITHUB_REF_NAME#v}"
+          docker pull "$REPO:$VER"
+          docker save "$REPO:$VER" -o "teach-system-${VER}-image.tar"
+          ls -lh "teach-system-${VER}-image.tar"
+
+      - name: 挂到 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: teach-system-*-image.tar
+          generate_release_notes: true
+
+      - name: 写摘要
+        run: |
+          {
+            echo "## 镜像已打上版本标签（未重新构建）"
+            echo ""
+            echo '```'
+            echo "docker pull ghcr.io/${{ github.repository }}:${{ github.ref_name }}"
+            echo "docker pull ghcr.io/${{ github.repository }}:${GITHUB_REF_NAME#v}"
+            echo '```'
+            echo ""
+            echo "镜像内容与 \`sha-${GITHUB_SHA::7}\` 完全相同。"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   smoke:
     name: 跑一遍 + 导出可导入的镜像包
+    # 打 tag 时不做完整构建与冒烟（镜像已在主分支验过），tar 由上面的 retag 产出
+    if: github.ref_type != 'tag'
     runs-on: ubuntu-latest
     needs: build
     steps:
