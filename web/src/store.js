@@ -30,20 +30,20 @@ export const state = reactive({
   lessons: [],
   classes: [],
   items: [],
-  passwordIsDefault: false,
-  cast: null,
 })
 
 export async function bootstrap() {
   if (!getToken()) {
-    // 游客：只拉公开的那部分（课程名 + 课次清单）——教学公开，材料谁都能看
-    try {
-      const pub = await api.get('/api/public/course')
-      state.lessons = pub.lessons || []
-      state.courseName = (pub.course && pub.course.name) || ''
-    } catch (e) {
-      /* 还没建课程就空着 */
-    }
+    /*
+     * 游客：**什么都不拉**。
+     *
+     * 原来这里会拉 /api/public/course（2.1KB 的 20 课次清单 + 课程名），
+     * 但它唯一的用处是「课程材料」页的左侧目录 —— 登录页一个字都用不上。
+     * 而 App.vue 在 onMounted 里无条件调 bootstrap()，
+     * 于是任何人打开登录页都会白拿一份完整课程目录。
+     *
+     * 现在改成按需：需要课次清单的页面自己调 loadPublicLessons()。
+     */
     state.ready = true
     return
   }
@@ -67,8 +67,6 @@ export async function bootstrap() {
     state.lessons = data.lessons || []
     state.classes = data.classes || []
     state.items = data.items || []
-    state.passwordIsDefault = !!data.passwordIsDefault
-    state.cast = data.cast || null
     state.ready = true
   } catch (e) {
     // 令牌过期 / 服务没起：清掉令牌回登录页，别把用户卡在转圈上
@@ -84,14 +82,30 @@ export async function bootstrap() {
   }
 }
 
+/**
+ * 游客态按需加载课次清单。
+ *
+ * 只有公开的「课程材料」页需要它（左侧目录按有材料的课次生成）。
+ * 登录用户不需要调：bootstrap 已经带回来了。
+ */
+export async function loadPublicLessons() {
+  if (state.lessons.length) return state.lessons
+  try {
+    const pub = await api.get('/api/public/course')
+    state.lessons = pub.lessons || []
+    state.courseName = (pub.course && pub.course.name) || state.courseName || ''
+  } catch (e) {
+    /* 还没建课程就空着 */
+  }
+  return state.lessons
+}
+
 /** 登录成功后刷新全量启动数据 */
 export async function refresh() {
   const data = await api.get('/api/bootstrap')
   state.lessons = data.lessons || []
   state.classes = data.classes || []
   state.items = data.items || []
-  state.passwordIsDefault = !!data.passwordIsDefault
-  state.cast = data.cast || null
 }
 
 export function applyLogin(res) {

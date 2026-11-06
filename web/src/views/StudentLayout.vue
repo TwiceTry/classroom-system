@@ -260,7 +260,7 @@ function onPresenceMsg(msg) {
 function onVisMessage(msg) {
   if (!msg || msg.t !== 'stuvis') return
   // 服务端按「这个学生自己的课程」算可见性，所以直接重取即可，不用自己比对 courseId
-  loadScheme(true).then(() => {
+  loadScheme(true, { brief: true }).then(() => {
     if (!currentModuleHidden()) return
     router.replace('/student/materials')
     visNotice.value = '老师暂时收起了这个入口'
@@ -275,13 +275,13 @@ onMounted(async () => {
   startClock()
   startPresence()
   startCastWatch()
-  await loadScheme(true) // 导航按最新方案渲染
+  await loadScheme(true, { brief: true }) // 学生端只要导航：省掉 raw/rules/forms（8.3KB → 1.1KB）
   offVis = onPresenceMessage(onPresenceMsg)
-  // 学生中途才打开应用（老师早就在同步了）：广播不会重发，主动问一次
+  // 学生中途才打开应用（老师早就在同步了）：广播不会重发，主动问一次。
+  // 字段是 sync（不是 pg）—— 原来读 r.pg 恒为 undefined，这条从来没生效过。
   try {
     const r = await api.get('/api/pgsync')
-    const pg = r && r.pg
-    if (pg && pg.active) jumpToPlayground({ already: true })
+    if (r && r.sync) jumpToPlayground({ already: true })
   } catch (e) {
     /* 没登录 / 接口不通就忽略 */
   }

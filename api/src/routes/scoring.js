@@ -68,6 +68,8 @@ export default async function scoringRoutes(app) {
   app.get('/api/scheme', { preHandler: requireAuth() }, async (req) => {
     const course = repo.getCourse(String(req.query.courseId || ''))
     const anyCourse = course || repo.listCourses().find((c) => !c.archived) || null
+    /** 只要导航用的那点东西（学生端每页首屏都会拉） */
+    const brief = String(req.query.brief || '') === '1'
 
     // 「这节课开了哪些学生入口」：存隐藏列表
     const vis = anyCourse ? repo.getState('stuvis:' + anyCourse.id, null) : null
@@ -111,6 +113,31 @@ export default async function scoringRoutes(app) {
             studentVisible: hidden.indexOf(i.key) < 0,
           }
         })
+
+      /*
+       * `?brief=1`：学生端／只需要导航的页面用。
+       *
+       * 完整版 8.3KB，其中 raw(3.4KB) + rules + forms + grades/dims/hint 全是
+       * 「方案编辑器」和「打分控件」用的；学生端只拿 modules 渲染侧栏，
+       * 却每页首屏都背上这 5KB 用不到的东西。brief 版只留导航需要的。
+       */
+      if (brief) {
+        return {
+          scheme: { id: s.id, name: s.name, version: s.version, totalFull: s.totalFull, passLine: s.passLine, cap: s.cap },
+          // 前端有 `scheme.items.find(x => x.key === …)` 用来取模块标题，键不能少
+          items: items.map((i) => ({
+            key: i.key,
+            name: i.name,
+            short: i.short,
+            full: i.full,
+            extra: !!i.extra,
+            form: i.form,
+            module: !!i.module && !!i.module.enabled,
+          })),
+          modules,
+          hidden,
+        }
+      }
 
       return {
         scheme: { id: s.id, name: s.name, version: s.version, totalFull: s.totalFull, passLine: s.passLine, cap: s.cap },
@@ -165,10 +192,25 @@ export default async function scoringRoutes(app) {
       const events = repo.eventsOf(cls.id, { limit: 1000 }).items
       const board = scoring.computeClass(roster, events)
       const cur = scheme.current()
+
+      /*
+       * rows[].item 原本是**完整的考核项**（含 rule.params / hint / presets / hintTemplate），
+       * 每个学生都带一份 → 60 人 × 5 项 = 306KB，而整个响应才 323KB。
+       * 而前端班表格只用 `x.item.key` 和 `x.score`（表头来自顶层 items）。
+       * 这里按「表格需要的字段」瘦身，不动 computeClass 本身（分数榜、抽屉、导出还要完整对象）。
+       */
+      const slimItem = (i) => ({ key: i.key, name: i.name, short: i.short, full: i.full, extra: !!i.extra })
+      const slimBoard = Object.assign({}, board, {
+        list: (board.list || []).map((r) =>
+          Object.assign({}, r, { rows: (r.rows || []).map((x) => ({ item: slimItem(x.item), score: x.score })) })
+        ),
+        itemAvg: (board.itemAvg || []).map((x) => ({ item: slimItem(x.item), avg: x.avg })),
+      })
+
       return {
         class: { id: cls.id, name: cls.name, courseId: cls.courseId || '', createdAt: cls.createdAt || '' },
         students: roster,
-        board,
+        board: slimBoard,
         events,
         scheme: { id: cur.id, name: cur.name, version: cur.version, passLine: cur.passLine, totalFull: cur.totalFull, cap: cur.cap },
         items: scheme.items(),

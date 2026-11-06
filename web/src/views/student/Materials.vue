@@ -50,7 +50,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import MdView from '../../components/MdView.vue'
 import { api, getToken } from '../../api'
-import { state } from '../../store'
+import { state, loadPublicLessons } from '../../store'
 import { onPresenceMessage } from '../../utils/presence'
 import PageHead from '../../components/PageHead.vue'
 import CardHead from '../../components/CardHead.vue'
@@ -125,6 +125,10 @@ onMounted(async () => {
   offFollow = onPresenceMessage((msg) => {
     if (msg.t === 'follow') applyFollow(msg, true)
   })
+
+  // 课次清单：登录用户 bootstrap 已带回来；游客态这里才按需拉
+  //（登录页不再无条件拉它 —— 那会让任何人打开登录页就拿到整份课程目录）
+  await loadPublicLessons()
 
   if (!activeId.value && lessons.value.length) activeId.value = lessons.value[0].id
   if (activeId.value) await open(activeId.value, { keepScroll: true })

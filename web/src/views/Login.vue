@@ -2,7 +2,8 @@
   <div class="login">
     <div class="box">
       <header class="head">
-        <h1>示例课程</h1>
+        <!-- 只有一门课就直接写课程名（老师一眼确认没进错），否则退回系统名 -->
+        <h1>{{ courses.length === 1 ? courses[0].name : '课堂系统' }}</h1>
         <p>课堂系统 · 讲义、计分、点名与投屏</p>
       </header>
 
@@ -44,7 +45,11 @@
           <span>口令</span>
           <input v-model="form.password" type="password" class="input" placeholder="教师口令" />
         </label>
-        <p v-if="passwordIsDefault" class="note warn">当前是初始口令，课后记得改掉。</p>
+        <!--
+          「当前是初始口令」的提示移到了教师端（TeacherLayout）。
+          原因：登录页是未登录状态，拿不到 passwordIsDefault；
+          而这个字段一旦对所有人可见，就等于告诉别人「直接试默认口令」。
+        -->
         <button class="btn primary" :disabled="busy || !form.password">
           {{ busy ? '正在登录…' : '进入教师端' }}
         </button>
@@ -52,7 +57,7 @@
       </form>
 
       <footer class="foot">
-        <span>{{ studentCount }}</span>
+        <span>{{ courseCountText }}</span>
       </footer>
     </div>
   </div>
@@ -70,7 +75,6 @@ const route = useRoute()
 const tab = ref('student')
 const busy = ref(false)
 const err = ref('')
-const passwordIsDefault = computed(() => state.passwordIsDefault)
 
 // 课程清单走公开接口：登录页还没令牌，但学生得先选课程
 const courses = ref([])
@@ -85,10 +89,14 @@ async function loadCourses() {
   }
 }
 
-// 页脚只报一个总数，不列班级明细：这是公共页面，人来人往
-const studentCount = computed(() => {
-  const n = courses.value.reduce((s, c) => s + (c.students || 0), 0)
-  return n ? courses.value.length + ' 门课，' + n + ' 人次' : ''
+/*
+ * 页脚只显示「几门课」。
+ * 原来还会显示「117 人次」，但那意味着**任何人打开登录页就能知道这个学校有多少学生** ——
+ * 而登录页只需要让人选一门课，人数一个用不上。接口那边也不返回它了。
+ */
+const courseCountText = computed(() => {
+  const n = courses.value.length
+  return n ? n + ' 门课' : ''
 })
 
 const form = reactive({ courseId: '', sid: '', name: '', password: '' })
@@ -99,14 +107,16 @@ onMounted(async () => {
   // 已登录就直接进对应的家
   if (state.role === 'teacher') router.replace('/teacher/lecture')
   else if (state.role === 'student') router.replace('/student/materials')
+
+  /*
+   * 登录页只做一件事：拿课程下拉。
+   *
+   * 原来这里还有一段 `if (!state.classes.length) await refresh()` ——
+   * 它会在**任何人**打开登录页时拉一次 /api/bootstrap（2.48KB），
+   * 而登录页的 state.classes 恒为空（游客档本来就不给班级），
+   * 于是每次进来都白拉一次、拉完什么也没做。
+   */
   if (!courses.value.length) await loadCourses()
-  if (!state.classes.length) {
-    try {
-      await refresh()
-    } catch (e) {
-      /* 服务没起时留空，表单下方会提示 */
-    }
-  }
   if (courses.value.length && !form.courseId) form.courseId = courses.value[0].id
 })
 

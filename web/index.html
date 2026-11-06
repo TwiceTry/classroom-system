@@ -4,7 +4,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light" />
-    <title>课堂系统 · 示例课程</title>
+    <!--
+      标签页标题。构建时是静态的；运行时由 App.vue 换成「课堂系统 · <真实课程名>」。
+      「示例课程」是脚手架留下的占位词，不该出现在生产标题里。
+    -->
+    <title>课堂系统</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <!-- Markdown 渲染：本地 marked，无 CDN（机房无外网） -->
     <script src="/vendor/marked.min.js"></script>

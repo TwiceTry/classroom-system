@@ -22,17 +22,26 @@ export const scheme = reactive({
   cap: 100,
   items: [],
   modules: [],
+  /** 当前这份是不是「精简版」（学生端）。换了角色要重新拉完整版 */
+  brief: false,
 })
 
 let inflight = null
 
-export async function loadScheme(force) {
-  if (scheme.loaded && !force) return scheme
+/**
+ * @param force  重新拉（进布局 / 收到方案变更广播时）
+ * @param opts.brief  只取导航要用的（学生端）：服务端会省掉 raw / rules / forms /
+ *                     grades / dims，一份 8.3KB 压到 1.1KB。教师端打分控件要用 grades/dims，
+ *                     所以只有学生端传 true。
+ */
+export async function loadScheme(force, opts) {
+  const brief = !!(opts && opts.brief)
+  if (scheme.loaded && scheme.brief === brief && !force) return scheme
   if (inflight) return inflight
   inflight = (async () => {
     scheme.loading = true
     try {
-      const res = await api.get('/api/scheme')
+      const res = await api.get('/api/scheme' + (brief ? '?brief=1' : ''))
       const s = res.scheme || {}
       scheme.id = s.id || ''
       scheme.name = s.name || ''
@@ -42,6 +51,7 @@ export async function loadScheme(force) {
       scheme.cap = s.cap || 100
       scheme.items = res.items || []
       scheme.modules = res.modules || []
+      scheme.brief = brief
       scheme.loaded = true
       scheme.error = ''
     } catch (e) {

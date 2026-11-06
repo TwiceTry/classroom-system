@@ -102,6 +102,23 @@ let classId = ''
   const lj = json(list)
   check('课程列表里有它', list.statusCode === 200 && lj.items.some((c) => c.id === courseId), 'total=' + (lj && lj.total))
 
+  /*
+   * 登录页的课程下拉：必须叫 items。
+   * 这里曾经返回 { courses: [...] }，而 Login.vue 读 res.items ——
+   * 结果课程明明存在，登录页还是写「老师还没有建课程」，
+   * 而且不报错、不白屏，只是"看起来没课"。这类字段名错位只能靠断言卡住。
+   */
+  const pub = await inject({ method: 'GET', url: '/api/courses/public' })
+  const pj = json(pub)
+  check(
+    '公开课程列表（登录页下拉）用 items 且不含私密字段',
+    pub.statusCode === 200 &&
+      Array.isArray(pj.items) &&
+      pj.items.some((c) => c.id === courseId) &&
+      pj.items.every((c) => c.sid === undefined && c.students === undefined ? true : typeof c.students === 'number'),
+    'keys=' + Object.keys(pj || {}).join(',')
+  )
+
   const badId = await inject({
     method: 'POST',
     url: '/api/courses',

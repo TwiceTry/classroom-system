@@ -37,6 +37,19 @@ watch(
 onMounted(() => {
   bootstrap()
 })
+
+/*
+ * 标签页标题跟随真实课程名。
+ * 静态标题在 index.html 里（「课堂系统」），这里补上课程名，
+ * 两个窗口并排开教师端/学生端时，标签上能分清是哪个班哪门课。
+ */
+watch(
+  () => state.courseName,
+  (name) => {
+    document.title = name ? '课堂系统 · ' + name : '课堂系统'
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped>

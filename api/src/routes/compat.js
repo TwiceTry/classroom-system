@@ -37,20 +37,22 @@ function rootOfCourseId(courseId) {
 export default async function compatRoutes(app) {
   /* ---------------- 公开信息（登录页要用） ---------------- */
 
-  /** 登录页的课程下拉：只给名字和人数，不泄露任何学生信息 */
+  /**
+   * 登录页的课程下拉 —— **只给 id 和名字**。
+   *
+   * 之前还带 `classes`（几个班）和 `students`（总人数），登录页拿它显示
+   * 「1 门课，117 人次」。但那意味着**任何人打开登录页就能知道这个学校有几个班、
+   * 多少学生** —— 而登录页只需要让用户选一门课，这些数字一个都用不上。
+   *
+   * 字段名必须是 `items` —— 前端 `Login.vue` 读的是 `res.items`。
+   * 原来这里叫 `courses`，结果课程明明存在，登录页还是显示
+   * 「老师还没有建课程」：它不是报错，是拿不到列表却没有任何提示。
+   */
   app.get('/api/courses/public', async () => ({
-    courses: repo
+    items: repo
       .listCourses()
       .filter((c) => !c.archived)
-      .map((c) => {
-        const classes = repo.listClasses(c.id)
-        return {
-          id: c.id,
-          name: c.name,
-          classes: classes.length,
-          students: classes.reduce((n, x) => n + repo.rosterOf(x.id).length, 0),
-        }
-      }),
+      .map((c) => ({ id: c.id, name: c.name })),
   }))
 
   /** 当前课程 + 课次清单（公开，可缓存） */
