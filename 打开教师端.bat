@@ -145,9 +145,9 @@ exit /b 1
 :no_browser
 echo.
 echo   [ERROR] No browser found.
-echo           Install Chrome - version 109 works on Win7 - or unpack our
-echo           Chrome: run  downloads\Chrome-109.*-Win7.exe once, it
-echo           unpacks to  downloads\Chrome\App\Chrome.exe
+echo           Install Chrome or Edge - or run the portable bundle once:
+echo           downloads\Chrome-109.*.exe  unpacks to  downloads\Chrome\App\Chrome.exe
+echo           Any current Chrome / Edge also works; 109 is only the floor.
 echo.
 pause
 exit /b 1

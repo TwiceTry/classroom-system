@@ -24,8 +24,10 @@
            因为浏览器如果连这些都不支持，它根本执行不到这段代码，页面就白屏了。
 
       结果挂在 window.__compat 上，供 main.js 与兜底页使用。
-      基线：Chrome 109（Win7 上最后能装的 Chrome），与 tools/check-compat.mjs 的 build.target 一致。
-    -->
+      基线：Chrome 109 —— 这是**机房现有浏览器**的下限，不是 Win7 的遗留要求
+      （Win7 已不再支持）。与 tools/check-compat.mjs 的 build.target 一致；
+      机房设备整体换代后可以把这个数字和 build.target 一起上调。
+      -->
     <script>
       (function () {
         var MIN_CHROME = 109
@@ -151,7 +153,7 @@
           '<div class="cfb-card">' +
           '<div class="cfb-head"><span class="cfb-ico">!</span>' +
           '<div><h1>这台电脑的浏览器太旧，打不开课堂系统</h1>' +
-          '<p>本系统按 <b>Chrome ' + MIN + '</b>（Win7 上最后一个能装的 Chrome 版本）设计，' +
+          '<p>本系统按 <b>Chrome ' + MIN + '</b> 及以上设计，' +
           '低于这个版本的浏览器缺少必要能力，页面会白屏或错位。</p></div></div>' +
           (c.reasons && c.reasons.length ? '<p class="cfb-why">' + c.reasons.join('；') + '</p>' : '') +
           (rows ? '<p class="cfb-sub">缺少这些能力：</p><ul class="cfb-list">' + rows + '</ul>' : '') +

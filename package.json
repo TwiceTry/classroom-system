@@ -13,7 +13,7 @@
     "test:all": "node api/src/test/run-all.mjs"
   },
   "engines": {
-    "node": ">=13.6.0"
+    "node": ">=20"
   },
   "dependencies": {
     "exceljs": "^4.4.0",

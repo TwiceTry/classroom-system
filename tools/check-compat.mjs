@@ -2,10 +2,11 @@
 /*
  * check-compat.mjs —— 两条兼容基线的自动体检。
  *
- *   基线 1：后端跑在服务器上（Node >= 18 LTS），不再受 Win7 / Node 13 限制
- *   基线 2：前端跑在 Chrome 109（机房 Win7 上最后一个 Chrome）——这条不能松
+ *   基线 1：后端跑在服务器上（Node >= 20 LTS）。**Win7 已不支持**，不再追 Node 13。
+ *   基线 2：前端跑在 Chrome 109 —— 这是**机房现有设备的底线**，不是 Win7 遗留要求。
+ *           这条不能松：机房没换代之前把 build.target 抬上去，就是白屏。
  *
- * 注意 Win7 那条只约束**浏览器**：教师机 / 学生机只开浏览器，Node 只在服务器上跑。
+ * 两条作用域不同：Node 只在服务器上跑；教师机 / 学生机只开浏览器。
  *
  * 为什么要脚本化：这两个版本号不会因为「今天跑得起来」就永远安全。
  * npm 升级、build.target 被顺手抬高一档、某个新库用了 toSorted / color-mix，
@@ -16,9 +17,7 @@
  *   node tools/check-compat.mjs --backend  # 只查运行时基线
  *   node tools/check-compat.mjs --frontend # 只查浏览器基线
  *
- * 后端那一半要在本机找到一份基线版 node.exe（不联网、不下载）：
- *   优先 package-win7/node/node.exe，其次 _tmp/node 下任意 v13（退而求其次 v12）目录，
- *   或用 TS_NODE_BIN 环境变量指定。
+ * 后端那一半用**当前** Node 跑（不再去找便携 Node 13 —— 那条离线包路线已下线）。
  *
  * 退出码：0 全绿 / 1 有问题 / 2 参数或环境不满足。输出保持纯 ASCII。
  */
@@ -45,55 +44,31 @@ function hit(label, ok, detail) {
   console.log(`  ${ok ? 'OK  ' : 'FAIL'}  ${label}${detail ? '  -> ' + detail : ''}`)
 }
 
-/* ========================== 后端：Node 13.6.0 ========================== */
+/* ========================== 后端：Node 20 ========================== */
 
-/* 基线版没有的语法/内置。`?.` 与 `??` 在 13.6.0（V8 7.9）上仍是**语法错误**——
- * 不是「稍微慢一点」，而是整个文件加载失败、服务起不来，所以排在最前面。 */
+/* 后端基线是**服务器上跑的 Node 20 LTS**（`api/package.json` 的 engines、部署文档都按这个）。
+ *
+ * 这里只钉「Node 20 不支持的 API」—— 写进代码就是运行期 TypeError，改天换台机器才炸。
+ *
+ * 历史上这张表是给 Node 13.6 准备的：那时 `?.` / `??` 是**语法错误**，
+ * `.at` / `replaceAll` / `AbortController` 也都没有，所以逐条列着。
+ * 放弃 Win7 之后这些全都过时了 —— Node 20 原生支持，钉着它们只会天天误报。
+ */
 const BASELINE_BANNED = [
-  ['?.', 'optional chaining — SyntaxError on Node 13.6 (V8 7.9)'],
-  ['??', 'nullish coalescing / logical assignment — SyntaxError on Node 13.6'],
-  ['structuredClone(', 'Node 17'],
-  ['Object.hasOwn(', 'Node 16.9'],
-  ['.at(', 'Array/String .at — Node 16.6'],
-  ['replaceAll(', 'Node 15'],
-  ['Promise.any(', 'Node 15'],
-  ['AbortController', 'global since Node 15'],
-  ["require('node:", 'node: prefix — Node 14.18'],
-  ['require("node:', 'node: prefix — Node 14.18'],
-  ['fs.rm(', 'Node 14.14'],
-  ['fs.promises.rm(', 'Node 14.14'],
-  ['randomUUID(', 'Node 14.17'],
   ['Object.groupBy(', 'Node 21'],
+  ['Map.groupBy(', 'Node 21'],
   ['Array.fromAsync(', 'Node 22'],
+  ['Promise.withResolvers(', 'Node 22'],
+  ['Promise.try(', 'Node 24'],
+  ['fs.glob(', 'Node 22'],
 ]
 
-/* 找一份基线版 node.exe：先 v13（包里就是 13.6.0），没有才退回 v12。
- * 都只在本机找，不联网。 */
-function findBaselineNode() {
-  const cands = []
-  if (process.env.TS_NODE_BIN) cands.push(process.env.TS_NODE_BIN)
-  if (process.env.TS_NODE12) cands.push(process.env.TS_NODE12)
-  cands.push(path.join(REPO, 'package-win7', 'node', 'node.exe'))
-  const base = path.join(REPO, '_tmp', 'node')
-  if (fs.existsSync(base)) {
-    for (const dir of fs.readdirSync(base)) {
-      const d = path.join(base, dir)
-      if (!fs.statSync(d).isDirectory()) continue
-      for (const sub of fs.readdirSync(d)) cands.push(path.join(d, sub, 'node.exe'))
-    }
-  }
-  const found = []
-  for (const c of cands) {
-    if (!fs.existsSync(c) || !/node\.exe$/i.test(c)) continue
-    try {
-      const v = execFileSync(c, ['-v'], { encoding: 'utf8', env: { ...process.env, NODE_OPTIONS: '' } }).trim()
-      found.push({ exe: c, version: v })
-    } catch {
-      /* 这个 exe 跑不起来，换下一个 */
-    }
-  }
-  return found.find((x) => /^v13\./.test(x.version)) || found.find((x) => /^v12\./.test(x.version)) || null
-}
+/*
+ * 这里曾经有个 findBaselineNode()：去 package-win7/node/node.exe 与 _tmp/node 下
+ * 找一份 Node 13 来跑后端语法检查。放弃 Win7 后那份便携 Node 已下线，
+ * 而且它从来没有调用方（checkBackend 用的是 process.execPath）—— 已删。
+ * 后端基线现在就是「当前 Node 能加载全部 api/src」。
+ */
 
 function listFiles(dir, exts, skipDirs) {
   const out = []
@@ -111,12 +86,17 @@ function listFiles(dir, exts, skipDirs) {
 
 function checkBackend() {
   console.log('')
-  console.log('[backend] server-side Node (>= 18)')
+  console.log('[backend] server-side Node (>= 20)')
   const major = Number(String(process.versions.node).split('.')[0])
-  hit('runtime: node ' + process.version + ' is >= 18', major >= 18, 'this process is node ' + process.version)
+  hit('runtime: node ' + process.version + ' is >= 20', major >= 20, 'this process is node ' + process.version)
   const node = { exe: process.execPath, version: 'v' + process.versions.node }
 
-  const files = listFiles(path.join(APP, 'server'), ['.js'], ['node_modules', 'dist'])
+  /*
+   * 注意路径：后端代码在 api/src（旧的 server/ 已随重构删除）。
+   * 这里曾经指向 server/，目录没了之后 listFiles 返回空数组，
+   * 「0 个文件全部通过」看着是绿的，实际一个文件都没查 —— 检查工具自己先瞎了。
+   */
+  const files = listFiles(path.join(APP, 'api', 'src'), ['.js', '.mjs'], ['node_modules', 'dist'])
   let syntaxBad = 0
   for (const f of files) {
     try {
@@ -130,9 +110,10 @@ function checkBackend() {
     }
   }
   hit(
-    `syntax: ${files.length} server js file(s) load under ${node.version}`,
-    syntaxBad === 0,
-    syntaxBad ? `${syntaxBad} failed` : ''
+    `syntax: ${files.length} backend file(s) load under ${node.version}`,
+    // 一个文件都没扫到 = 路径写错了，不能算通过
+    files.length > 0 && syntaxBad === 0,
+    files.length === 0 ? 'no files found under api/src — path is wrong' : syntaxBad ? `${syntaxBad} failed` : ''
   )
 
   let banned = 0
@@ -140,15 +121,16 @@ function checkBackend() {
     const lines = fs.readFileSync(f, 'utf8').split('\n')
     for (const [needle, why] of BASELINE_BANNED) {
       lines.forEach((line, i) => {
+        // 注释行不算（说明文字里提到 API 名字是正常的）
         if (!line.includes(needle)) return
+        if (/^\s*(\*|\/\/|\/\*)/.test(line)) return
         banned++
         console.log(`  FAIL  ${path.relative(APP, f)}:${i + 1}  uses ${needle}  (${why})`)
       })
     }
   }
-  // 这条不是为了 Win7：?. / ?? 这些写法在任何 < Node 14 的环境都会炸，
-  // 留着当「别把下限写死在老语法上」的提醒；命中不算错，只是提示。
-  if (banned) console.log('  note  ' + banned + ' 处使用了较新的语法（服务器 Node 18+ 没问题，只是提示）')
+  // 命中就是真的不能用（服务器 Node 20 上没有那个 API），不是「提示」
+  hit(`api: no API newer than Node 20`, banned === 0, banned ? banned + ' hit(s)' : '')
 }
 
 /* ============================ 前端：Chrome 109 ============================ */
@@ -317,7 +299,7 @@ function checkFrontend() {
 if (doBackend) checkBackend()
 if (doFrontend) checkFrontend()
 
-/* .bat 体检：Win7 上才会炸的三类毛病（LF 行尾 / 块里裸括号 / chcp 65001） */
+/* .bat 体检：只在 cmd.exe 里才炸的三类毛病（LF 行尾 / 块里裸括号 / chcp 65001） */
 if (doFrontend) {
   console.log('')
   console.log('-- batch files --')

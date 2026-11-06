@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /*
- * check-bat.mjs —— 批处理（.bat）体检，专治「在 Win7 上才炸」的三类毛病。
+ * check-bat.mjs —— 批处理（.bat）体检，专治「只有在 cmd.exe 里才炸」的三类毛病。
  *
  *   1) 行尾必须是 CRLF
  *      cmd.exe 是逐字节按 CRLF 解析 .bat 的；纯 LF 的文件它会当成一行，
@@ -11,7 +11,7 @@
  *      同样报「was unexpected at this time」。要写括号就用 ^( ^) 转义。
  *
  *   3) 不要 chcp 65001
- *      Win7 的控制台在 65001 代码页下写不出东西，会报
+ *      控制台在 65001 代码页下写不出东西（老系统尤其明显），会报
  *      「The system cannot write to the specified device.」
  *      （我们这些 bat 都是 ASCII-only，本来也不需要改代码页）
  *

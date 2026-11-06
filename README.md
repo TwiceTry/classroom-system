@@ -83,8 +83,10 @@
 
 ## 1. 快速开始
 
-> **部署形态**：后端跑在**服务器**上（Node ≥ 18，不再迁就 Win7 / Node 13）；
-> 教师机与学生机只开**浏览器**（机房基准 Chrome 109）。
+> **部署形态**：后端跑在**服务器**上（Node ≥ 20 LTS）；教师机与学生机只开**浏览器**。
+> **Win7 已不支持**：便携 Node 13 那条离线包路线已下线，服务端按现代 Node 写。
+> 浏览器下限是 **Chrome 109** —— 这是机房现有设备的底线，不是 Win7 的遗留要求；
+> 机房整体换代后，可以把这个下限和 `build.target` 一起上调（见 §「兼容体检」）。
 > 入口页自带兼容性检测：缺能力直接给兜底提示页（含绿色版 Chrome 下载按钮），版本偏低挂一条可关闭的提示条 —— 见 `服务器部署.md`「浏览器要求与兼容性兜底页」。
 > 服务器部署（systemd / NSSM / Nginx / HTTPS / 备份 / 升级 / 监控）见 **`服务器部署.md`**。
 
@@ -139,8 +141,8 @@ npm run build
 
 > 构建产物 `web/dist/` 由 Node 直接托管。**其余机器不需要装任何东西**，浏览器打开网址即可。
 > 服务器端依赖只有 `yauzl`（流式解课程包 zip）与 `exceljs`（读 xlsx 名单），`npm install` 一次即可；学生机 / 教师机仍然零安装。
-> 构建目标锁在 `chrome78` 档（机房 Win7 + Chrome 109 稳过）；`node tools/check-compat.mjs`
-> 会同时校验「服务器 Node ≥ 18」与「前端不越 Chrome 109」两条基线。
+> 构建目标与基线对齐在 `chrome109`（早先是 chrome78 —— 但 CSS 早就要求 84/108，留着是自欺）；
+> `node tools/check-compat.mjs` 会同时校验「服务器 Node ≥ 20」与「前端不越 Chrome 109」两条基线。
 
 ---
 
@@ -851,7 +853,7 @@ classroom-system/
                         students/ 是每人一套的档案（作业正文、附件、机试答卷进 git，派生 CSV 忽略）；
                         config.json（含口令与 courseDir）/ uploads 不入库
   data/exams/           机试试卷 / 题库源文件（老师导入的那份 JSON + _template.json）
-  tools/                工具脚本（check-compat.mjs：Chrome 109 / Node 18 两条基线体检 + .bat 的 Win7 体检；
+  tools/                工具脚本（check-compat.mjs：Chrome 109 / Node 20 两条基线体检 + .bat 体检；
                         check-bat.mjs：批处理行尾/括号/chcp 体检；pack-course.mjs：打课程包）
 教学机代理/            教学机上的「局域网→公网」代理（Python 版，带缓存 + 投屏扇出）：lan-proxy.py + 启动代理.bat
                         投屏帧走 WebSocket 二进制帧，原样转发；扇出开着时公网上行/下行都只有 1 份
@@ -874,12 +876,18 @@ classroom-system/
   本项目只用 `createRouter` / `createWebHistory` / `beforeEach` / `<router-link>` / `<router-view>`
   这几样，5.0.7 已包含 v5 的全部运行时改动，升级 5.4 换不到任何实际收益，只多一层构建链风险。
 - **`vue` 下限写 `^3.5.34`**，与 vue-router 5 的 peer 对齐；写低了会让新机器装出跑不起来的组合。
-- **构建目标锁 `chrome78` 档**（见 `web/vite.config.js`）：机房基准是 Win7 + Chrome 109，v5 打包出
-  来的新语法靠 esbuild 降到这一档，别为了"现代"把 `build.target` 抬上去。
+- **构建目标与基线对齐在 `chrome109`**（见 `web/vite.config.js`）。
+  早先是 `chrome78`（想多兼容一档老机器），但全站 163 处 **flex 容器的 `gap` 要 Chrome 84**、
+  2 处 `height:100dvh` 要 **108** —— target 定 78 只是「语法能跑」，布局照样垮，
+  反而制造「支持 78」的错觉（拿 78 打开：JS 不报错、页面全乱，比白屏更难查）。
+  完整分析见 `docs/前端浏览器基线分析.md`。
+  **要改这个数，三处必须同步**：`build.target` / `index.html` 的 `MIN_CHROME` /
+  `check-compat.mjs` 的基线，并在机房真实浏览器上验一遍 ——
+  只改一处会出现「产物白屏但兜底页认为浏览器合格」，老师看到一片空白。
 
 ### 兼容体检（改前端前后各跑一次）
 
-后端跑在服务器上（Node ≥ 18），机房只开浏览器（Chrome 109）。这两条基线由脚本盯着：
+后端跑在服务器上（Node ≥ 20），机房只开浏览器（Chrome 109）。这两条基线由脚本盯着：
 
 ```bash
 node tools/check-compat.mjs            # 全查
@@ -890,11 +898,19 @@ node tools/check-compat.mjs --frontend # 只查浏览器基线
 `src/` 与 `dist/` 里有没有 Chrome 109 不认的语法/特性、CSS 有没有用嵌套 `&`。
 在开发机（新 Chrome + 新 Node）上全都毫无症状，到机房才炸 —— 所以钉成脚本。
 
-### 已下线的：Win7 单机离线包
+### 已下线的：Win7 支持
 
-后端改为**服务器部署**后，`package-win7/`（便携 Node 13.6.0 + 绿色 Chrome + 三个启动器）不再需要，
-`tools/win7-package/export-win7.mjs` 与 `check-node-pe.mjs` 已删除（需要时从 git 历史取回）。
+**Win7 不再支持**，两条相关的路都断了：
+
+| 下线的东西 | 原因 |
+|---|---|
+| `package-win7/`（便携 Node 13.6.0 + 三个启动器） | 后端改为服务器部署，Node 13 跑不动现在的依赖（`better-sqlite3` 要 Node ≥ 18，`api/package.json` 写的是 `>= 20`） |
+| `tools/win7-package/export-win7.mjs`、`check-node-pe.mjs` | 同上；需要时从 git 历史取回 |
+
 现在教师机只需要 `打开教师端.bat` 一个文件（地址写在脚本里），见 `服务器部署.md` §7。
+
+> **注意**：`downloads/` 里那个 `Chrome-109…-Win7.exe` **不是** Win7 支持 ——
+> 它是打包者起的文件名。这个绿色版在 Win10/11 上一样能跑，作用只是「零安装」。
 
 ---
 
@@ -931,5 +947,6 @@ node tools/check-compat.mjs --frontend # 只查浏览器基线
 - **老师端的提交列表是轮询的（8 秒）**：学生交作业走学生端的通知通道，老师端不挂 WS，靠定时拉取；刚交完最多晚 8 秒出现，页面切到后台时不拉。要立刻看，点「刷新」。
 - **课堂作业 / 大作业的分数只能从模块进**：三张表里 `score` 是这一次提交的批阅结果，同时会写一条对应的记分事件（作业项按等级均分、大作业项按四维量规）。班级管理里这两项没有记分入口，要改分请回模块重批（会自动撤掉旧账），或在「全班流水」里撤销那一条。\n- **机试暂时还留在班级管理里录**：机试模块（出卷 + 批卷面分）还没做，所以「期末机试」的记分按钮暂时保留，按钮上带说明；模块做好后把它也挪进模块即可。
 - **不联网**：所有前端依赖都在 `web/public/vendor/` 与构建产物里；Mermaid 只在文档里真出现图时才懒加载（3.2MB）。
-- 浏览器基准 **Chrome 109**（Win7 官方最后支持版）；构建 target 定在 `chrome78`，更老的机器也不会白屏。
+- 浏览器基准 **Chrome 109**（机房现有设备的底线 —— **不是 Win7 遗留要求，Win7 已不支持**）；
+  构建 target 与基线对齐在 `chrome109`。
 - 单次上传证据上限 6MB，单条记录最多 6 个附件。

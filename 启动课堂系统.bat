@@ -13,9 +13,9 @@ where node >nul 2>nul
 if errorlevel 1 (
   echo.
   echo [ERROR] Node.js not found in PATH.
-  echo         Teacher PC: install Node 13.6.0 ^(runs on Win7 x64; the offline
-  echo         package ships its own copy^),
-  echo         or any newer LTS on Win10+.
+  echo         Install Node 20 LTS or newer ^(the server runs it; browsers do
+  echo         not need Node at all^).
+  echo         Node 13 / Win7 support was dropped - see README.
   echo.
   pause
   exit /b 1

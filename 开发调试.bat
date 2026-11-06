@@ -19,7 +19,7 @@ cd /d "%~dp0"
 where node >nul 2>nul
 if errorlevel 1 (
   echo.
-  echo   [ERROR] Node.js not found. Install Node 18+ and run this again.
+  echo   [ERROR] Node.js not found. Install Node 20+ and run this again.
   echo.
   pause
   exit /b 1
