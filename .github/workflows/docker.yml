@@ -94,9 +94,19 @@ jobs:
           echo "源：$SRC"
           echo "目标：$REPO:$VER"
 
-          if ! docker buildx imagetools inspect "$SRC" >/dev/null 2>&1; then
-            echo "::error::找不到 $SRC —— 这个 commit 没有在主分支上构建过（或那次被取消了）。"
-            echo "::error::这种情况需要重新构建，请把该 commit 重新推到 main，或手动跑一次 workflow_dispatch。"
+          # 同时推 main 和 tag 时，tag 会先到 —— 而 main 的镜像还在构建。
+          # 所以这里要**等一会儿**，不能立刻就判「没有」。
+          ok=0
+          for i in $(seq 1 20); do
+            if docker buildx imagetools inspect "$SRC" >/dev/null 2>&1; then ok=1; break; fi
+            echo "第 $i 次查：$SHA_TAG 还没推上来，等 15 秒（主分支的构建可能正在进行）"
+            sleep 15
+          done
+
+          if [ "$ok" != "1" ]; then
+            echo "::error::等了约 5 分钟仍没有 $SRC。"
+            echo "::error::说明这个 commit 没在主分支成功构建过（被取消 / 构建失败）。"
+            echo "::error::把该 commit 重新推到 main，或手动跑一次 workflow_dispatch 后再打 tag。"
             exit 1
           fi
 
