@@ -122,6 +122,17 @@ export default async function authRoutes(app) {
       },
     },
     handler: async (req) => {
+      /*
+       * 口令由环境变量控制时，界面上改是没用的（下次启动还会被覆盖）。
+       * 与其让老师「改完以为成功、重启又变回去」，不如直接拒绝并说清改哪里。
+       */
+      if (getPasswordSource() === 'env') {
+        throw badRequest(
+          '口令由环境变量 TS_PASSWORD 控制，在界面上改不会生效。' +
+            '要改口令：改 docker-compose.yml 里的 TS_PASSWORD（或容器环境变量），然后重启容器。'
+        )
+      }
+
       const oldPwd = String(req.body.oldPassword || '')
       const newPwd = String(req.body.newPassword || '')
 
@@ -145,9 +156,7 @@ export default async function authRoutes(app) {
       // 不硬拦（有人忘了口令、想先改回默认再处理），但要说清楚风险
       notes.push('你正在把口令改回默认值 teacher —— 任何知道这个系统的人都能进教师端，建议尽快换一个。')
     }
-    if (getPasswordSource() === 'env-migrated') {
-      notes.push('口令已写入 data/config.json。环境变量 TS_PASSWORD 只在首次启动时生效，以后以文件为准。')
-    }
+
     notes.push('已登录的设备不会立即掉线，最多再保持 ' + config.tokenHours + ' 小时；要立刻全部踢掉，需更换 config.json 里的 secret。')
 
       return { ok: written, tokenHours: config.tokenHours, notes }

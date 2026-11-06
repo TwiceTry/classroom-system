@@ -63,22 +63,36 @@ function initPassword() {
   const envPwd = String(process.env.TS_PASSWORD || '').trim()
   const filePwd = String(stored.teacherPassword || '').trim()
 
-  if (envPwd && !filePwd) {
-    // 首次：环境变量落盘一次，之后文件说了算
-    try {
-      flushPassword(envPwd)
-    } catch (e) {
-      /* 只读介质：内存里用着就行 */
-    }
+  /*
+   * **环境变量优先**。
+   *
+   * 这里我第一版写反了：让文件优先，理由是「老师界面上改的口令不该被下次启动覆盖」。
+   * 但那样一来，Docker 里 `-e TS_PASSWORD=xxx` 的人会发现 xxx 登不进去
+   * （config.json 里还留着旧口令）—— 显式配置了环境变量却完全不起作用，
+   * 这比「改完被覆盖」更让人摸不着头脑。
+   *
+   * 所以现在的规则：
+   *   · 设了 TS_PASSWORD → 它说了算（界面上改口令会被接口明确拒绝，并告诉你改哪里）
+   *   · 没设 TS_PASSWORD → config.json 说了算（界面上改口令正常）
+   * 两者不会打架，因为「有一条路径会被明确拒绝」，而不是悄悄失效。
+   */
+  if (envPwd) {
     currentPassword = envPwd
-    passwordSource = 'env-migrated'
+    passwordSource = 'env'
+    if (!filePwd) {
+      // 顺手落盘一份：以后即使不设环境变量了，口令也不至于回到默认的 teacher
+      try {
+        flushPassword(envPwd)
+      } catch (e) {
+        /* 只读介质：内存里用着就行 */
+      }
+    } else if (envPwd !== filePwd) {
+      console.warn('  [config] 口令以环境变量 TS_PASSWORD 为准（config.json 里那份被忽略）。')
+      console.warn('  [config] 想在界面上改口令，请先去掉 TS_PASSWORD 环境变量。')
+    }
     return
   }
-  if (envPwd && filePwd && envPwd !== filePwd) {
-    console.warn('  [config] TS_PASSWORD 与 data/config.json 里的口令不一致，**以文件为准**。')
-    console.warn('  [config] 环境变量只在首次启动时写入一次；若要以环境变量为准，')
-    console.warn('  [config] 删掉 config.json 里的 teacherPassword 再启动。')
-  }
+
   currentPassword = filePwd || 'teacher'
   passwordSource = filePwd ? 'file' : 'default'
 }

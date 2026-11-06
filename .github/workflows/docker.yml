@@ -81,9 +81,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 同一个 commit 在主分支构建时已经打了 sha-<7位> 标签，
-      # 这里只是把它再指一份到版本号上 —— 秒级完成，镜像内容逐字节相同。
-      - name: 从 sha- 标签复制出版本标签
+      # 首选：同一个 commit 在主分支构建时已打了 sha-<7位> 标签，
+      #       这里把它再指一份到版本号上 —— 秒级完成，镜像逐字节相同。
+      # 兜底：等不到（同时推 main+tag 时 tag 先到、或主分支那次失败/被取消），
+      #       就**自己构建一次**。宁可多花 60 秒，也不能因为时序让发版卡住。
+      - name: 打版本标签（能复制就复制，复制不到就构建）
         run: |
           set -euo pipefail
           REPO="ghcr.io/${{ github.repository }}"
@@ -92,27 +94,32 @@ jobs:
           SRC="$REPO:$SHA_TAG"
 
           echo "源：$SRC"
-          echo "目标：$REPO:$VER"
+          echo "目标：$REPO:$VER 与 $REPO:${GITHUB_REF_NAME}"
 
-          # 同时推 main 和 tag 时，tag 会先到 —— 而 main 的镜像还在构建。
-          # 所以这里要**等一会儿**，不能立刻就判「没有」。
+          # 等主分支的镜像上来（最多约 2 分钟，每 10 秒一次）
           ok=0
-          for i in $(seq 1 20); do
+          for i in $(seq 1 12); do
             if docker buildx imagetools inspect "$SRC" >/dev/null 2>&1; then ok=1; break; fi
-            echo "第 $i 次查：$SHA_TAG 还没推上来，等 15 秒（主分支的构建可能正在进行）"
-            sleep 15
+            echo "  第 $i 次查：$SHA_TAG 还没出现，10 秒后再看"
+            sleep 10
           done
 
-          if [ "$ok" != "1" ]; then
-            echo "::error::等了约 5 分钟仍没有 $SRC。"
-            echo "::error::说明这个 commit 没在主分支成功构建过（被取消 / 构建失败）。"
-            echo "::error::把该 commit 重新推到 main，或手动跑一次 workflow_dispatch 后再打 tag。"
-            exit 1
+          if [ "$ok" = "1" ]; then
+            echo "→ 复用主分支已构建的镜像"
+            docker buildx imagetools create -t "$REPO:$VER" "$SRC"
+            docker buildx imagetools create -t "$REPO:${GITHUB_REF_NAME}" "$SRC"
+          else
+            echo "→ 拿不到 $SHA_TAG，直接为这个 tag 构建一次（不推 sha- 标签）"
+            docker buildx build \
+              --file Dockerfile \
+              --platform linux/amd64 \
+              --push \
+              --tag "$REPO:$VER" \
+              --tag "$REPO:${GITHUB_REF_NAME}" \
+              --cache-from type=gha \
+              --cache-to type=gha,mode=max \
+              .
           fi
-
-          # 版本号（2.0.0）与带 v 的原名（v2.0.0）都指过去，两种写法都能拉
-          docker buildx imagetools create -t "$REPO:$VER" "$SRC"
-          docker buildx imagetools create -t "$REPO:${GITHUB_REF_NAME}" "$SRC"
 
       - name: 拉下来存成可离线导入的 .tar
         run: |
