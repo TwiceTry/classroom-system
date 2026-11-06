@@ -165,8 +165,12 @@ export default async function classroomRoutes(app) {
           total: roster.length,
         })
       }
+      const pickedNow = chosen.length === 1 ? state.picked.length : st.picked.length + chosen.length
       return {
         drawn: chosen.map((s) => ({ sid: s.sid, name: s.name })),
+        // 前端「本轮已抽 {pickedCount} 人」直接读这个字段；以前只给了 picked 数组，
+        // 于是随机点名之后那一栏就变成空的（数字没了）。
+        pickedCount: pickedNow,
         picked: chosen.length === 1 ? state.picked : st.picked.concat(chosen.map((s) => s.sid)),
         remaining: roster.length - (chosen.length === 1 ? state.picked.length : st.picked.length + chosen.length),
         round: state.round,

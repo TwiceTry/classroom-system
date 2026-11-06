@@ -263,20 +263,75 @@ export default async function scoringRoutes(app) {
       const online = presence.onlineSet(cls.id)
       const items = scheme.items()
 
+      /*
+       * 当前在记哪一项。
+       *
+       * 前端一直在传 ?itemKey=xxx，但这里原先没读 —— 页面上的「互动分 / 次数」
+       * 两列于是永远指向写死的那个语义（甚至干脆没值）。
+       * 现在按 itemKey 取，缺省仍是 interact。
+       */
+      const itemKey = String(req.query.itemKey || 'interact')
+      const item = items.find((i) => i.key === itemKey) || items.find((i) => i.key === 'interact') || null
+
+      // 每人在这一项上的「次数」：未撤销的记分条数（加分、扣分都算一次）
+      const countMap = new Map()
+      for (const e of events) {
+        if (e.voided) continue
+        if (String(e.item) !== itemKey) continue
+        countMap.set(e.sid, (countMap.get(e.sid) || 0) + 1)
+      }
+
+      // 最近几条操作（页面上「刚给谁加了分」用）
+      const recent = events
+        .filter((e) => !e.voided)
+        .slice(-50)
+        .reverse()
+        .map((e) => ({
+          id: e.id,
+          sid: e.sid,
+          name: (roster.find((s) => s.sid === e.sid) || {}).name || '',
+          item: e.item,
+          delta: e.delta,
+          at: e.at,
+        }))
+
+      // 点名抽取进度：前端「本轮已抽 N 人 · 还剩 M 人」从这里来。
+      // 以前没有这个字段，页面一进来就显示 0，刷新后也恢复不了已抽数量。
+      const rollSt = repo.rollState(cls.id)
+
       return {
         classId: cls.id,
         className: cls.name,
+        roll: {
+          pickedCount: (rollSt.picked || []).length,
+          remaining: Math.max(0, roster.length - (rollSt.picked || []).length),
+          round: rollSt.round,
+        },
+        itemKey: item ? item.key : itemKey,
+        itemName: item ? item.name : '课堂互动',
+        full: item ? item.full : 10,
+        // 方案里可以自定义「加减分按钮」（发言 +1 / 上台 +2 …）。
+        // 前端读 res.presets，这里以前没给 → 永远退回代码里写死的 FALLBACK_PRESETS，
+        // 老师在方案里配的预设根本不生效。
+        presets: Array.isArray(scheme.current().presets) ? scheme.current().presets : [],
         // 「互动」这类可以做加减分的项（form=manual / mode=acc|base 且不是考勤）
         items: items
           .filter((i) => i.form !== 'attendance')
           .map((i) => ({ key: i.key, name: i.name, short: i.short, full: i.full, extra: !!i.extra })),
-        students: board.list.map((row) => ({
-          sid: row.student.sid,
-          name: row.student.name || '',
-          online: online.has(row.student.sid),
-          total: row.total,
-          items: row.rows.map((r) => ({ key: r.item.key, score: r.score })),
-        })),
+        students: board.list.map((row) => {
+          const rowOf = (row.rows || []).find((r) => r.item && r.item.key === itemKey)
+          return {
+            sid: row.student.sid,
+            name: row.student.name || '',
+            online: online.has(row.student.sid),
+            total: row.total,
+            // 这两列前端一直在渲染（{{ row.score }} / {{ row.count }}），这里以前没给
+            score: rowOf ? rowOf.score : 0,
+            count: countMap.get(row.student.sid) || 0,
+            items: (row.rows || []).map((r) => ({ key: r.item.key, score: r.score })),
+          }
+        }),
+        recent,
       }
     })
   })

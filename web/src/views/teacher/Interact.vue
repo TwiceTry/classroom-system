@@ -242,8 +242,8 @@ async function drawOne() {
   const who = (res.drawn || [])[0]
   if (!who) return null
   current.value = students.value.find((s) => s.sid === who.sid) || { sid: who.sid, name: who.name, score: 0, count: 0, online: false }
-  roll.pickedCount = res.pickedCount
-  roll.remaining = res.remaining
+  roll.pickedCount = res.pickedCount === undefined ? roll.pickedCount : res.pickedCount
+  roll.remaining = res.remaining === undefined ? roll.remaining : res.remaining
   return current.value
 }
 
