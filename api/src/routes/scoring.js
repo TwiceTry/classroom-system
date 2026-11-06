@@ -60,13 +60,23 @@ const RULE_LIST = [
 })
 
 /** 采集形态清单 */
+/**
+ * 采集形态清单（考核项在哪儿录分）。
+ *
+ * 两个字段名都要给：
+ *   · `form` — 语义名，方案文件里的字段就叫这个
+ *   · `key`  — 前端下拉用的 v-model 值（历史上一直读 key）
+ * 早先这里只有 `form`，前端 `:value="f.key"` 拿到的是 undefined ——
+ * 下拉框里每个选项都没有值，选了等于没选，页面上就表现为「采集方式是空的、
+ * 选了也留不住、还回不到未设置」。
+ */
 const FORM_LIST = [
   { form: 'attendance', name: '考勤', hint: '按日期+节次点名' },
   { form: 'manual', name: '课堂互动', hint: '点一下就加减分' },
   { form: 'graded', name: '作业', hint: '交上来再批阅' },
   { form: 'rubric', name: '大作业', hint: '按维度量规评分' },
   { form: 'paper', name: '机试', hint: '试卷/题库，自动判分' },
-]
+].map((f) => Object.assign({}, f, { key: f.form }))
 
 const view = (row) => ({
   sid: row.student.sid,

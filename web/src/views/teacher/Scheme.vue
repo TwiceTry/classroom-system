@@ -129,12 +129,15 @@
           <input v-model.number="cur.full" class="input" type="number" min="0" step="0.5" />
         </label>
         <label class="field">
-          <span>采集形态（决定模块长什么样）</span>
+          <span>采集方式（这一项在哪个页面录分）</span>
           <select v-model="cur.form" class="select">
-            <option v-for="f in forms" :key="f.key" :value="f.key">{{ f.name }}</option>
+            <option v-for="f in forms" :key="f.key" :value="f.key">
+              {{ f.name }}<template v-if="f.hint"> · {{ f.hint }}</template>
+            </option>
           </select>
         </label>
       </div>
+      <p class="dim mini" :style="{ margin: '6px 0 0', color: formOk ? '' : '#c0392b' }">{{ formHint }}</p>
 
       <label class="check">
         <input v-model="cur.extra" type="checkbox" />
@@ -549,6 +552,30 @@ const dirty = computed(() => !!raw.value && JSON.stringify(raw.value) !== savedR
 
 const cur = computed(() => (raw.value ? raw.value.items.find((i) => i.key === curKey.value) || null : null))
 const params = computed(() => (cur.value ? cur.value.rule.params || (cur.value.rule.params = {}) : {}))
+
+/*
+ * 采集方式的说明与「未设置」提示。
+ *
+ * 这个字段不是可有可无的装饰：它决定这一项在**哪个页面**录分
+ * （考勤页 / 互动页 / 作业批阅 / 大作业量规 / 机试试卷）。
+ * 留空时服务端会兜底成 manual（课堂互动），但那是隐式的 ——
+ * 老师看不出「我这一项其实被当成互动了」，所以这里显式说出来。
+ */
+const formOk = computed(() => {
+  const c = cur.value
+  if (!c) return true
+  return forms.value.some((f) => f.key === c.form)
+})
+const formHint = computed(() => {
+  const c = cur.value
+  if (!c) return ''
+  const f = forms.value.find((x) => x.key === c.form)
+  if (!f) {
+    return '⚠ 这一项还没设置采集方式。保存后会按「课堂互动」处理（在互动页加减分），' +
+      '但如果你想要的是作业批阅 / 机试 / 大作业，必须在这里选对，否则录分页面会不对。'
+  }
+  return f.name + '：' + (f.hint || '')
+})
 
 const ruleSchema = computed(() => {
   const r = rules.value.find((x) => x.type === (cur.value && cur.value.rule.type))
