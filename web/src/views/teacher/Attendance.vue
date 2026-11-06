@@ -336,7 +336,7 @@ function show(text) {
 }
 
 function base(suffix) {
-  return '/api/teacher/classes/' + encodeURIComponent(activeId.value) + suffix
+  return '/api/classes/' + encodeURIComponent(activeId.value) + suffix
 }
 
 function withItem(path) {
@@ -346,8 +346,8 @@ function withItem(path) {
 
 async function loadClasses() {
   try {
-    const res = await api.get('/api/teacher/classes')
-    classes.value = res.classes || []
+    const res = await api.get('/api/classes')
+    classes.value = res.items || []
     // 跟着侧栏选的班走（属于当前课程才用）
     if (currentClassId.value && classes.value.some((c) => c.id === currentClassId.value)) {
       activeId.value = currentClassId.value

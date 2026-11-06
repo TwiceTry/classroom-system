@@ -427,7 +427,7 @@ const missingText = computed(() => (prog.value ? prog.value.missing.map((m) => m
 
 async function loadDesigns() {
   try {
-    const r = await api.get('/api/teacher/courses/' + encodeURIComponent(getCourse()) + '/designs?kind=project')
+    const r = await api.get('/api/courses/' + encodeURIComponent(getCourse()) + '/designs?kind=project')
     designs.value = r.project || []
   } catch (e) {
     designs.value = []
@@ -439,7 +439,7 @@ async function loadProgress() {
   showMissing.value = false
   if (!curId.value) return
   try {
-    prog.value = await api.get('/api/teacher/assignments/' + encodeURIComponent(curId.value) + '/progress')
+    prog.value = await api.get('/api/assignments/' + encodeURIComponent(curId.value) + '/progress')
   } catch (e) {
     prog.value = null
   }
@@ -475,7 +475,7 @@ async function onDesignUpload(e) {
     const buf = await f.arrayBuffer()
     const token = getToken()
     const res = await fetch(
-      '/api/teacher/courses/' + encodeURIComponent(getCourse()) + '/designs/import?kind=project',
+      '/api/courses/' + encodeURIComponent(getCourse()) + '/designs/import?kind=project',
       {
         method: 'POST',
         headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, token ? { Authorization: 'Bearer ' + token } : {}),
@@ -497,13 +497,13 @@ async function onDesignUpload(e) {
 }
 
 function downloadTpl() {
-  download('/api/teacher/courses/' + encodeURIComponent(getCourse()) + '/designs/template.zip?kind=project', 'project-design-template.zip')
+  download('/api/courses/' + encodeURIComponent(getCourse()) + '/designs/template.zip?kind=project', 'project-design-template.zip')
   toast.value = '模板已下载：改完压缩成 zip 再上传'
 }
 
 function exportDesign(x) {
   download(
-    '/api/teacher/courses/' + encodeURIComponent(getCourse()) + '/designs/' + encodeURIComponent(x.id) + '/zip?kind=project',
+    '/api/courses/' + encodeURIComponent(getCourse()) + '/designs/' + encodeURIComponent(x.id) + '/zip?kind=project',
     'project-' + x.id + '.zip'
   )
 }
@@ -511,7 +511,7 @@ function exportDesign(x) {
 async function removeDesign(x) {
   if (!window.confirm('从作业目录里删掉「' + x.title + '」？\n\n已经建出来的作业不受影响。')) return
   try {
-    await api.del('/api/teacher/courses/' + encodeURIComponent(getCourse()) + '/designs/' + encodeURIComponent(x.id) + '?kind=project')
+    await api.del('/api/courses/' + encodeURIComponent(getCourse()) + '/designs/' + encodeURIComponent(x.id) + '?kind=project')
     toast.value = '已从目录删除'
     await loadDesigns()
   } catch (e) {
@@ -543,9 +543,9 @@ async function loadAll() {
   err.value = ''
   try {
     await loadScheme()
-    const res = await api.get('/api/teacher/assignments?itemKey=' + encodeURIComponent(props.itemKey))
-    list.value = res.assignments || []
-    classes.value = res.classes || []
+    const res = await api.get('/api/assignments?itemKey=' + encodeURIComponent(props.itemKey))
+    list.value = res.items || []
+    classes.value = res.allClasses || []
     if (!curId.value) {
       const openOne = list.value.filter((a) => a.status === 'open')
       curId.value = (openOne.length ? openOne[openOne.length - 1] : list.value[list.value.length - 1] || {}).id || ''
@@ -568,7 +568,7 @@ async function loadDetail(quiet) {
   if (!curId.value) return
   try {
     const q = classId.value ? '?classId=' + encodeURIComponent(classId.value) : ''
-    d.value = await api.get('/api/teacher/assignments/' + encodeURIComponent(curId.value) + q)
+    d.value = await api.get('/api/assignments/' + encodeURIComponent(curId.value) + q)
   } catch (e) {
     if (!quiet) err.value = e.message
   }
@@ -599,7 +599,7 @@ async function start() {
   if (!d.value) return
   if (!window.confirm('开始收「' + d.value.assignment.title + '」？\n\n学生端立刻能提交，已经开着的学生端会自动刷新。')) return
   try {
-    const res = await api.post('/api/teacher/assignments/' + encodeURIComponent(curId.value) + '/start')
+    const res = await api.post('/api/assignments/' + encodeURIComponent(curId.value) + '/start')
     toast.value = res.delivered ? '已开始，' + res.delivered + ' 个学生端已收到通知' : '已开始'
     await loadAll()
   } catch (e) {
@@ -611,7 +611,7 @@ async function stop() {
   if (!d.value) return
   if (!window.confirm('截止「' + d.value.assignment.title + '」？\n\n截止后学生交不上来（已交的照样能看、能批）。')) return
   try {
-    const res = await api.post('/api/teacher/assignments/' + encodeURIComponent(curId.value) + '/stop')
+    const res = await api.post('/api/assignments/' + encodeURIComponent(curId.value) + '/stop')
     toast.value = res.delivered ? '已截止，' + res.delivered + ' 个学生端已收到通知' : '已截止，停止提交'
     await loadAll()
   } catch (e) {
@@ -628,7 +628,7 @@ async function remove() {
   )
   if (!ok) return
   try {
-    await api.del('/api/teacher/assignments/' + encodeURIComponent(curId.value))
+    await api.del('/api/assignments/' + encodeURIComponent(curId.value))
     curId.value = ''
     d.value = null
     toast.value = '已删除'
@@ -665,11 +665,11 @@ async function saveEditor() {
     if (editing.value === 'new') {
       body.itemKey = props.itemKey
       body.designId = form.designId || ''
-      const res = await api.post('/api/teacher/assignments', body)
+      const res = await api.post('/api/assignments', body)
       curId.value = res.assignment.id
       toast.value = '建好了，记得点「开始收」学生才交得上'
     } else {
-      await api.patch('/api/teacher/assignments/' + encodeURIComponent(curId.value), body)
+      await api.patch('/api/assignments/' + encodeURIComponent(curId.value), body)
       toast.value = '已保存'
     }
     editing.value = ''
@@ -707,7 +707,7 @@ async function saveGrade() {
   saving.value = true
   try {
     const res = await api.post(
-      '/api/teacher/assignments/' + encodeURIComponent(curId.value) +
+      '/api/assignments/' + encodeURIComponent(curId.value) +
         '/submissions/' + encodeURIComponent(viewing.value.id) + '/grade',
       { dims: grade.dims, grade: grade.grade, late: grade.late, raw: grade.raw, comment: grade.comment }
     )
@@ -731,7 +731,7 @@ async function redo() {
   saving.value = true
   try {
     const res = await api.post(
-      '/api/teacher/assignments/' + encodeURIComponent(curId.value) +
+      '/api/assignments/' + encodeURIComponent(curId.value) +
         '/submissions/' + encodeURIComponent(viewing.value.id) + '/redo'
     )
     const i = d.value.submissions.findIndex((x) => x.id === viewing.value.id)
@@ -756,7 +756,7 @@ async function clearGrade() {
   saving.value = true
   try {
     const res = await api.post(
-      '/api/teacher/assignments/' + encodeURIComponent(curId.value) +
+      '/api/assignments/' + encodeURIComponent(curId.value) +
         '/submissions/' + encodeURIComponent(viewing.value.id) + '/grade',
       { dims: '', grade: '', raw: '', comment: grade.comment }
     )
@@ -792,7 +792,7 @@ async function uploadEvidence(e) {
     for (const f of files) {
       const dataUrl = await readAsDataUrl(f)
       const res = await api.post(
-        '/api/teacher/assignments/' + encodeURIComponent(curId.value) +
+        '/api/assignments/' + encodeURIComponent(curId.value) +
           '/submissions/' + encodeURIComponent(viewing.value.id) + '/evidence',
         { name: f.name, dataUrl }
       )
@@ -818,7 +818,7 @@ async function delEvidence(f) {
   busyEv.value = true
   try {
     const res = await api.del(
-      '/api/teacher/assignments/' + encodeURIComponent(curId.value) +
+      '/api/assignments/' + encodeURIComponent(curId.value) +
         '/submissions/' + encodeURIComponent(viewing.value.id) + '/evidence?name=' + encodeURIComponent(f.name)
     )
     const i = d.value.submissions.findIndex((x) => x.id === viewing.value.id)

@@ -26,3 +26,4 @@ tools/
 
 # Windows 双击脚本（容器里用不上）
 *.bat
+.work/

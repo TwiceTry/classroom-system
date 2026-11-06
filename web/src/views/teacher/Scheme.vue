@@ -481,7 +481,7 @@ function sioTopText(field) {
 
 /** 下载当前方案（原样 scheme.json） */
 function downloadScheme() {
-  download('/api/teacher/scheme/export.json', 'scheme.json')
+  download('/api/scheme/export.json', 'scheme.json')
 }
 
 function openIO() {
@@ -511,7 +511,7 @@ async function onIOFile(e) {
   io.raw = parsed
   io.busy = true
   try {
-    const res = await api.post('/api/teacher/scheme/inspect', { raw: parsed })
+    const res = await api.post('/api/scheme/inspect', { raw: parsed })
     io.report = res
     if (!res.ok) io.mode = 'keep'
   } catch (err) {
@@ -527,7 +527,7 @@ async function applyIO() {
   io.busy = true
   io.err = ''
   try {
-    const res = await api.post('/api/teacher/scheme/apply?mode=' + io.mode, { raw: io.raw })
+    const res = await api.post('/api/scheme/apply?mode=' + io.mode, { raw: io.raw })
     if (res.mode === 'keep') toast.value = '已保留本机方案，没有改动'
     else if (res.mode === 'copy') toast.value = '已另存为新方案 ' + res.savedId + '（v' + res.version + '）'
     else toast.value = '方案已导入 · v' + res.version
@@ -673,14 +673,14 @@ async function load() {
   try {
     // 先认一下「当前是哪门课的方案」，避免改错课还不知道
     try {
-      const cs = await api.get('/api/teacher/courses')
+      const cs = await api.get('/api/courses')
       const want = getCourse()
-      const hit = (cs.courses || []).find((c) => c.id === want) || (cs.courses || []).find((c) => !c.archived)
+      const hit = (cs.items || []).find((c) => c.id === want) || (cs.items || []).find((c) => !c.archived)
       courseName.value = hit ? hit.name : ''
     } catch (e) {
       courseName.value = ''
     }
-    const res = await api.get('/api/teacher/scheme')
+    const res = await api.get('/api/scheme')
     if (!res.raw) throw new Error('方案文件读不出来，请检查 data/schemes/')
     raw.value = normalize(res.raw)
     savedRaw.value = JSON.stringify(res.raw)
@@ -689,8 +689,8 @@ async function load() {
     errors.value = res.errors || []
     warnings.value = res.warnings || []
     curKey.value = (raw.value.items[0] || {}).key || ''
-    const boot = await api.get('/api/teacher/classes')
-    classes.value = (boot.classes || []).map((c) => ({ id: c.id, name: c.name, count: c.count || 0 }))
+    const boot = await api.get('/api/classes')
+    classes.value = (boot.items || []).map((c) => ({ id: c.id, name: c.name, count: c.count || c.studentCount || 0 }))
   } catch (e) {
     error.value = e.message
   } finally {
@@ -790,7 +790,7 @@ async function save() {
   if (!raw.value) return
   saving.value = true
   try {
-    const res = await api.patch('/api/teacher/scheme', { raw: raw.value })
+    const res = await api.patch('/api/scheme', { raw: raw.value })
     errors.value = []
     warnings.value = res.warnings || []
     // PATCH 只回版本号与这一条变更：把它们就地合进来（否则页头的 v 号不刷新）
@@ -819,7 +819,7 @@ async function runPreview() {
   previewLoading.value = true
   previewData.value = null
   try {
-    previewData.value = await api.post('/api/teacher/scheme/preview', { classId: previewClass.value, raw: raw.value })
+    previewData.value = await api.post('/api/scheme/preview', { classId: previewClass.value, raw: raw.value })
   } catch (e) {
     toast.value = e.message
   } finally {

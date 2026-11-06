@@ -464,9 +464,9 @@ async function load() {
   loading.value = true
   err.value = ''
   try {
-    const res = await api.get('/api/teacher/courses')
-    list.value = res.courses || []
-    const s = await api.get('/api/teacher/scheme').catch(() => null)
+    const res = await api.get('/api/courses')
+    list.value = res.items || []
+    const s = await api.get('/api/scheme').catch(() => null)
     schemes.value = s && s.raw ? [{ id: s.raw.id, name: s.raw.name, version: s.raw.version }] : []
   } catch (e) {
     err.value = e.message
@@ -516,7 +516,7 @@ async function doCopy() {
   if (!copyFrom.value) return
   copyingBusy.value = true
   try {
-    const r = await api.post('/api/teacher/courses/' + encodeURIComponent(copyFrom.value.id) + '/duplicate', {
+    const r = await api.post('/api/courses/' + encodeURIComponent(copyFrom.value.id) + '/duplicate', {
       name: copyForm.name.trim() || undefined,
       id: copyForm.id.trim() || undefined,
       semester: copyForm.semester || '',
@@ -559,7 +559,7 @@ async function save() {
   try {
     if (form.isNew) {
       const id = form.id.trim() || 'course-' + Math.random().toString(16).slice(2, 6)
-      await api.post('/api/teacher/courses', {
+      await api.post('/api/courses', {
         id,
         name: form.name.trim(),
         note: form.note,
@@ -568,7 +568,7 @@ async function save() {
       })
       toast.value = '课程建好了，把讲义/材料/示例拷进它的内容目录即可'
     } else {
-      await api.patch('/api/teacher/courses/' + encodeURIComponent(form.id), {
+      await api.patch('/api/courses/' + encodeURIComponent(form.id), {
         name: form.name.trim(),
         note: form.note,
         semester: form.semester || '',
@@ -586,7 +586,7 @@ async function save() {
 
 /** 空壳课程包模板（后端现打的 zip） */
 function downloadTemplate() {
-  download('/api/teacher/courses/template.zip', 'coursepack-template.zip')
+  download('/api/courses/template.zip', 'coursepack-template.zip')
 }
 
 function openImport() {
@@ -625,7 +625,7 @@ async function onFile(e) {
   zipBuf.value = buf
   saving.value = true
   try {
-    const res = await postZip('/api/teacher/courses/import/inspect', buf)
+    const res = await postZip('/api/courses/import/inspect', buf)
     report.value = res
   } catch (e2) {
     if (!e2.aborted) {
@@ -709,7 +709,7 @@ async function doApply(strategy) {
   packErrList.value = []
   try {
     const res = await postZip(
-      '/api/teacher/courses/import/apply?strategy=' + strategy + '&schemeMode=' + schemeMode.value,
+      '/api/courses/import/apply?strategy=' + strategy + '&schemeMode=' + schemeMode.value,
       zipBuf.value
     )
     applied.value = res.report
@@ -728,7 +728,7 @@ async function doApply(strategy) {
 async function toggleArchive(c) {
   if (!window.confirm((c.archived ? '取消归档' : '归档') + '「' + c.name + '」？归档只是不在默认列表里出现，数据都保留。')) return
   try {
-    await api.patch('/api/teacher/courses/' + encodeURIComponent(c.id), { archived: !c.archived })
+    await api.patch('/api/courses/' + encodeURIComponent(c.id), { archived: !c.archived })
     await load()
   } catch (e) {
     toast.value = e.message
@@ -738,14 +738,14 @@ async function toggleArchive(c) {
 async function exportPack(c, parts) {
   const want = Array.isArray(parts) ? parts : ['scheme', 'classes', 'content']
   const qs = want.length === 3 ? '' : '?parts=' + want.join(',')
-  const path = '/api/teacher/courses/' + encodeURIComponent(c.id) + '/package.zip' + qs
+  const path = '/api/courses/' + encodeURIComponent(c.id) + '/package.zip' + qs
   const token = getToken()
   try {
     // 先问服务端「这门课多大、有没有文件超限」——一次 stat，不打包
     let sum = null
     try {
       sum = await api.get(
-        '/api/teacher/courses/' +
+        '/api/courses/' +
           encodeURIComponent(c.id) +
           '/package/summary' +
           (want.length === 3 ? '' : '?parts=' + want.join(','))

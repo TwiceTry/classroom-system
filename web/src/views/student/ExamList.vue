@@ -69,7 +69,7 @@ async function load() {
   err.value = ''
   try {
     const res = await api.get('/api/student/assignments?itemKey=' + encodeURIComponent(props.itemKey))
-    list.value = res.assignments || []
+    list.value = res.items || []
   } catch (e) {
     err.value = e.message
   } finally {

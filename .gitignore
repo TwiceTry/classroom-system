@@ -50,3 +50,4 @@ _commit_msg.txt
 .playwright-cli/
 Thumbs.db
 .DS_Store
+.work/

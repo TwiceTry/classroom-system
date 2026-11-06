@@ -1,0 +1,180 @@
+/*
+ * app.js —— Fastify 装配
+ *
+ * 组装顺序：错误处理 → body parser（保留原始字节）→ 路由 → 静态资源 → SPA 回退。
+ * 把这个函数单独拿出来，是为了自检能 `buildApp()` 起一个进程内实例，
+ * 不用真的占端口。
+ */
+import fs from 'node:fs'
+import path from 'node:path'
+import Fastify from 'fastify'
+import fastifyStatic from '@fastify/static'
+import fastifyWebsocket from '@fastify/websocket'
+import { config } from './config.js'
+import { ApiError } from './lib/errors.js'
+
+import authRoutes from './routes/auth.js'
+import courseRoutes from './routes/courses.js'
+import classRoutes from './routes/classes.js'
+import eventRoutes from './routes/events.js'
+import realtimeRoutes from './routes/realtime.js'
+import miscRoutes from './routes/misc.js'
+import castRoutes from './routes/cast.js'
+import contentRoutes from './routes/content.js'
+import attendanceRoutes from './routes/attendance.js'
+import scoringRoutes from './routes/scoring.js'
+import assignmentRoutes from './routes/assignments.js'
+import examRoutes from './routes/exam.js'
+import compatRoutes from './routes/compat.js'
+import classroomRoutes from './routes/classroom.js'
+import contentEditRoutes from './routes/content-edit.js'
+import schemeEditRoutes from './routes/scheme-edit.js'
+import libraryRoutes from './routes/library.js'
+import coursepackRoutes from './routes/coursepack.js'
+
+export async function buildApp(opts = {}) {
+  const app = Fastify({
+    logger: opts.logger === undefined ? { level: process.env.TS_LOG_LEVEL || 'warn' } : opts.logger,
+    bodyLimit: 2 * 1024 * 1024, // 2MB：普通 JSON 接口够用；大文件走流式上传接口
+  })
+
+  /**
+   * JSON body：解析的同时把**原始字节**留下来。
+   * 边缘端上报要验 HMAC —— 签名是对原始字节算的，用重新序列化的对象验会永远对不上。
+   */
+  app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (req, body, done) => {
+    req.rawBodyBuffer = body
+    if (!body || !body.length) return done(null, {})
+    try {
+      done(null, JSON.parse(body.toString('utf8')))
+    } catch (e) {
+      done(new ApiError(400, 'bad_json', 'body 不是合法 JSON'))
+    }
+  })
+
+  /**
+   * 二进制 body（zip 包、图片上传）：原样收进 Buffer。
+   * 课程包导入、内容上传都走这条 —— 不能让 Fastify 当成 JSON 去解析。
+   */
+  app.addContentTypeParser(
+    ['application/zip', 'application/x-zip-compressed', 'application/octet-stream'],
+    { parseAs: 'buffer' },
+    (req, body, done) => {
+      req.rawBodyBuffer = body
+      done(null, body)
+    }
+  )
+
+  /** 统一错误体：{ error: { code, message, details } } */
+  app.setErrorHandler((err, req, reply) => {
+    const status = err.statusCode && err.statusCode >= 400 ? err.statusCode : 500
+    const isKnown = err instanceof ApiError || (err.statusCode && err.statusCode < 500)
+    if (!isKnown) req.log.error({ err }, '未捕获异常')
+    if (reply.sent) return
+    reply.status(status).send({
+      error: {
+        code: err.code || (status === 500 ? 'internal' : 'error'),
+        message: isKnown ? err.message : '服务器内部错误',
+        ...(err.details !== undefined ? { details: err.details } : {}),
+      },
+    })
+  })
+
+  /* ---------------- 业务路由 ---------------- */
+  await app.register(fastifyWebsocket) // 投屏中继 /ws 要先于 cast 路由注册
+  await app.register(miscRoutes)
+  await app.register(authRoutes)
+  await app.register(courseRoutes)
+  await app.register(classRoutes)
+  await app.register(eventRoutes)
+  await app.register(realtimeRoutes)
+  await app.register(castRoutes)
+  await app.register(contentRoutes)
+  await app.register(attendanceRoutes)
+  await app.register(scoringRoutes)
+  await app.register(assignmentRoutes)
+  await app.register(examRoutes)
+  await app.register(compatRoutes)
+  await app.register(classroomRoutes)
+  await app.register(contentEditRoutes)
+  await app.register(schemeEditRoutes)
+  await app.register(libraryRoutes)
+  await app.register(coursepackRoutes)
+
+  /* ---------------- 前端静态资源 + SPA 回退 ---------------- */
+  const hasWeb = fs.existsSync(path.join(config.webDist, 'index.html'))
+  const indexHtml = path.join(config.webDist, 'index.html')
+
+  /**
+   * 入口页：自己发，不走 static。
+   * 原因：`@fastify/static` 在 `index: false` 时对目录根 `/` 直接回 403
+   * （它认为「你在访问一个没有索引页的目录」），而且它是 `/*` 通配，
+   * 在 onRequest 里改 url 也拦不住（Fastify 5 的 req.url 还是只读的）。
+   * 静态路由 `/` 的优先级高于通配 `/*`，所以显式注册最稳。
+   *
+   * 顺带把 no-cache + ETag/304 一起给了：
+   * 重新构建后如果学生拿旧 HTML，会引用已删除的 hash 资源 → 白屏。
+   */
+  const serveIndex = (req, reply) => {
+    const st = fs.statSync(indexHtml)
+    const etag = 'W/"' + st.size.toString(16) + '-' + Math.floor(st.mtimeMs).toString(16) + '"'
+    const base = {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      'Last-Modified': st.mtime.toUTCString(),
+      ETag: etag,
+    }
+    const inm = String(req.headers['if-none-match'] || '').trim()
+    const ims = String(req.headers['if-modified-since'] || '').trim()
+    if (
+      (inm && inm.split(',').map((x) => x.trim()).indexOf(etag) >= 0) ||
+      (ims && ims === st.mtime.toUTCString())
+    ) {
+      return reply.status(304).headers(base).send()
+    }
+    return reply.status(200).headers(base).send(fs.createReadStream(indexHtml))
+  }
+
+  if (hasWeb) {
+    app.get('/', serveIndex)
+    await app.register(fastifyStatic, {
+      root: config.webDist,
+      prefix: '/',
+      index: false, // 入口页由上面的显式路由处理
+      setHeaders(res, filePath) {
+        // 带 hash 的产物可以长期缓存
+        if (filePath.includes(path.sep + 'assets' + path.sep)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+          return
+        }
+        // 入口页必须 no-cache（上面那条路由已经处理，这里是直连 /index.html 的情况）
+        if (path.basename(filePath) === 'index.html') {
+          res.setHeader('Cache-Control', 'no-cache')
+        }
+      },
+    })
+  }
+
+  app.setNotFoundHandler((req, reply) => {
+    if (req.url.startsWith('/api/')) {
+      return reply
+        .status(404)
+        .send({ error: { code: 'not_found', message: '接口不存在：' + req.method + ' ' + req.url } })
+    }
+    if (!hasWeb) {
+      return reply
+        .status(200)
+        .type('text/html; charset=utf-8')
+        .send(
+          '<!doctype html><meta charset="utf-8"><title>前端还没构建</title>' +
+            '<body style="font:16px/1.8 system-ui;padding:40px">' +
+            '<h2>前端还没构建</h2><p>在 <code>web</code> 目录执行：</p>' +
+            '<pre style="background:#f4f5f7;padding:12px;border-radius:8px">npm install\nnpm run build</pre></body>'
+        )
+    }
+    // SPA 路由（/teacher/classes 之类）：一律回入口页，交给前端路由
+    return serveIndex(req, reply)
+  })
+
+  return app
+}

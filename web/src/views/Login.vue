@@ -78,7 +78,7 @@ const courses = ref([])
 async function loadCourses() {
   try {
     const res = await api.get('/api/courses/public')
-    courses.value = res.courses || []
+    courses.value = res.items || []
     if (courses.value.length && !form.courseId) form.courseId = courses.value[0].id
   } catch (e) {
     courses.value = []
@@ -120,7 +120,7 @@ async function loginStudent() {
   busy.value = true
   err.value = ''
   try {
-    const res = await api.post('/api/login/student', {
+    const res = await api.post('/api/auth/login/student', {
       courseId: form.courseId,
       sid: form.sid,
       name: form.name,
@@ -139,7 +139,7 @@ async function loginTeacher() {
   busy.value = true
   err.value = ''
   try {
-    const res = await api.post('/api/login/teacher', { password: form.password })
+    const res = await api.post('/api/auth/login/teacher', { password: form.password })
     applyLogin(res)
     await refresh()
     router.replace(route.query.next || '/teacher/lecture')

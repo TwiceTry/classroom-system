@@ -48,7 +48,7 @@ export async function bootstrap() {
     return
   }
   try {
-    const me = await api.get('/api/me')
+    const me = await api.get('/api/auth/me')
     const data = await api.get('/api/bootstrap')
     state.role = me.role
     saveRole(me.role)
@@ -113,7 +113,7 @@ export function applyLogin(res) {
 
 export async function logout() {
   try {
-    await api.post('/api/logout')
+    await api.post('/api/auth/logout')
   } catch (e) {
     /* 尽力而为 */
   }

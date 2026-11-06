@@ -570,7 +570,7 @@ function onVisible() {
 async function loadPresence() {
   if (!activeId.value) return
   try {
-    presence.value = await api.get('/api/teacher/classes/' + activeId.value + '/presence')
+    presence.value = await api.get('/api/classes/' + activeId.value + '/presence')
   } catch (e) {
     /* 状态显示失败不打扰记分，等下一轮 */
   }
@@ -582,7 +582,7 @@ async function load() {
   if (!activeId.value) return
   error.value = ''
   try {
-    const res = await api.get('/api/teacher/classes/' + activeId.value + '/scores')
+    const res = await api.get('/api/classes/' + activeId.value + '/scores')
     // 服务端返回的 events 只有原始字段，摘要在这里按需算
     data.value = res
     loadPresence()
@@ -603,7 +603,7 @@ async function newClass() {
   const name = window.prompt('新班级名称：', '示例' + (classes.value.length + 1) + '班')
   if (name === null) return
   try {
-    const res = await api.post('/api/teacher/classes', { name })
+    const res = await api.post('/api/classes', { name })
     await refresh()
     switchClass(res.class.id)
     toast.value = '已新建班级：' + res.class.name
@@ -617,7 +617,7 @@ async function renameClass() {
   const name = window.prompt('新的班级名称：', active.value.name)
   if (!name || name === active.value.name) return
   try {
-    await api.patch('/api/teacher/classes/' + active.value.id, { name })
+    await api.patch('/api/classes/' + active.value.id, { name })
     await refresh()
     toast.value = '已改名'
   } catch (e) {
@@ -629,7 +629,7 @@ async function removeClass() {
   if (!active.value) return
   if (!window.confirm('删除「' + active.value.name + '」？该班的记分记录会一起删除，且不可恢复。')) return
   try {
-    await api.del('/api/teacher/classes/' + active.value.id)
+    await api.del('/api/classes/' + active.value.id)
     const gone = activeId.value
     await refresh()
     activeId.value = classes.value.length ? classes.value[0].id : ''
@@ -665,14 +665,14 @@ async function saveStudent() {
   error.value = ''
   try {
     if (editingStudent.value.isNew) {
-      const res = await api.post('/api/teacher/classes/' + activeId.value + '/roster', {
+      const res = await api.post('/api/classes/' + activeId.value + '/roster', {
         mode: 'merge',
         students: [{ sid: studentForm.sid, name: studentForm.name }],
       })
       toast.value = '已添加 ' + studentForm.name + '（本班 ' + res.total + ' 人）'
     } else {
       const res = await api.patch(
-        '/api/teacher/classes/' + activeId.value + '/students/' + encodeURIComponent(studentForm.origin),
+        '/api/classes/' + activeId.value + '/students/' + encodeURIComponent(studentForm.origin),
         { sid: studentForm.sid, name: studentForm.name }
       )
       toast.value = res.renamed ? '已把学号改成 ' + res.student.sid : '已更新 ' + res.student.name
@@ -692,7 +692,7 @@ async function removeStudent(stu) {
   if (!window.confirm('把 ' + stu.name + '（' + stu.sid + '）从名单里移除？\n\n他的记分记录与目录都会保留，只是不再出现在名单里。')) return
   error.value = ''
   try {
-    await api.del('/api/teacher/classes/' + activeId.value + '/students/' + encodeURIComponent(stu.sid))
+    await api.del('/api/classes/' + activeId.value + '/students/' + encodeURIComponent(stu.sid))
     toast.value = '已移除 ' + stu.name
     await refresh()
     await load()
@@ -735,7 +735,7 @@ function fmt(iso) {
 
 function exportCsv(kind) {
   if (!active.value) return
-  download('/api/teacher/classes/' + active.value.id + '/export?kind=' + kind)
+  download('/api/classes/' + active.value.id + '/export?kind=' + kind)
 }
 
 /* ---------------- 导入名单 ---------------- */
@@ -749,8 +749,8 @@ async function openIO() {
   cio.open = true
   courseName.value = courseId.value
   try {
-    const r = await api.get('/api/teacher/courses')
-    const hit = (r.courses || []).find((c) => c.id === courseId.value)
+    const r = await api.get('/api/courses')
+    const hit = (r.items || []).find((c) => c.id === courseId.value)
     if (hit) courseName.value = hit.name + (hit.semester ? ' · ' + hit.semester : '')
   } catch (e) {
     /* 取不到就用课程 id 显示，不影响导入导出 */
@@ -771,13 +771,13 @@ function closeIO() {
 
 function ioExport() {
   if (!courseId.value) return
-  download('/api/teacher/courses/' + encodeURIComponent(courseId.value) + '/classes.zip', 'classes.zip')
+  download('/api/courses/' + encodeURIComponent(courseId.value) + '/classes.zip', 'classes.zip')
   toast.value = '正在导出班级与名单…'
 }
 
 function ioTemplate() {
   if (!courseId.value) return
-  download('/api/teacher/courses/' + encodeURIComponent(courseId.value) + '/classes/template.zip', 'classes-template.zip')
+  download('/api/courses/' + encodeURIComponent(courseId.value) + '/classes/template.zip', 'classes-template.zip')
   toast.value = '模板已下载：填好各班名单，压缩成 zip 再导进来'
 }
 
@@ -790,7 +790,7 @@ async function ioFile(e) {
   cio.name = f.name
   try {
     ioBuf = await f.arrayBuffer()
-    const res = await fetch('/api/teacher/courses/' + encodeURIComponent(courseId.value) + '/classes/inspect', {
+    const res = await fetch('/api/courses/' + encodeURIComponent(courseId.value) + '/classes/inspect', {
       method: 'POST',
       headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, getToken() ? { Authorization: 'Bearer ' + getToken() } : {}),
       body: ioBuf,
@@ -812,7 +812,7 @@ async function ioApply() {
   cio.err = ''
   try {
     const res = await fetch(
-      '/api/teacher/courses/' + encodeURIComponent(courseId.value) + '/classes/apply?mode=' + cio.mode,
+      '/api/courses/' + encodeURIComponent(courseId.value) + '/classes/apply?mode=' + cio.mode,
       {
         method: 'POST',
         headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, getToken() ? { Authorization: 'Bearer ' + getToken() } : {}),
@@ -925,7 +925,7 @@ async function refreshReport() {
   checking.value = true
   importError.value = ''
   try {
-    report.value = await api.post('/api/teacher/classes/' + active.value.id + '/roster/inspect', {
+    report.value = await api.post('/api/classes/' + active.value.id + '/roster/inspect', {
       mode: importMode.value,
       students: parsed.value.map((s) => ({ sid: s.sid, name: s.name })),
     })
@@ -980,7 +980,7 @@ async function uploadSheet() {
 async function postSheet(apply) {
   const token = getToken()
   const url =
-    '/api/teacher/classes/' +
+    '/api/classes/' +
     active.value.id +
     '/roster/sheet?mode=' +
     importMode.value +
@@ -1027,7 +1027,7 @@ async function doImport() {
       mode: importMode.value,
       students: parsed.value.map((s) => ({ sid: s.sid, name: s.name })),
     }
-    const res = await api.post('/api/teacher/classes/' + active.value.id + '/roster/apply', body)
+    const res = await api.post('/api/classes/' + active.value.id + '/roster/apply', body)
     importing.value = false
     const bits = ['新增 ' + res.added + ' 人']
     if (res.updated) bits.push('改名 ' + res.updated + ' 人')

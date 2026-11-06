@@ -111,7 +111,7 @@ async function doExport() {
   busy.value = true
   try {
     download(
-      '/api/teacher/courses/' + encodeURIComponent(cid) + '/content.zip?dir=' + encodeURIComponent(props.dir),
+      '/api/courses/' + encodeURIComponent(cid) + '/content.zip?dir=' + encodeURIComponent(props.dir),
       props.dir + '.zip'
     )
     say('正在导出' + props.label + '…')
@@ -126,7 +126,7 @@ function doTemplate() {
   const cid = getCourse()
   if (!cid) return say('先选一门课')
   download(
-    '/api/teacher/courses/' + encodeURIComponent(cid) + '/content/template.zip?dir=' + encodeURIComponent(props.dir),
+    '/api/courses/' + encodeURIComponent(cid) + '/content/template.zip?dir=' + encodeURIComponent(props.dir),
     'template-' + props.dir + '.zip'
   )
   say('模板已下载：改完压缩成 zip 再导回来')
@@ -150,7 +150,7 @@ async function onFile(e) {
     zipBuf = await f.arrayBuffer()
     const token = localStorage.getItem('teach-system-token') || ''
     const res = await fetch(
-      '/api/teacher/courses/' + encodeURIComponent(cid) + '/content/inspect?dir=' + encodeURIComponent(props.dir),
+      '/api/courses/' + encodeURIComponent(cid) + '/content/inspect?dir=' + encodeURIComponent(props.dir),
       {
         method: 'POST',
         headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, token ? { Authorization: 'Bearer ' + token } : {}),
@@ -177,7 +177,7 @@ async function doApply() {
   try {
     const token = localStorage.getItem('teach-system-token') || ''
     const res = await fetch(
-      '/api/teacher/courses/' +
+      '/api/courses/' +
         encodeURIComponent(cid) +
         '/content/apply?dir=' +
         encodeURIComponent(props.dir) +

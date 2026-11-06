@@ -136,8 +136,8 @@ const classId = ref(currentClassId.value)
 
 async function loadClasses() {
   try {
-    const res = await api.get('/api/teacher/classes') // api.js 自动带 courseId
-    classes.value = res.classes || []
+    const res = await api.get('/api/classes') // api.js 自动带 courseId
+    classes.value = res.items || []
     const hit = classes.value.some((c) => c.id === classId.value)
     if (!hit) {
       const first = classes.value.length ? classes.value[0].id : ''
@@ -167,8 +167,8 @@ watch(courseId, (v) => {
 
 onMounted(async () => {
   try {
-    const res = await api.get('/api/teacher/courses')
-    courses.value = (res.courses || []).filter((c) => !c.archived)
+    const res = await api.get('/api/courses')
+    courses.value = (res.items || []).filter((c) => !c.archived)
     // 没选过（或选的课被删了）就落到第一门课
     if (!courseId.value && courses.value.length) {
       courseId.value = courses.value[0].id

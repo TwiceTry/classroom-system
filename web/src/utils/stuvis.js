@@ -58,7 +58,7 @@ export async function loadStuVis(courseId, force) {
   stuvis.loading = true
   stuvis.err = ''
   try {
-    const r = await api.get('/api/teacher/courses/' + encodeURIComponent(id) + '/stuvis')
+    const r = await api.get('/api/courses/' + encodeURIComponent(id) + '/stuvis')
     stuvis.hidden = r.hidden || []
     stuvis.modules = r.modules || []
     stuvis.loaded = true
@@ -76,7 +76,7 @@ export async function setStuVisHidden(list) {
   stuvis.hidden = [...new Set(list.map(String))]
   emit()
   try {
-    const r = await api.post('/api/teacher/courses/' + encodeURIComponent(stuvis.courseId) + '/stuvis', {
+    const r = await api.post('/api/courses/' + encodeURIComponent(stuvis.courseId) + '/stuvis', {
       hidden: stuvis.hidden,
     })
     stuvis.hidden = r.hidden || stuvis.hidden

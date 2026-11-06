@@ -1,0 +1,24 @@
+{
+  "name": "teach-system-api",
+  "private": true,
+  "version": "1.0.0",
+  "description": "课堂系统后端（Fastify + SQLite）",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "db:schema": "node src/db/migrate.js",
+    "db:from-csv": "node src/db/import-csv.js",
+    "db:check": "node src/db/import-csv.js --check",
+    "test": "node src/test/selftest.js"
+  },
+  "dependencies": {
+    "@fastify/static": "^8.0.3",
+    "@fastify/websocket": "^11.0.1",
+    "better-sqlite3": "^11.5.0",
+    "fastify": "^5.1.0"
+  }
+}

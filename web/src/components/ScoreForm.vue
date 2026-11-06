@@ -260,7 +260,7 @@ async function submit() {
   busy.value = true
   try {
     // 写操作由本组件自己发起：错误提示就在表单里，不用绕回父组件
-    const res = await api.post('/api/teacher/classes/' + props.classId + '/events', payload)
+    const res = await api.post('/api/classes/' + props.classId + '/events', payload)
     emit('done', res)
   } catch (e2) {
     err.value = e2.message

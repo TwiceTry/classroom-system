@@ -191,7 +191,7 @@ function clock(iso) {
 }
 
 function url(suffix) {
-  return '/api/teacher/classes/' + encodeURIComponent(activeId.value) + suffix
+  return '/api/classes/' + encodeURIComponent(activeId.value) + suffix
 }
 
 function withItem(path) {
@@ -200,8 +200,8 @@ function withItem(path) {
 }
 
 async function loadClasses() {
-  const res = await api.get('/api/teacher/classes')
-  classes.value = res.classes || []
+  const res = await api.get('/api/classes')
+  classes.value = res.items || []
   if (currentClassId.value && classes.value.some((c) => c.id === currentClassId.value)) {
     activeId.value = currentClassId.value
   }

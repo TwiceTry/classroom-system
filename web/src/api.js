@@ -62,6 +62,27 @@ function withStatus(err, status) {
   return err
 }
 
+/**
+ * 从错误响应里取一句人话。
+ * 后端两代格式都要认：
+ *   · 旧版：{ "error": "班级不存在" }            ← error 是字符串
+ *   · 新版：{ "error": { "code", "message" } }   ← error 是对象
+ * 直接把对象塞给 new Error() 会变成「[object Object]」——
+ * 那会让所有报错都失去信息，所以这里必须分开处理。
+ */
+function errorMessage(data, status) {
+  const e = data && data.error
+  if (typeof e === 'string' && e) return e
+  if (e && typeof e === 'object') return e.message || e.code || '请求失败（' + status + '）'
+  return '请求失败（' + status + '）'
+}
+
+/** 稳定的错误码（新版有 code，旧版没有） */
+function errorCode(data) {
+  const e = data && data.error
+  return e && typeof e === 'object' && e.code ? e.code : ''
+}
+
 async function request(path, opts) {
   const o = opts || {}
   const headers = Object.assign({}, o.headers || {})
@@ -87,7 +108,13 @@ async function request(path, opts) {
 
   const data = await res.json()
   if (res.status === 401 && unauthorized.handler) unauthorized.handler()
-  if (!res.ok) throw withStatus(new Error(data.error || '请求失败（' + res.status + '）'), res.status)
+  if (!res.ok) {
+    const err = withStatus(new Error(errorMessage(data, res.status)), res.status)
+    const code = errorCode(data)
+    if (code) err.code = code
+    if (data && data.error && typeof data.error === 'object' && data.error.details) err.details = data.error.details
+    throw err
+  }
   return data
 }
 
@@ -110,8 +137,7 @@ export function openDoc(path) {
       if (!res.ok) {
         let msg = '打开失败（' + res.status + '）'
         try {
-          const j = await res.json()
-          if (j && j.error) msg = j.error
+          msg = errorMessage(await res.json(), res.status)
         } catch (e) {
           /* 不是 JSON 就算了 */
         }

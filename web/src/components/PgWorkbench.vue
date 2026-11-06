@@ -433,7 +433,7 @@ const syncTitle = computed(() =>
 )
 
 function syncUrl() {
-  return '/api/teacher/classes/' + encodeURIComponent(syncClassId.value) + '/pg-sync'
+  return '/api/classes/' + encodeURIComponent(syncClassId.value) + '/pg-sync'
 }
 
 function publishSync() {

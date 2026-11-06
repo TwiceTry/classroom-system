@@ -254,8 +254,8 @@ async function loadAll() {
   err.value = ''
   try {
     await loadScheme()
-    const res = await api.get('/api/teacher/assignments?itemKey=' + encodeURIComponent(props.itemKey))
-    list.value = res.assignments || []
+    const res = await api.get('/api/assignments?itemKey=' + encodeURIComponent(props.itemKey))
+    list.value = res.items || []
     if (!curId.value) {
       const openOne = list.value.filter((a) => a.status === 'open')
       curId.value = (openOne.length ? openOne[openOne.length - 1] : list.value[list.value.length - 1] || {}).id || ''
@@ -272,7 +272,7 @@ async function loadAll() {
 async function loadDetail(quiet) {
   if (!curId.value) return
   try {
-    d.value = await api.get('/api/teacher/exams/' + encodeURIComponent(curId.value))
+    d.value = await api.get('/api/exams/' + encodeURIComponent(curId.value))
   } catch (e) {
     if (!quiet) err.value = e.message
   }
@@ -281,14 +281,14 @@ async function loadDetail(quiet) {
 /** 打开排好版的卷子（HTML，A4 打印版）：answers=true 是答案卷 */
 function openPaper(answers) {
   if (!curId.value) return
-  openDoc('/api/teacher/exams/' + encodeURIComponent(curId.value) + '/paper-file/html' + (answers ? '?answers=1' : ''))
+  openDoc('/api/exams/' + encodeURIComponent(curId.value) + '/paper-file/html' + (answers ? '?answers=1' : ''))
 }
 
 /** 打开某个学生的答卷（判完才有） */
 function openSheet(submissionId) {
   if (!curId.value) return
   openDoc(
-    '/api/teacher/exams/' + encodeURIComponent(curId.value) + '/submissions/' + encodeURIComponent(submissionId) + '/paper-file/html'
+    '/api/exams/' + encodeURIComponent(curId.value) + '/submissions/' + encodeURIComponent(submissionId) + '/paper-file/html'
   )
 }
 
@@ -308,7 +308,7 @@ function openEditor() {
 async function create() {
   saving.value = true
   try {
-    const res = await api.post('/api/teacher/assignments', {
+    const res = await api.post('/api/assignments', {
       itemKey: props.itemKey,
       title: form.title,
       note: form.note,
@@ -331,7 +331,7 @@ async function onFile(e) {
   try {
     const text = await file.text()
     const source = JSON.parse(text)
-    const res = await api.post('/api/teacher/exams/' + encodeURIComponent(curId.value) + '/paper', { source })
+    const res = await api.post('/api/exams/' + encodeURIComponent(curId.value) + '/paper', { source })
     await loadDetail()
     toast.value = '导入成功：' + res.summary.title + '（' + res.summary.fullScore + ' 分' + (res.warnings && res.warnings.length ? '，有提示见控制台' : '') + '）'
     if (res.warnings && res.warnings.length) console.warn('[exam] 导入提示：', res.warnings)
@@ -344,7 +344,7 @@ async function start() {
   if (!d.value) return
   if (!window.confirm('开始考试？学生端立刻能开考并开始计时。')) return
   try {
-    const res = await api.post('/api/teacher/assignments/' + encodeURIComponent(curId.value) + '/start')
+    const res = await api.post('/api/assignments/' + encodeURIComponent(curId.value) + '/start')
     toast.value = res.delivered ? '已开始，' + res.delivered + ' 个学生端已收到' : '已开始'
     await loadAll()
   } catch (e) {
@@ -356,7 +356,7 @@ async function stop() {
   if (!d.value) return
   if (!window.confirm('结束这场机试？结束后学生不能再作答（已交的照样能判）。')) return
   try {
-    await api.post('/api/teacher/assignments/' + encodeURIComponent(curId.value) + '/stop')
+    await api.post('/api/assignments/' + encodeURIComponent(curId.value) + '/stop')
     toast.value = '已结束'
     await loadAll()
   } catch (e) {
@@ -368,7 +368,7 @@ async function remove() {
   if (!d.value) return
   if (!window.confirm('删除这场机试？连同学生答卷一起删。')) return
   try {
-    await api.del('/api/teacher/assignments/' + encodeURIComponent(curId.value))
+    await api.del('/api/assignments/' + encodeURIComponent(curId.value))
     curId.value = ''
     d.value = null
     await loadAll()
@@ -386,7 +386,7 @@ async function open(r) {
   comment.value = r.comment || ''
   try {
     const res = await api.get(
-      '/api/teacher/exams/' + encodeURIComponent(curId.value) + '/submissions/' + encodeURIComponent(r.submissionId)
+      '/api/exams/' + encodeURIComponent(curId.value) + '/submissions/' + encodeURIComponent(r.submissionId)
     )
     detail.paper = res.paper
     detail.answers = res.answers || {}
@@ -409,7 +409,7 @@ async function saveGrade() {
   saving.value = true
   try {
     const res = await api.post(
-      '/api/teacher/exams/' + encodeURIComponent(curId.value) + '/submissions/' + encodeURIComponent(viewing.value.submissionId) + '/grade',
+      '/api/exams/' + encodeURIComponent(curId.value) + '/submissions/' + encodeURIComponent(viewing.value.submissionId) + '/grade',
       { scores: Object.assign({}, manual), comment: comment.value }
     )
     detail.graded = res.graded

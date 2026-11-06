@@ -1,0 +1,346 @@
+/*
+ * routes/compat.js —— 前端已经在用、但重组时按资源重新命名了的那些接口
+ *
+ * 这里的目的不是「保留旧 API」，而是让**现有前端在 S4 适配前也能跑**：
+ * 每个接口都用新后端的数据（SQLite + 新 repo），只是路径/形状与旧版保持一致。
+ * S4 改完前端后，这个文件可以整体删掉（也可以留着当兼容层）。
+ */
+import fs from 'node:fs'
+import path from 'node:path'
+import { requireAuth } from '../plugins/auth.js'
+import { fromRequest } from '../lib/auth.js'
+import { ApiError, badRequest, notFound, forbidden } from '../lib/errors.js'
+import * as repo from '../lib/repo.js'
+import * as store from '../lib/submitstore.js'
+import { scoring, scheme, withCourseScheme } from '../lib/scheme.js'
+import { content } from '../lib/legacy.js'
+import { contentRootOf } from './courses.js'
+import { broadcast } from './cast.js'
+
+/** 讲义跟随：同一时刻只跟一个位置（一个老师在讲课，全班只看一处） */
+let followState = null
+
+/** 当前点名聚焦（存在 state 表的 spot:<班级>） */
+function liveSpot(classId) {
+  return repo.getState('spot:' + classId, null)
+}
+
+/** 课程内容根（课程不存在就 404） */
+function rootOfCourseId(courseId) {
+  const c = courseId ? repo.getCourse(courseId) : null
+  if (!c) throw notFound('课程不存在：' + courseId)
+  return { course: c, root: contentRootOf(c) }
+}
+
+export default async function compatRoutes(app) {
+  /* ---------------- 公开信息（登录页要用） ---------------- */
+
+  /** 登录页的课程下拉：只给名字和人数，不泄露任何学生信息 */
+  app.get('/api/courses/public', async () => ({
+    courses: repo
+      .listCourses()
+      .filter((c) => !c.archived)
+      .map((c) => {
+        const classes = repo.listClasses(c.id)
+        return {
+          id: c.id,
+          name: c.name,
+          classes: classes.length,
+          students: classes.reduce((n, x) => n + repo.rosterOf(x.id).length, 0),
+        }
+      }),
+  }))
+
+  /** 当前课程 + 课次清单（公开，可缓存） */
+  app.get('/api/public/course', async (req, reply) => {
+    const q = req.query.courseId ? String(req.query.courseId) : ''
+    const course = q ? repo.getCourse(q) : repo.listCourses().find((c) => !c.archived) || null
+    const body = {
+      course: course ? { id: course.id, name: course.name } : null,
+      lessons: course
+        ? content.listLessons(contentRootOf(course)).map((x) => ({
+            id: x.id,
+            no: x.no,
+            title: x.title,
+            kind: x.kind,
+            hasLecture: !!x.lecture,
+            hasMaterials: !!x.materials,
+          }))
+        : [],
+    }
+    reply.header('Cache-Control', 'public, max-age=60')
+    return body
+  })
+
+  /* ---------------- 内容：课次清单 / 文档正文 ---------------- */
+
+  /** 课次清单（讲义/材料都有哪些章节） */
+  app.get('/api/content/lessons', { preHandler: requireAuth() }, async (req) => {
+    const course = req.query.courseId
+      ? repo.getCourse(String(req.query.courseId))
+      : repo.listCourses().find((c) => !c.archived) || null
+    if (!course) return { lessons: [] }
+    return {
+      lessons: content.listLessons(contentRootOf(course)).map((x) => ({
+        id: x.id,
+        no: x.no,
+        title: x.title,
+        kind: x.kind,
+        hasLecture: !!x.lecture,
+        hasMaterials: !!x.materials,
+      })),
+    }
+  })
+
+  /** 一篇文档的正文：?type=materials|lecture&id=第01课 */
+  app.get('/api/content/doc', async (req) => {
+    const type = String(req.query.type || '') === 'lecture' ? 'lecture' : 'materials'
+    const id = String(req.query.id || '')
+    if (!id) throw badRequest('缺少 id')
+
+    const t = fromRequest(req.raw)
+    if (type === 'lecture' && (!t || t.role !== 'teacher')) throw forbidden('讲义仅教师可见')
+
+    const courseId = String(req.query.courseId || '')
+    const { course, root } = rootOfCourseId(courseId || (repo.listCourses().find((c) => !c.archived) || {}).id)
+
+    const doc = content.getDoc(type, id, root)
+    if (!doc) throw notFound('没有这篇文档')
+    // 正文里的 ../assets/… 换成能直接打开的地址
+    if (doc.markdown) doc.markdown = content.rewriteAssets(doc.markdown, course.id)
+    return doc
+  })
+
+  /* ---------------- 代码示例 ---------------- */
+
+  app.get('/api/examples', { preHandler: requireAuth() }, async (req) => {
+    const course = req.query.courseId
+      ? repo.getCourse(String(req.query.courseId))
+      : repo.listCourses().find((c) => !c.archived) || null
+    if (!course) return { examples: [], dirs: [] }
+    const root = contentRootOf(course)
+    const list = content.listExamples(root).map((x) => ({
+      dir: x.dir,
+      title: x.title,
+      no: x.no,
+      fileCount: x.fileCount,
+    }))
+    return { examples: list, dirs: list }
+  })
+
+  /* ---------------- 学生成绩（只有他自己） ---------------- */
+
+  app.get('/api/student/score', { preHandler: requireAuth('student') }, async (req) => {
+    const t = req.user
+    const cls = repo.getClass(t.classId)
+    if (!cls) throw notFound('班级不存在')
+    const course = cls.courseId ? repo.getCourse(cls.courseId) : null
+    const events = repo.eventsOf(cls.id, { limit: 1000, sid: t.sid }).items
+    return withCourseScheme(course, () => {
+      const result = scoring.computeStudent(events, t.sid)
+      return {
+        student: { sid: t.sid, name: t.name, className: cls.name, classId: cls.id },
+        items: scheme.items().map((it) => ({
+          key: it.key,
+          name: it.name,
+          short: it.short,
+          full: it.full,
+          hint: it.hint,
+          extra: !!it.extra,
+        })),
+        rows: result.rows.map((row) => ({
+          key: row.item.key,
+          name: row.item.name,
+          full: row.item.full,
+          extra: !!row.item.extra,
+          score: row.score,
+          events: row.events
+            .slice()
+            .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+            .map((e) => ({
+              id: e.id,
+              summary: scoring.eventSummary(e),
+              reason: e.reason,
+              createdAt: e.createdAt,
+              voided: !!e.voided,
+            })),
+        })),
+        total: result.total,
+        base: result.base,
+        extra: result.extra,
+        capped: result.capped,
+      }
+    })
+  })
+
+  /* ---------------- 点名聚焦（教师抽人、学生看我被点了吗） ---------------- */
+
+  app.get('/api/spotlight', { preHandler: requireAuth() }, async (req) => {
+    const t = req.user
+    if (!t.classId) return { spotlight: null }
+    return { spotlight: liveSpot(t.classId) }
+  })
+
+  /* ---------------- 讲义跟随 ---------------- */
+
+  app.post('/api/teacher/follow', {
+    preHandler: requireAuth('teacher'),
+    schema: {
+      body: {
+        type: 'object',
+        required: ['lessonId', 'anchor'],
+        properties: {
+          lessonId: { type: 'string' },
+          anchor: { type: 'string' },
+          sectionTitle: { type: 'string', maxLength: 80 },
+          courseId: { type: 'string' },
+        },
+      },
+    },
+    handler: async (req) => {
+      followState = {
+        lessonId: String(req.body.lessonId),
+        anchor: String(req.body.anchor),
+        sectionTitle: String(req.body.sectionTitle || '').slice(0, 80),
+        courseId: String(req.body.courseId || ''),
+        at: Date.now(),
+      }
+      const delivered = broadcast(Object.assign({ t: 'follow' }, followState))
+      return { ok: true, delivered, follow: followState }
+    },
+  })
+
+  app.get('/api/follow', { preHandler: requireAuth() }, async () => followState || { lessonId: '', anchor: '', sectionTitle: '', at: 0 })
+
+  /* ---------------- 附件下载 ---------------- */
+
+  /** 教师下载学生交的附件（学生只能下自己的） */
+  app.get('/api/files/assignments/:aid/:sid/:name', { preHandler: requireAuth() }, async (req, reply) => {
+    const t = req.user
+    const a = repo.getAssignment(req.params.aid)
+    if (!a) throw notFound('作业不存在')
+    const sid = String(req.params.sid)
+    if (t.role === 'student' && (sid !== t.sid || a.courseId)) {
+      // 学生只允许下自己的；而且必须真的交过
+      const own = repo.findSubmission(a.id, t.sid)
+      if (!own) throw forbidden('你没有交这份作业')
+    }
+    const sub = repo.findSubmission(a.id, sid)
+    if (!sub) throw notFound('没有这份提交')
+    const full = store.filePathOf(a.kind, sub.classId, sid, a.id, req.params.name)
+    if (!full) throw notFound('文件不存在')
+    const st = fs.statSync(full)
+    return reply
+      .status(200)
+      .headers({
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': st.size,
+        'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent(path.basename(full)),
+      })
+      .send(fs.createReadStream(full))
+  })
+
+  /* ---------------- 重构中暂未开放的（明确告知，别让前端白屏） ---------------- */
+
+  const NOT_YET = (what) => async () => {
+    throw new ApiError(501, 'not_implemented', what + '：重构中暂未开放（旧后端 server/ 仍在，可回滚使用）')
+  }
+
+  // 方案编辑（inspect / preview / apply / export.json）已在 routes/scheme-edit.js 真实实现
+  app.get('/api/compat', async () => {
+    const { compat } = await import('../lib/legacy.js')
+    return compat ? compat.info() : { minChrome: 109, bundles: [], contact: '' }
+  })
+  app.post('/api/teacher/upload', { preHandler: requireAuth('teacher') }, NOT_YET('图片上传'))
+  app.post('/api/pgsync', { preHandler: requireAuth() }, NOT_YET('代码工作台同步'))
+
+  /* ---------------- 附件下载（旧路径别名） ---------------- */
+
+  const sendStudentFile = async (req, reply, kind) => {
+    const t = req.user
+    const a = repo.getAssignment(req.params.aid)
+    if (!a) throw notFound('作业不存在')
+    const sid = String(req.params.sid)
+    if (t.role === 'student' && sid !== t.sid) throw forbidden('只能看自己的')
+    const sub = repo.findSubmission(a.id, sid)
+    if (!sub) throw notFound('没有这份提交')
+    const full = store.filePathOf(kind || a.kind, sub.classId, sid, a.id, req.params.name)
+    if (!full) throw notFound('文件不存在')
+    const st = fs.statSync(full)
+    return reply
+      .status(200)
+      .headers({
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': st.size,
+        'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent(path.basename(full)),
+      })
+      .send(fs.createReadStream(full))
+  }
+
+  app.get('/api/files/project/:aid/:sid/:name', { preHandler: requireAuth() }, (req, reply) => sendStudentFile(req, reply, 'project'))
+  app.get('/api/files/evidence/:aid/:sid/:name', { preHandler: requireAuth() }, (req, reply) => sendStudentFile(req, reply, null))
+
+  /** 讲义里的图片：?courseId=&path=lecture/img/a.png（讲义仅教师） */
+  app.get('/api/content/asset', async (req, reply) => {
+    const t = fromRequest(req.raw)
+    const rel = String(req.query.path || '')
+    if (!rel) throw badRequest('缺少 path')
+    if (rel.replace(/\\/g, '/').split('/')[0] === 'lecture' && (!t || t.role !== 'teacher')) {
+      throw forbidden('讲义仅教师可见')
+    }
+    const courseId = String(req.query.courseId || '')
+    const { root } = rootOfCourseId(courseId || (repo.listCourses().find((c) => !c.archived) || {}).id)
+    const clean = rel.replace(/\\/g, '/').replace(/^\/+/, '')
+    const full = path.resolve(root, clean)
+    const base = path.resolve(root)
+    if (full !== base && !full.startsWith(base + path.sep)) throw badRequest('路径越界')
+    if (!fs.existsSync(full) || !fs.statSync(full).isFile()) throw notFound('文件不存在')
+    const st = fs.statSync(full)
+    const ext = path.extname(full).toLowerCase()
+    const MIME = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp',
+      '.svg': 'image/svg+xml',
+      '.pdf': 'application/pdf',
+      '.mp4': 'video/mp4',
+    }
+    return reply
+      .status(200)
+      .headers({
+        'Content-Type': MIME[ext] || 'application/octet-stream',
+        'Content-Length': st.size,
+        'Cache-Control': 'private, max-age=300',
+      })
+      .send(fs.createReadStream(full))
+  })
+
+  /* ---------------- 大作业详情（前端用旧路径） ---------------- */
+
+  /** 大作业提交：与 /api/student/assignments/:id/submit 同一套逻辑（只是旧路径） */
+  app.post('/api/student/projects/:id/submit', { preHandler: requireAuth('student') }, async (req, reply) => {
+    const r = await app.inject({
+      method: 'POST',
+      url: '/api/student/assignments/' + encodeURIComponent(req.params.id) + '/submit',
+      headers: { authorization: String(req.headers.authorization || '') },
+      payload: req.body || {},
+    })
+    reply.status(r.statusCode)
+    return r.body ? JSON.parse(r.body) : {}
+  })
+
+  app.get('/api/student/projects/:id', { preHandler: requireAuth('student') }, async (req) => {
+    const t = req.user
+    const a = repo.getAssignment(req.params.id)
+    if (!a) throw notFound('作业不存在')
+    if (a.status !== 'open' && !repo.findSubmission(a.id, t.sid)) throw forbidden('这次大作业还没开放')
+    const mine = repo.findSubmission(a.id, t.sid)
+    return {
+      assignment: a,
+      mySubmission: mine || null,
+      files: mine && a.kind !== 'project' ? store.readTextFiles(a.kind, mine.classId, mine.sid, a.id, mine.files) : [],
+    }
+  })
+}
