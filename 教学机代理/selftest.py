@@ -287,6 +287,25 @@ def c_upstream(cfg, args, c):
 
 
 def c_cache(cfg, args, c):
+    # ---- 先验一条反例：API 绝不能被缓存 ----
+    # 以前 cache_policy 里「最后一段没有扩展名 → 当成 SPA 入口页」这条规则会把
+    # /api/classes、/api/state 这类路径也一起缓存 300 秒，而 need_revalidate 又把
+    # /api/ 排除在外（过期后连 ETag 都不问）。后果是老师刚加的名单、刚给的分，
+    # 学生端要等 5 分钟才看到。这里用公开的 /api/health 兜住这条底线。
+    for api in ('/api/health', '/api/classes'):
+        try:
+            s1, _, _, h1 = http(cfg['base'] + api, timeout=20, with_headers=True)
+            s2, _, _, h2 = http(cfg['base'] + api, timeout=20, with_headers=True)
+        except Exception as e:
+            c.note('取 %s 失败（%s），跳过这条' % (api, e))
+            continue
+        x2 = (h2.get('X-Cache') or '-').upper()
+        if x2 == 'HIT':
+            c.bad('%s 被代理缓存了（X-Cache: HIT）—— 接口不能走缓存' % api)
+            c.note('改 lan-proxy.py 的 cache_policy：/api/ 要落到「不缓存」那条')
+            return c.done(False, 'API 被缓存了，老师改完数据学生端要等 5 分钟')
+        c.ok('%s 不缓存（%s / X-Cache=%s）' % (api, s1, x2))
+
     path = '/examples/vue3-sfc-loader.js'
     st1, b1, ms1, h1 = http(cfg['base'] + path, timeout=60, with_headers=True)
     if st1 != 200:
@@ -321,12 +340,35 @@ def c_cast(cfg, args, c):
     ctl = None
     watcher = None
     try:
+        # hello 的字段必须和前端一致（照 web/src 抄）：
+        #   screencast.js  ctl     → { t:'hello', token }                    （不带 cid）
+        #   Watch.vue      student → { t:'hello', cid, w, h, ua, token }     （必须带 cid）
+        #   ctl 连上后还要发一条 { t:'mode', mode:'watch' }，否则不进入推流状态。
+        # 以前这里 watcher 没带 cid、ctl 反而带了（还是课程 id），
+        # 服务端把学生当成「没有班级的观众」→ peers 一直是 0 → 帧不转发。
+        cid = ''
+        try:
+            st, buf, _ = http(cfg['base'] + '/api/classes',
+                              headers={'Authorization': 'Bearer ' + teacher})
+            if st == 200:
+                body = json.loads(buf.decode('utf-8')) or {}
+                arr = body.get('items') or body.get('classes') or []
+                if arr:
+                    cid = arr[0].get('id') or ''
+        except Exception:
+            pass
+
         watcher = Ws(cfg['host'], cfg['port'], '/ws?role=student')
-        watcher.send_json({'t': 'hello', 'token': student})
+        watcher.send_json({'t': 'hello', 'cid': cid, 'w': 1280, 'h': 720,
+                           'ua': 'selftest', 'token': student})
         ctl = Ws(cfg['host'], cfg['port'], '/ws?role=ctl')
-        ctl.send_json({'t': 'hello', 'token': teacher, 'cid': 'web-front-dev'})
+        ctl.send_json({'t': 'hello', 'token': teacher})
+        ctl.send_json({'t': 'mode', 'mode': 'watch'})
         peers = ctl.wait_text('students', 8)
-        c.ok('教师端连上，服务器说 %s 人在看' % (peers.get('students') if peers else '?'))
+        n = peers.get('students') if peers else '?'
+        c.ok('教师端连上，服务器说 %s 人在看' % n)
+        if n in (0, '?', None):
+            c.note('peers 仍是 %s：检查学生令牌是否有效、cid=%s 是否为真实班级' % (n, cid or '(空)'))
 
         payload = os.urandom(64 * 1024)
         frame = bytearray(16 + len(payload))
@@ -395,17 +437,21 @@ def c_presence(cfg, args, c):
             return c.done(False, '代理不是边缘端模式？')
 
         # 2) 教师端查在线名单（数据来自服务端，代理原样转发）
-        st, buf, _ = http(cfg['base'] + '/api/teacher/classes',
+        # 路径与返回结构都对过：/api/classes 返回 {items:[...]}，
+        # 在场名单在 /api/classes/:id/presence。
+        # （旧写法是 /api/teacher/classes + {classes:[...]}，后端重构后这两个都变了。）
+        st, buf, _ = http(cfg['base'] + '/api/classes',
                           headers={'Authorization': 'Bearer ' + args.teacher_token})
         if st != 200:
             c.bad('教师端拿不到班级列表（%s）' % st)
             return c.done(False, '教师令牌不对？')
-        classes = (json.loads(buf.decode('utf-8')) or {}).get('classes') or []
+        body = json.loads(buf.decode('utf-8')) or {}
+        classes = body.get('items') or body.get('classes') or []
         if not classes:
             c.bad('没有班级')
             return c.done(False, '没有班级数据')
         cid = classes[0]['id']
-        st, buf, _ = http(cfg['base'] + '/api/teacher/classes/%s/presence' % cid,
+        st, buf, _ = http(cfg['base'] + '/api/classes/%s/presence' % cid,
                           headers={'Authorization': 'Bearer ' + args.teacher_token})
         if st != 200:
             c.bad('拿不到在场名单（%s）' % st)
@@ -503,21 +549,50 @@ def login(base, password, sid, name, course):
     否则代理的上游通道和本地观看会被服务端互相踢掉。
     """
     teacher = ''
-    st, buf, _ = http(base + '/api/login/teacher', 'POST', {'password': password})
+    # 后端把登录路径挪到了 /api/auth/ 下（旧的 /api/login/teacher 现在 404）。
+    # 这个自检一度因此永远报「教师登录失败」，后两项（投屏 / 在场）连带全部跳过。
+    st, buf, _ = http(base + '/api/auth/login/teacher', 'POST', {'password': password})
     if st == 200:
         teacher = (json.loads(buf.decode('utf-8')) or {}).get('token') or ''
-    # 服务端校验「学号 + 姓名」的配对，所以要用真实名单里的组合
-    # （--sid / --name 指定的那个排第一，其余用同班的学生补齐）
-    roster = [
-        (sid, name),
-        ('2515270101', '王志博'),
-        ('2515270102', '杜非凡'),
-        ('2515270103', '张铱星'),
-        ('2515270104', '尹康'),
-    ]
+    # 服务端校验「学号 + 姓名」的配对，所以必须用**真实名单里**的组合。
+    # 以前这里硬编码了几个学号/姓名，名单一变（或换了课程）就全部登录失败，
+    # 而投屏 / 在场两项会因此一起跳过 —— 自检等于没跑。
+    # 现在：先问服务端拿当前班级的真实名单，拿不到才退回 --sid/--name。
+    roster = []
+    try:
+        st, buf, _ = http(base + '/api/classes',
+                          headers={'Authorization': 'Bearer ' + teacher})
+        if st == 200:
+            body = json.loads(buf.decode('utf-8')) or {}
+            arr = body.get('items') or body.get('classes') or []
+            if arr:
+                cid0 = arr[0].get('id')
+                # 名单接口是 /students（不是 /roster —— 那个现在 404）。
+                # 写错时 roster 取空，只能退回同一个默认学生，
+                # 于是「3 个连接只记 1 人」—— 其实代理没错，是这三条连接是同一个人。
+                st2, buf2, _ = http(base + '/api/classes/%s/students' % cid0,
+                                    headers={'Authorization': 'Bearer ' + teacher})
+                if st2 == 200:
+                    rb = json.loads(buf2.decode('utf-8')) or {}
+                    for it in (rb.get('items') or []):
+                        if it.get('sid') and it.get('name'):
+                            roster.append((it['sid'], it['name']))
+                        if len(roster) >= 4:
+                            break
+    except Exception:
+        pass
+
+    if not roster:
+        roster = [(sid, name)]
+    else:
+        # --sid/--name 指定的那个排最前（如果确实在名单里）
+        if (sid, name) in roster:
+            roster.remove((sid, name))
+            roster.insert(0, (sid, name))
+
     students = []
     for s, n in roster:
-        st, buf, _ = http(base + '/api/login/student', 'POST',
+        st, buf, _ = http(base + '/api/auth/login/student', 'POST',
                           {'sid': s, 'name': n, 'courseId': course})
         if st == 200:
             students.append((json.loads(buf.decode('utf-8')) or {}).get('token') or '')

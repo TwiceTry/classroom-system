@@ -18,6 +18,7 @@ import { scoring, withCourseScheme } from '../lib/scheme.js'
 import * as content from '../lib/content.js'
 import { contentRootOf } from './courses.js'
 import { broadcast } from './cast.js'
+import { findBundle, kindOf, info as compatInfo } from '../lib/compat.js'
 
 /** 讲义跟随：同一时刻只跟一个位置（一个老师在讲课，全班只看一处） */
 let followState = null
@@ -449,6 +450,81 @@ export default async function compatRoutes(app) {
     return fs.createReadStream(full)
   })
 
+  /**
+   * 兜底页要的兼容信息：有没有本地绿色版、多大、叫什么、下完怎么用。
+   *
+   * 这个路由**也一直没有注册** —— 前端 `index.html` 里 `fetch('/api/compat')`
+   * 一直是 404（`.catch(function(){})` 把它吃掉了，所以没人发现）。
+   * 后果：按钮 href 退回写死的 /download/chrome109（能用），
+   * 但「· 85MB」和「文件名核对」这些提示拿不到；
+   * 更麻烦的是 `available=false` 那种「服务器上没包，请找老师索取」的提示也不会出现。
+   *
+   * 必须免登录：兜底页出现在登录之前，也出现在浏览器连框架都跑不起来的时候。
+   */
+  app.get('/api/compat', async () => compatInfo())
+
+  /**
+   * 绿色版 Chrome 的下载口 —— 兜底页那个「下载 Chrome」按钮指向这里。
+   *
+   * 之前这个路由**根本不存在**：`compat.info()` 返回 `downloadUrl:'/download/chrome109'`，
+   * 但没有对应的 handler，请求落到 SPA 兜底 → 返回 index.html（Content-Type: text/html）。
+   * 于是老师点「下载」，下来的是一张网页。
+   * 而兜底页恰恰是「浏览器太旧」时才出现的 —— 那种浏览器对「下回来的是 HTML」
+   * 只会显示一团源码，这条救命通道一直是断的。
+   *
+   * 不登录也能下（兜底页出现在登录之前）；支持 Range（85MB 的文件，下载工具会分段取）。
+   */
+  app.get('/download/chrome109', async (req, reply) => {
+    const file = findBundle()
+    if (!file) throw notFound('服务器上没有放绿色版浏览器，请向任课老师索取')
+
+    const st = fs.statSync(file)
+    const name = path.basename(file)
+    const ext = path.extname(file).toLowerCase()
+    const meta = kindOf(file)
+    const TYPE = {
+      '.exe': 'application/vnd.microsoft.portable-executable',
+      '.zip': 'application/zip',
+      '.7z': 'application/x-7z-compressed',
+    }
+    const headers = {
+      'Content-Type': TYPE[ext] || 'application/octet-stream',
+      'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent(name),
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'no-cache',
+      'X-Bundle-Kind': meta.kind,
+      'X-Bundle-Tip': encodeURIComponent(meta.tip),
+    }
+
+    const range = String(req.headers.range || '').trim()
+    const m = range ? /^bytes=(\d*)-(\d*)$/.exec(range) : null
+    if (m) {
+      let start = m[1] === '' ? null : Number(m[1])
+      let end = m[2] === '' ? null : Number(m[2])
+      if (start === null && end === null) throw badRequest('Range 格式不对')
+      if (start === null) {
+        // bytes=-N → 最后 N 字节
+        start = Math.max(0, st.size - end)
+        end = st.size - 1
+      } else if (end === null || end >= st.size) {
+        end = st.size - 1
+      }
+      if (start > end || start >= st.size) {
+        return reply.code(416).header('Content-Range', 'bytes */' + st.size).send()
+      }
+      return reply
+        .code(206)
+        .headers({
+          ...headers,
+          'Content-Range': 'bytes ' + start + '-' + end + '/' + st.size,
+          'Content-Length': end - start + 1,
+        })
+        .send(fs.createReadStream(file, { start, end }))
+    }
+
+    return reply.code(200).headers({ ...headers, 'Content-Length': st.size }).send(fs.createReadStream(file))
+  })
+
   /** 讲义里的图片：?courseId=&path=lecture/img/a.png（讲义仅教师） */
   app.get('/api/content/asset', async (req, reply) => {
     const t = fromRequest(req.raw)
@@ -457,7 +533,12 @@ export default async function compatRoutes(app) {
     if (rel.replace(/\\/g, '/').split('/')[0] === 'lecture' && (!t || t.role !== 'teacher')) {
       throw forbidden('讲义仅教师可见')
     }
-    const courseId = String(req.query.courseId || '')
+    /*
+     * 两个参数名都认：前端（MdView / 材料页）拼的是 `?course=xxx`，
+     * 早先这里只读 `courseId` —— 于是永远走下面那个「取第一门未归档课程」的兜底。
+     * 只有一门课时看不出问题；一旦有第二门课，材料里的图就会指向错误的课程。
+     */
+    const courseId = String(req.query.courseId || req.query.course || '')
     const { root } = rootOfCourseId(courseId || (repo.listCourses().find((c) => !c.archived) || {}).id)
     const clean = rel.replace(/\\/g, '/').replace(/^\/+/, '')
     const full = path.resolve(root, clean)

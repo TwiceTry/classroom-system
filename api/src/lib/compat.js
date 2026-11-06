@@ -20,14 +20,26 @@ import fs from 'fs'
 import path from 'path'
 import { config } from '../config.js'
 
+/*
+ * 应用根目录（仓库根）。
+ *
+ * 这里原本写的是 `config.appDir` —— 但 config 里**没有这个字段**
+ * （只有 dataDir / uploadDir / webDist / courseDir）。
+ * `path.join(undefined, 'downloads')` 会直接抛 ERR_INVALID_ARG_TYPE，
+ * 于是 findBundle() 一调就崩、readCfg() 也在构造候选路径时崩，
+ * 整个 /api/compat 和绿色版下载都拿不到东西。
+ * 用 dataDir 的上一级推——它就是应用根。
+ */
+const APP_DIR = path.dirname(config.dataDir)
+
 const BUNDLE_NAMES = ['chrome109.zip', 'chrome109.7z', 'chrome109.exe']
 /** 带版本号的便携版：Chrome-109.0.5414.168-x64-1.15.2-Win7.exe */
 const BUNDLE_RE = /^chrome[-_ ]?109[\w.\-]*\.(exe|zip|7z)$/i
 
 function readCfg() {
   const cands = [
-    path.join(config.appDir, 'web', 'dist', 'compat.json'),
-    path.join(config.appDir, 'web', 'public', 'compat.json'),
+    path.join(APP_DIR, 'web', 'dist', 'compat.json'),
+    path.join(APP_DIR, 'web', 'public', 'compat.json'),
   ]
   for (const f of cands) {
     try {
@@ -49,7 +61,7 @@ function isFile(p) {
 
 /** 找到绿色版文件（绝对路径；找不到返回 ''） */
 function findBundle() {
-  const dir = path.join(config.appDir, 'downloads')
+  const dir = path.join(APP_DIR, 'downloads')
   for (const name of BUNDLE_NAMES) {
     const f = path.join(dir, name)
     if (isFile(f)) return f

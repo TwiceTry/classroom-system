@@ -111,6 +111,45 @@ for (const dir of ['lecture', 'materials', '代码示例', 'exams', 'assets']) {
   )
 }
 
+/*
+ * 绿色版浏览器：兜底页那两条链路曾经都是断的。
+ *   /api/compat          从没注册过 → fetch 404（catch 吃掉，没人发现）
+ *   /download/chrome109  没有 handler → 落到 SPA 兜底，返回一张 HTML
+ * 而兜底页恰恰只在「浏览器太旧」时出现，下回来一个网页等于没有救命通道。
+ */
+{
+  const r = await fetch(BASE + '/api/compat')
+  const j = r.status === 200 ? await r.json() : null
+  ok(
+    '/api/compat 免登录可用',
+    !!j && typeof j.minChrome === 'number' && typeof j.downloadUrl === 'string',
+    r.status + ' · minChrome=' + (j && j.minChrome) + ' · available=' + (j && j.available)
+  )
+
+  // 服务器上放了包才验下载；没放也不该 500
+  if (j && j.available) {
+    const dl = await fetch(BASE + '/download/chrome109')
+    const buf = Buffer.from(await dl.arrayBuffer())
+    const ct = dl.headers.get('content-type') || ''
+    const size = Number(dl.headers.get('content-length') || 0)
+    const isExe = buf[0] === 0x4d && buf[1] === 0x5a // MZ
+    const isZip = buf[0] === 0x50 && buf[1] === 0x4b
+    ok(
+      '绿色版下载是真文件（不是 SPA 兜底页）',
+      dl.status === 200 && (isExe || isZip) && ct.indexOf('text/html') === -1 && size > 1024 * 1024,
+      dl.status + ' · ' + (size / 1048576).toFixed(1) + 'MB · ' + ct.split(';')[0] + ' · MZ=' + isExe
+    )
+
+    // Range：85MB 的文件，下载工具会分段取
+    const rg = await fetch(BASE + '/download/chrome109', { headers: { range: 'bytes=0-1023' } })
+    const rbuf = Buffer.from(await rg.arrayBuffer())
+    const cr = rg.headers.get('content-range') || ''
+    ok('绿色版支持 Range（断点续传）', rg.status === 206 && rbuf.length === 1024 && /^bytes 0-1023\//.test(cr), rg.status + ' · ' + cr)
+  } else {
+    console.log('  SKIP  绿色版下载（服务器上没放包）')
+  }
+}
+
 console.log('\n=== 3. 各类模板 ===')
 for (const [label, url] of [
   ['课程包模板', '/api/courses/template.zip'],

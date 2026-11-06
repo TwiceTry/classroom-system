@@ -34,6 +34,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import select
 import socket
 import ssl
@@ -42,7 +43,7 @@ import threading
 import time
 from http.client import HTTPConnection, HTTPSConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, quote
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONF_NAME = 'proxy.conf'
@@ -178,6 +179,48 @@ POOL_IDLE = int(float(conf_get('upstream.poolidle', '3')))
 # 免得 40 个学生 = 40 条长连接把弱网（随身 WiFi）打爆。
 # 代理会把「谁在场」按本地名单改写后再给教师端，所以名单依然是准的。
 CA_FILE = conf_get('tls.cafile', '') or ''
+
+# ---------------- 本地绿色版浏览器（可选）----------------
+# 学生在兜底页点「下载 Chrome」时，如果代理本地就有这个包，直接局域网给出去，
+# 不出公网 —— 85MB 走公网既慢又费流量，几十个学生同时点更受不了。
+#
+# 放哪儿：优先 proxy.conf 的 browser.file；没配就在这几个地方自动找
+#   1) 代理目录本身
+#   2) 代理目录的上一级 downloads/（就是系统自带的那个 downloads/）
+BROWSER_URL = '/download/chrome109'
+BROWSER_RE = re.compile(r'^chrome[-_ ]?109[\w.\-]*\.(exe|zip|7z)$', re.I)
+BROWSER_TYPES = {
+    '.exe': 'application/vnd.microsoft.portable-executable',
+    '.zip': 'application/zip',
+    '.7z': 'application/x-7z-compressed',
+}
+
+
+def find_browser_bundle():
+    """找本地那份绿色版浏览器，返回绝对路径；没有就返回 ''"""
+    want = str(conf_get('browser.file', '') or '').strip()
+    if want:
+        p = want if os.path.isabs(want) else os.path.join(HERE, want)
+        if os.path.isfile(p):
+            return p
+    dirs = [HERE, os.path.join(os.path.dirname(HERE), 'downloads')]
+    for d in dirs:
+        if not os.path.isdir(d):
+            continue
+        for name in ('chrome109.exe', 'chrome109.zip', 'chrome109.7z'):
+            f = os.path.join(d, name)
+            if os.path.isfile(f):
+                return f
+        try:
+            for name in sorted(os.listdir(d)):
+                if BROWSER_RE.match(name) and os.path.isfile(os.path.join(d, name)):
+                    return os.path.join(d, name)
+        except OSError:
+            pass
+    return ''
+
+
+BROWSER_BUNDLE = find_browser_bundle()
 VERBOSE = 'verbose' in ARGS or as_bool(conf_get('log.verbose'), False)
 QUIET = 'quiet' in ARGS or as_bool(conf_get('log.quiet'), False)
 REWRITE = 'no-redirect-rewrite' not in ARGS
@@ -266,10 +309,20 @@ CACHE = CacheStore(CACHE_MAX_BYTES, CACHE_MAX_ENTRIES)
 
 def cache_policy(path):
     """这个路径能不能缓存、缓存多久、给浏览器什么 Cache-Control
-    返回 (ttl 秒, 浏览器缓存秒数)；ttl=0 表示不缓存"""
+    返回 (ttl 秒, 浏览器缓存秒数)；ttl=0 表示不缓存
+
+    顺序很重要：**先判具体可缓存的接口，最后再用 `/api/` 兜底不缓存**。
+    以前 SPA 分支写的是「最后一段没有扩展名 → 当成入口页缓存 300 秒」，
+    而 `/api/classes`、`/api/state`、`/api/classes/x/export` 全都无扩展名，
+    于是 API 响应被缓存 5 分钟；更糟的是 need_revalidate 把 `/api/` 排除在外，
+    缓存过期后连 ETag 都不问一次 —— 老师刚加的名单 / 刚给的分，学生端要等 5 分钟。
+    """
     p = (path or '').split('?')[0]
-    if p.startswith('/assets/'):
-        # 文件名带内容哈希 → 内容变了就换名，可以永久缓存
+
+    # ---- 可以缓存的静态资源 ----
+    if p.startswith('/assets/') or p.startswith('/api/assets/'):
+        # /assets/     构建产物，文件名带内容哈希
+        # /api/assets/ 课程素材（免登录），由内容目录提供，极少变
         return TTL_ASSETS, TTL_ASSETS
     if p.startswith('/vendor/') or p == '/favicon.svg':
         return TTL_STATIC, TTL_STATIC
@@ -277,9 +330,25 @@ def cache_policy(path):
         # 示例运行时库（名字不带哈希，但极少变）
         return TTL_STATIC, TTL_STATIC
     if p.startswith('/api/content/asset'):
-        # 讲义里的图片
+        # 讲义 / 材料里的图片
         return TTL_STATIC, TTL_STATIC
-    # SPA 的任何路由（/student/materials、/teacher/lecture…）返回的都是同一个入口页：
+
+    # ---- 可以缓存的内容接口（要放在 /api/ 兜底之前）----
+    if p.startswith('/api/content/doc'):
+        # 课程材料（学生讲义）是公开内容 → 可缓存；讲义（教师讲稿）明确不缓存
+        if 'type=lecture' in (path or ''):
+            return 0, 0
+        return TTL_CONTENT, TTL_CONTENT
+
+    # ---- 其它一律不缓存 ----
+    if p.startswith('/api/') or p.startswith('/download/'):
+        # 记分、名单、导出的 xlsx、状态、投屏控制…… 都是实时数据。
+        # 缓存它们只会让老师看到的和实际对不上，且这些请求量很小（几十个学生偶尔一次），
+        # 省不出什么流量，不值得冒这个险。
+        return 0, 0
+
+    # ---- SPA 路由兜底 ----
+    # /student/materials、/teacher/lecture… 返回的都是同一个入口页，
     # 内容只在重新构建时变（引用的 js/css 都带哈希）。
     # 不缓存的话每个学生开页都要出公网拉一次 —— 40 个学生 = 40 条并发连接，
     # 弱网（随身 WiFi）上会被连接跟踪表打爆。
@@ -289,11 +358,6 @@ def cache_policy(path):
         # 代理侧缓存（省得每个学生都出公网），但**不给浏览器长缓存**：
         # 浏览器每次都回来问一句，走本地几毫秒；真正的新旧由代理按上游 ETag 判定。
         return TTL_HTML, 0
-    if p.startswith('/api/content/doc'):
-        # 课程材料（学生讲义）是公开内容 → 可缓存；讲义（教师讲稿）明确不缓存
-        if 'type=lecture' in (path or ''):
-            return 0, 0
-        return TTL_CONTENT, TTL_CONTENT
     return 0, 0
 
 if not CONF_FOUND:
@@ -873,7 +937,8 @@ class Handler(BaseHTTPRequestHandler):
             return 0, 0
         p = (self.path or '').split('?')[0]
         last = p.rsplit('/', 1)[-1]
-        # SPA 的任何路由（/student/materials、/teacher/lecture、/watch…）都是同一个入口页
+        # 只有「SPA 入口页」需要定期回上游验 ETag（前端一重建，旧 hash 资源就没了，
+        # 拿旧 HTML 会白屏）。/api/ 现在一律不缓存（见 cache_policy），这里只是双保险。
         self.need_revalidate = ('.' not in last) and not p.startswith('/api/')
         return cache_policy(self.path)
 
@@ -972,11 +1037,74 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(entry['body'])
 
     # ---------- 主流程 ----------
+    def serve_local_bundle(self):
+        """本地绿色版浏览器直出：支持 Range（85MB，下载工具会分段取），不进内存缓存"""
+        p = BROWSER_BUNDLE
+        try:
+            size = os.path.getsize(p)
+        except OSError:
+            self.fail_page(502, '本地浏览器包读不到：%s' % p)
+            return
+
+        name = os.path.basename(p)
+        ext = os.path.splitext(name)[1].lower()
+        start, end, status = 0, size - 1, 200
+        rng = (self.headers.get('Range') or '').strip()
+        m = re.match(r'bytes=(\d*)-(\d*)$', rng) if rng.startswith('bytes=') else None
+        if m:
+            if m.group(1) == '' and m.group(2):
+                start = max(0, size - int(m.group(2)))
+            elif m.group(1):
+                start = int(m.group(1))
+                if m.group(2):
+                    end = min(int(m.group(2)), size - 1)
+            if start > end or start >= size:
+                self.send_response(416)
+                self.send_header('Content-Range', 'bytes */%d' % size)
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                return
+            status = 206
+
+        self.send_response(status)
+        self.send_header('Content-Type', BROWSER_TYPES.get(ext, 'application/octet-stream'))
+        self.send_header('Content-Disposition', "attachment; filename*=UTF-8''" + quote(name))
+        self.send_header('Accept-Ranges', 'bytes')
+        self.send_header('Content-Length', str(end - start + 1))
+        self.send_header('Cache-Control', 'no-cache')
+        self.send_header('X-Browser-Bundle', 'local')   # 一眼看出是代理本地给的，没出公网
+        if status == 206:
+            self.send_header('Content-Range', 'bytes %d-%d/%d' % (start, end, size))
+        self.end_headers()
+
+        if self.command == 'HEAD':
+            return
+        log('本地包 %s：%s %d-%d / %d' % (name, self.client_address[0], start, end, size))
+        try:
+            with open(p, 'rb') as f:
+                f.seek(start)
+                left = end - start + 1
+                while left > 0:
+                    chunk = f.read(min(256 * 1024, left))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
     def proxy_request(self):
         upgrade = (self.headers.get('Upgrade') or '').lower()
         if upgrade:
             self.handle_upgrade()
             return
+
+        # 代理本地放着绿色版浏览器时，直接从局域网给出去 —— 85MB 不出公网，
+        # 几十个学生同时点也不会把上行打满。
+        if BROWSER_BUNDLE and self.command in ('GET', 'HEAD'):
+            if self.path.split('?')[0] == BROWSER_URL:
+                self.serve_local_bundle()
+                return
 
         # 缓存：命中就直接回，不出公网
         ttl, browser_ttl = self.cacheable()
@@ -1662,10 +1790,15 @@ def open_upstream_ws(path):
 
 
 def verify_student(token):
-    """用上游的 /api/me 校验学生令牌，拿身份（classId:sid）。
+    """用上游的 /api/auth/me 校验学生令牌，拿身份（classId:sid）。
 
     代理是局域网里的「门」，不能让任何人都白看投屏 —— 所以本地学生连接
     也要过一道身份校验（一次小请求，只在连接时做一次）。
+
+    **这里曾经调 /api/me —— 后端重构后那个路径已经不存在（404），
+    于是校验永远返回 None，学生一连投屏就被回「观看投屏需要先用学号登录」。
+    表现是「代理投屏完全不可用」，但直连服务器却正常 —— 极难查。
+    现在后端是 /api/auth/me，返回 {role:'student', student:{sid,name,classId}}。
     """
     try:
         raw = connect_out(UP.host, UP.port, 5)
@@ -1677,12 +1810,12 @@ def verify_student(token):
             conn = HTTPConnection(UP.host, UP.port, timeout=5)
             conn.sock = raw
         conn.auto_open = False
-        conn.request('GET', '/api/me', headers={'Authorization': 'Bearer ' + token})
+        conn.request('GET', '/api/auth/me', headers={'Authorization': 'Bearer ' + token})
         resp = conn.getresponse()
         data = resp.read()
         conn.close()
         if resp.status != 200:
-            verbose('校验学生令牌：/api/me 返回 %d · %s' % (
+            verbose('校验学生令牌：/api/auth/me 返回 %d · %s' % (
                 resp.status, data[:160].decode('utf-8', 'replace').replace('\n', ' ')))
             verbose('  校验用的上游：%s' % ('%s://%s:%s%s' % (
                 UP.scheme, UP.host, UP.port, UP.base_path)))
@@ -2011,6 +2144,18 @@ def print_banner():
     print('  页面/接口 → %s' % UP.raw)
     print('  实时流量（/ws、/api/cast…）→ 同样走公网（课堂系统只部署在公网）')
     print('  边缘端：大流量走本地缓存；实时状态（在场/在看）聚合成快照上云')
+    if BROWSER_BUNDLE:
+        try:
+            _mb = os.path.getsize(BROWSER_BUNDLE) / 1048576.0
+        except OSError:
+            _mb = 0
+        print('  浏览器包：本地有（%.0f MB · %s）' % (_mb, os.path.basename(BROWSER_BUNDLE)))
+        print('            学生点「下载 Chrome」直接从本机出，不出公网')
+    else:
+        print('  浏览器包：本地没有 —— 会转发到上游（85MB 走公网）')
+        print('            想让它本地出：把 Chrome 109 绿色版放进代理目录，')
+        print('            或在本文件同级的 proxy.conf 里写 browser.file = 路径')
+
     if FANOUT_ENABLED:
         print('  投屏扇出：开（投屏帧公网只 1 份，本地再分给每个学生）')
     else:
