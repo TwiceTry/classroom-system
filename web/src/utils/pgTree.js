@@ -257,3 +257,17 @@ export function buildTree(files) {
   }
   return { groups: out, byPath }
 }
+
+/**
+ * 一组里「默认显示」哪些文件。
+ *
+ * 默认把「页面」和「这一组的入口文件」藏起来 —— 它们已经显示在组标题上了；
+ * 但一组里如果只有入口（补充课的 q1.js 那种），不能把整组压成空。
+ *
+ * 这条规则文件树和 openGroup 都要用，所以放这里，别在组件里各写一份。
+ */
+export function visibleItemsOf(g, showAll) {
+  if (showAll) return g.items
+  const vis = g.items.filter((it) => it.role !== 'page' && it.path !== g.entry)
+  return vis.length ? vis : g.items.filter((it) => it.role !== 'page')
+}

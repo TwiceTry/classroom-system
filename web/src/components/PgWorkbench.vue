@@ -54,54 +54,24 @@
       <div v-if="!bundle" class="card empty">正在读取示例清单…</div>
 
       <div v-else class="work" :class="['dir-' + layout, { nocode: codeHidden }]">
-        <aside class="files">
-          <div class="files-head">
-            <span class="mono ellip">{{ dirLabel }}</span>
-            <label class="eye" title="连页面和入口文件一起显示">
-              <input v-model="showAll" type="checkbox" @change="saveShowAll" /> 全部
-            </label>
-          </div>
-          <div class="treescroll">
-            <div v-for="(g, gi) in tree.groups" :key="gi" class="grp">
-              <button
-                v-if="g.kind === 'page'"
-                class="ghead"
-                :class="{ on: g.page === page }"
-                :title="g.page"
-                @click="openGroup(g)"
-              >
-                <span v-if="visibleItems(g).length" class="caret" @click.stop="toggleGroup(gi)">{{ closed[gi] ? '▸' : '▾' }}</span>
-                <span v-else class="caret none"></span>
-                <FileIcon :path="g.page" :size="15" />
-                <span class="ellip">{{ shortPage(g.page) }}</span>
-                <span v-if="groupDirty(g)" class="dot"></span>
-              </button>
-              <div v-else class="ghead static">
-                <span class="ellip">{{ g.kind === 'shared' ? '多页共用' : '未被页面引用' }} · {{ g.items.length }}</span>
-              </div>
-
-              <template v-if="!closed[gi]">
-                <button
-                  v-for="it in visibleItems(g)"
-                  :key="it.path"
-                  class="item"
-                  :class="{ on: it.path === activeFile }"
-                  :title="it.path"
-                  @click="openFile(it.path)"
-                >
-                  <FileIcon :path="it.path" :size="15" />
-                  <span class="ellip">{{ shortName(g, it.path) }}</span>
-                  <span v-if="isDirty(it.path)" class="dot"></span>
-                </button>
-              </template>
-            </div>
-          </div>
-          <div class="files-foot" :title="footTitle">
-            <span class="dot" :class="{ off: !dirtyCount, fail: storeFail }"></span>
-            <span class="ellip">{{ footText }}</span>
-            <button v-if="dirtyCount" class="linkbtn" title="清掉本机记住的改动，回到原始示例" @click="clearSaved">清空</button>
-          </div>
-        </aside>
+        <PgFileTree
+          :dir-label="dirLabel"
+          :tree="tree"
+          :page="page"
+          :active-file="activeFile"
+          :closed="closed"
+          v-model:show-all="showAll"
+          :bundle="bundle"
+          :edits="edits"
+          :dirty-count="dirtyCount"
+          :store-fail="storeFail"
+          :foot-text="footText"
+          :foot-title="footTitle"
+          @open-group="openGroup"
+          @open-file="openFile"
+          @toggle-group="toggleGroup"
+          @clear-saved="clearSaved"
+        />
 
         <div class="stack">
         <section v-show="!codeHidden" class="editor" :style="{ flexBasis: codePct + '%' }">
@@ -124,82 +94,24 @@
           @pointerdown="startDrag"
         ></div>
 
-        <section class="preview">
-          <div class="ed-head">
-            <FileIcon :path="page" :size="14" />
-            <span class="mono ellip">{{ page || '（选一个页面）' }}</span>
-            <span class="spacer"></span>
-            <span v-if="npmPage" class="tag warn">npm 工程</span>
-            <span v-else-if="running" class="tag ok">已渲染</span>
-            <a
-              v-if="page"
-              :href="'/examples/' + encodeURI(dir) + '/' + page"
-              target="_blank"
-              rel="noopener"
-              class="btn mini"
-            >
-              新窗口
-            </a>
-          </div>
-
-          <div v-if="npmPage" class="npmcard">
-            <div class="npmicon">⚙</div>
-            <h3>这一课是 npm 工程，浏览器里预览不了</h3>
-            <p>
-              它的入口是 <code>{{ npmEntry }}</code>，代码靠 Vite 打包、裸模块（<code>vue</code> /
-              <code>vue-router</code> / <code>pinia</code>）由 node_modules 解析。
-              这里没有打包器，也没有 node_modules，所以给不出画面——不是坏了。
-            </p>
-            <ol>
-              <li>在<code>代码示例/{{ bundle.dir }}</code> 里打开终端</li>
-              <li><code>npm install</code>（第一次，要联网）</li>
-              <li><code>npm run dev</code>，照着终端给的地址打开</li>
-            </ol>
-            <p class="dim">左边的源码仍然可以看、可以改，改完在真实工程里对照。</p>
-          </div>
-
-          <template v-else>
-            <iframe ref="frame" class="frame" title="preview" @load="onFrameLoad"></iframe>
-            <div v-if="pageErrors.length" class="perr">
-              <div class="perr-head">
-                <span class="perr-badge" :class="{ soft: !codeErrors.length }">{{ pageErrors.length }}</span>
-                <b>页面报错</b>
-                <span class="dim">改完会自动重跑；有行号的能点「跳到第 N 行」</span>
-                <span class="spacer"></span>
-                <button class="perr-mini" title="把全部报错复制到剪贴板" @click="copyErrors">{{ copied ? '已复制' : '复制' }}</button>
-                <button class="perr-mini" @click="clearErrors">清空</button>
-                <button class="perr-x" title="收起报错" @click="clearErrors">×</button>
-              </div>
-              <ol class="perr-list">
-                <li v-for="e in codeErrors" :key="e.id" :class="'k-' + e.kind">
-                  <div class="perr-line">
-                    <span class="perr-tag">{{ kindLabel(e) }}</span>
-                    <span class="perr-msg">{{ e.msg }}</span>
-                    <button v-if="e.line" class="perr-jump" @click="jumpToError(e)">
-                      跳到第 {{ e.line }} 行
-                    </button>
-                  </div>
-                  <div v-if="e.loc" class="perr-loc">{{ e.loc }}</div>
-                  <pre v-if="e.frames.length" class="perr-stack">{{ e.frames.join('\n') }}</pre>
-                </li>
-                <li v-if="resErrors.length" class="res-sum">
-                  <button class="perr-jump" @click="resOpen = !resOpen">
-                    {{ resOpen ? '收起' : '展开' }} {{ resErrors.length }} 个资源加载失败
-                  </button>
-                  <span class="dim">（多半是示例图片路径，不影响代码；点开可看具体是哪个文件）</span>
-                </li>
-                <template v-if="resOpen">
-                  <li v-for="e in resErrors" :key="e.id" :class="'k-' + e.kind">
-                    <div class="perr-line">
-                      <span class="perr-tag">{{ kindLabel(e) }}</span>
-                      <span class="perr-msg">{{ e.msg }}</span>
-                    </div>
-                  </li>
-                </template>
-              </ol>
-            </div>
-          </template>
-        </section>
+        <PgPreview
+          ref="previewRef"
+          :page="page"
+          :dir="dir"
+          :npm-page="!!npmPage"
+          :npm-entry="npmEntry"
+          :running="running"
+          :page-errors="pageErrors"
+          :code-errors="codeErrors"
+          :res-errors="resErrors"
+          v-model:res-open="resOpen"
+          :copied="copied"
+          :kind-label="kindLabel"
+          @load="onFrameLoad"
+          @copy="copyErrors"
+          @clear="clearErrors"
+          @jump="jumpToError"
+        />
         </div>
       </div>
     </div>
@@ -220,12 +132,19 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { api } from '../api'
-import { buildTree, isPage as isPagePath, baseOf } from '../utils/pgTree'
+import { buildTree, isPage as isPagePath, baseOf, visibleItemsOf } from '../utils/pgTree'
 import { createEditor, langNameFor } from '../utils/pgEditor'
 import { buildPreviewDoc, ensureSfcSrcdoc, isNpmProject } from '../utils/pgPreview'
+import { usePgLayout } from '../composables/usePgLayout'
+import { usePgStore } from '../composables/usePgStore'
+import { usePgPreview } from '../composables/usePgPreview'
+import { usePgEditor } from '../composables/usePgEditor'
+import { usePgSync } from '../composables/usePgSync'
 import { state } from '../store'
 import { currentClassId } from '../utils/classSel'
 import { onPresenceMessage } from '../utils/presence'
+import PgFileTree from './pg/PgFileTree.vue'
+import PgPreview from './pg/PgPreview.vue'
 import DirIO from './DirIO.vue'
 import PageHead from './PageHead.vue'
 import FileIcon from './FileIcon.vue'
@@ -256,24 +175,12 @@ const edits = reactive({})
 const autoRun = ref(true)
 const error = ref('')
 const running = ref(false)
-const pageErrors = ref([]) // 预览里的报错：一条一个对象 { id, kind, name, msg, loc, line, file, frames }
-const copied = ref(false) // 「复制」按钮的短暂回执
-let pageErrSeq = 0
-let copyTimer = null
-const caret = reactive({ line: 1, col: 1 })
 const closed = reactive({})
 const showAll = ref(localStorage.getItem('pg-showall') === '1')
 const fontPx = ref(Number(localStorage.getItem('pg-font') || 13))
 const cmHost = ref(null)
 const frame = ref(null)
 
-/*
- * 预览区的滚动位置：srcdoc 一换，iframe 等于重新加载，滚动必然回到顶部。
- * 自动运行是「改一下就重跑」的，所以必须在重载后把位置放回去 ——
- * 只有换页面 / 换课时才从头开始（那是真的换内容了）。
- */
-let pendingScroll = null
-let lastRunPage = ''
 
 /*
  * 工作区排版：
@@ -284,358 +191,35 @@ let lastRunPage = ''
  * 这三个值**故意不记忆**：学生把分栏拖乱了、或者拖成不认识的布局时，
  * 刷新一下页面就回到默认（左右排 · 代码 60% · 代码可见），不用教怎么拖回来。
  */
-/* 老版本把这三项存在本机，现在不记了：进页面顺手清掉，免得旧值留在那儿 */
-const LEGACY_KEYS = ['pg-layout', 'pg-code-pct', 'pg-code-hidden']
-
-/* 挡位少一点：20% 一挡，20 / 40 / 60 / 80 四档 */
-const PCT_MIN = 20
-const PCT_MAX = 80
-const PCT_STEP = 20
-
-function clampPct(v) {
-  const n = Number(v)
-  if (!isFinite(n)) return 40
-  return Math.max(PCT_MIN, Math.min(PCT_MAX, Math.round(n / PCT_STEP) * PCT_STEP))
-}
-
-// 上课是「看代码」为主：默认代码块比预览宽一点（60 / 40），学生那边同样
-const DEFAULT_PCT = 60
-const layout = ref('row') // 默认左右排
-const codePct = ref(DEFAULT_PCT) // 默认 60%
-const codeHidden = ref(false) // 默认显示代码
-
-/* 什么都不存：刷新即回默认（学生拖乱了靠刷新复位） */
-function persistLayout() {
-  /* 故意留空 */
-}
-
-/** 清掉老版本留下的三个键（只跑一次，失败无所谓） */
-function clearLegacyLayout() {
-  try {
-    LEGACY_KEYS.forEach((k) => localStorage.removeItem(k))
-  } catch (e) {
-    /* 隐私模式忽略 */
-  }
-}
-
-function toggleLayout() {
-  layout.value = layout.value === 'row' ? 'col' : 'row'
-  persistLayout()
-  nextTick(() => requestMeasure())
-}
-
-function toggleCode() {
-  codeHidden.value = !codeHidden.value
-  persistLayout()
-  nextTick(() => requestMeasure())
-}
-
-/** CodeMirror 在容器尺寸变化后要重新量一次，否则会出现「滚动区高度不对 / 空白」 */
-function requestMeasure() {
-  if (ed.value && ed.value.view) ed.value.view.requestMeasure()
-}
-
-/** 拖动分栏：只在指针移动时按挡位取整，松手才落盘 */
 /*
- * 拖动分栏条（三档行为，全靠横向位移判断）：
- *   代码收起 —— 往右拖 40px 以上：把代码块拉回来
- *   竖排     —— 往左拖 60px 以上：回左右排（「拖到最大变竖排」因此可逆）
- *   左右排   —— 按 20% 一挡改宽度；拖到最宽转竖排，拖到最窄收起
+ * 分栏排版（左右/上下、代码占比、代码收不收起）全在 composables/usePgLayout.js，
+ * 这里只把编辑器实例递过去 —— CodeMirror 尺寸变了要重新量。
  */
-function startDrag(e) {
-  e.preventDefault()
-  const el = e.currentTarget
-  const stackEl = el && el.parentElement
-  if (!stackEl) return
-
-  /*
-   * 状态完全由「指针在代码区的横向位置」推导，而不是由「走了多少像素」推导：
-   *   < 8%   → 收起代码块
-   *   > 88%  → 竖排（横着已经放不下了）
-   *   中间   → 横排，按 20% 一挡取整
-   * 好处：按住不放一路拖，收起 → 横排 → 竖排 → 再拖回来，全都连续生效，
-   * 不用松手重新点边框。
-   */
-  const rect = stackEl.getBoundingClientRect()
-  const total = rect.width || 1
-  const pctAt = (clientX) => ((clientX - rect.left) / total) * 100
-
-  // 用指针捕获：拖动时指针可能跑到 iframe / 别处，收在分栏条上更稳
-  try {
-    if (el && el.setPointerCapture && e.pointerId !== undefined) el.setPointerCapture(e.pointerId)
-  } catch (err) {
-    /* 个别浏览器不支持，退回 window 监听 */
-  }
-  const cleanup = () => {
-    el && el.removeEventListener('pointermove', move)
-    el && el.removeEventListener('pointerup', cleanup)
-    window.removeEventListener('pointermove', move)
-    window.removeEventListener('pointerup', cleanup)
-    persistLayout()
-    requestMeasure()
-  }
-
-  const move = (ev) => {
-    const p = pctAt(ev.clientX)
-
-    // 太靠左：收起代码（继续按住往右拖会自己回来）
-    if (p < 8) {
-      if (!codeHidden.value) codeHidden.value = true
-      return
-    }
-    // 太靠右：竖排（继续按住往左拖会自己回到横排）
-    if (p > 88) {
-      if (codeHidden.value) codeHidden.value = false
-      if (layout.value !== 'col') layout.value = 'col'
-      return
-    }
-
-    // 中间：横排 + 挡位
-    if (codeHidden.value) codeHidden.value = false
-    if (layout.value !== 'row') layout.value = 'row'
-    const want = clampPct(p)
-    if (codePct.value !== want) codePct.value = want
-  }
-
-  if (el) {
-    el.addEventListener('pointermove', move)
-    el.addEventListener('pointerup', cleanup)
-  }
-  window.addEventListener('pointermove', move)
-  window.addEventListener('pointerup', cleanup)
-}
-
-const ed = shallowRef(null)
-let runTimer = null
-
+const { layout, codePct, codeHidden, toggleLayout, toggleCode, startDrag, requestMeasure, clearLegacyLayout } =
+  usePgLayout({ getEditor: () => ed.value })
 /* ---------------- 代码练习同步 ----------------
- * 老师点「同步代码」后，当前文件的内容（含之后每一次改动）推给学生端，学生那边只读跟随。
- * 学生开始跟随前会把自己的代码先暂存一份，老师点「停止同步」时原样还回去。
- * 状态同时落在服务端（state 表），刷新页面 / 晚进教室也能接上。
+ * 老师推 / 学生跟，全在 composables/usePgSync.js
+ * 消息类型是 pgsync，服务端带 seq（学生端只认更新的，防乱序把旧代码盖回去）
  */
-const syncOn = ref(false) // 教师端：正在同步
-const following = ref(false) // 学生端：正在跟随
-const followFile = ref('')
-let syncTimer = null
-let caretPos = 0 // 老师当前光标（字符偏移），同步时一起推
-let stash = null // 学生端：跟随前自己那份代码 { dir, edits }
-let skipFlush = false // 这一次切课时包不落盘（避免把老师的代码写进学生的存档桶）
+const syncClassId = computed(() => currentClassId.value || (state.classes[0] && state.classes[0].id) || '')
+
+// 存档模块要问「现在能不能落盘」，但 sync 在下面才建 —— 用一个可变的检查函数接上
+let frozenCheck = () => false
+
+/** presence 频道的退订句柄（老师推代码给全班的广播走这条） */
 let offSync = null
 
-const syncClassId = computed(() => currentClassId.value || (state.classes[0] && state.classes[0].id) || '')
-const canSync = computed(() => state.role === 'teacher' && !props.fixedDir)
-const syncTitle = computed(() =>
-  !syncClassId.value
-    ? '先在侧栏选一个班级'
-    : syncOn.value
-      ? '停止同步，学生回到自己的代码'
-      : '把你正在写的这个文件同步给学生（学生端只读）'
-)
-
-function syncUrl() {
-  return '/api/classes/' + encodeURIComponent(syncClassId.value) + '/pg-sync'
-}
-
-function publishSync() {
-  if (!syncOn.value || !syncClassId.value || !bundle.value) return
-  api
-    .post(syncUrl(), {
-      active: true,
-      dir: dir.value,
-      file: activeFile.value,
-      page: page.value,
-      caret: caretPos,
-      code: textOf(activeFile.value),
-    })
-    .catch(() => {})
-}
-
-/** 打字时别每个字符推一次：停手 500ms 再发 */
-function publishSoon() {
-  if (!syncOn.value) return
-  if (syncTimer) clearTimeout(syncTimer)
-  syncTimer = setTimeout(() => {
-    syncTimer = null
-    publishSync()
-  }, 500)
-}
-
-async function toggleSync() {
-  if (syncOn.value) {
-    syncOn.value = false
-    if (syncTimer) clearTimeout(syncTimer)
-    syncTimer = null
-    try {
-      await api.post(syncUrl(), { active: false })
-    } catch (e) {
-      error.value = e.message
-    }
-    return
-  }
-  if (!syncClassId.value) {
-    error.value = '先在侧栏选一个班级，再点同步'
-    return
-  }
-  syncOn.value = true
-  publishSync()
-}
-
-/** 学生端：把老师那一段应用过来（只读） */
-async function applySynced(msg) {
-  if (!msg || !msg.file) return
-  if (!following.value) {
-    // 连「学生正在看哪个文件」一起记住：恢复时连视图一起回到原处，
-    // 否则学生会以为自己写的代码丢了（其实只是还在别的文件里）
-    stash = { dir: dir.value, file: activeFile.value, edits: Object.assign({}, edits) }
-  }
-  if (msg.dir && msg.dir !== dir.value && !props.fixedDir) {
-    dir.value = msg.dir
-    await loadDir() // 会把学生这一课自己的存档读回来，再被下面的老师版本覆盖
-  }
-  if (!bundle.value) return
-  following.value = true
-
-  // ① 老师换文件：编辑器跟着跳
-  if (msg.file && bundle.value.files.some((f) => f.path === msg.file)) {
-    followFile.value = msg.file
-    edits[msg.file] = String(msg.code || '')
-    if (activeFile.value !== msg.file) activeFile.value = msg.file
-    await nextTick()
-    const wantCaret = typeof msg.caret === 'number' ? msg.caret : null
-    const cv = ed.value && ed.value.view
-    // 内容没变（只是老师挪了光标）：不要整篇重设，否则学生那边会闪、滚动位置也会跳回顶部
-    if (cv && cv.state.doc.toString() === String(msg.code || '')) {
-      if (wantCaret !== null) ed.value.setCaret(wantCaret)
-    } else {
-      ed.value && ed.value.setDoc(String(msg.code || ''), wantCaret === null ? undefined : wantCaret)
-      ed.value && ed.value.setLanguage(activeFile.value)
-    }
-  }
-
-  // ② 老师换预览页（同一课里点左边目录）：右侧画面也跟着跳
-  if (msg.page && msg.page !== page.value && bundle.value.files.some((f) => f.path === msg.page)) {
-    page.value = msg.page
-    if (autoRun.value) run()
-  }
-
-  if (ed.value) ed.value.setReadOnly(true)
-  scheduleSave()
-}
-
-/** 停止跟随：把学生自己的代码还回去 */
-async function stopFollow() {
-  if (!following.value) return
-  following.value = false
-  followFile.value = ''
-  const s = stash
-  stash = null
-  if (ed.value) ed.value.setReadOnly(false)
-  if (!s) return
-
-  // 老师中途换了课：连课一起回到学生原来那一节（他自己那份从本机存档读回）
-  if (!props.fixedDir && s.dir && s.dir !== dir.value) {
-    // 关键：此刻内存里的 edits 还是老师的代码，loadDir 开头会 flushEdits，
-    // 不挡住就会把老师的代码写进学生「老师那一节课」的存档桶里 —— 之后就"停不掉了"。
-    skipFlush = true
-    try {
-      dir.value = s.dir
-      await loadDir()
-    } finally {
-      skipFlush = false
-    }
-    if (s.file && activeFile.value !== s.file) activeFile.value = s.file
-    syncDoc()
-    return
-  }
-
-  if (s.dir === dir.value) {
-    Object.keys(edits).forEach((k) => delete edits[k])
-    Object.assign(edits, s.edits)
-    if (s.file && activeFile.value !== s.file) activeFile.value = s.file
-    syncDoc()
-    scheduleSave()
-  }
-}
-
-function onSyncMsg(m) {
-  if (!m || m.t !== 'pgsync') return
-  if (m.active === false) {
-    stopFollow()
-    return
-  }
-  // 老师同步期间学生必须跟着：没有「先不听」，想自己写要等老师点停止
-  applySynced(m)
-}
-
 /* ---------------- 改动的本机存档 ----------------
- * 同学的代码只存在自己这台机器的浏览器里：刷新、关掉浏览器、晚上关机，再打开还在。
- * 存两处信息：内容按「身份 + 目录」分桶，谁登录谁的那一份，机房共用一台机器也不串。
+ * 存在浏览器 localStorage，按「身份 + 目录」分桶；逻辑全在 composables/usePgStore.js
  */
-const storeFail = ref(false) // 存不下（配额满 / 浏览器禁了 localStorage）
-let savedDir = '' // 当前 edits 属于哪个目录（切目录时要存回原来那个桶）
-let savedScope = '' // 当前 edits 属于谁：进页面时定下来，退出登录把 state 清空了也不影响落盘
-let saveTimer = null
-
-function scopeOf() {
-  const s = state.student
-  const raw =
-    state.role === 'student' && s && s.sid
-      ? 's-' + (s.classId || 'c') + '-' + s.sid
-      : state.role === 'teacher'
-        ? 't'
-        : 'guest'
-  return raw.replace(/[^0-9a-zA-Z_-]/g, '_')
-}
-
-function storeKey(d) {
-  return props.bucket + '-edits:' + (savedScope || scopeOf()) + ':' + d
-}
-
-/** 记住「上次在看哪个页面」：键名同样带 bucket，作业之间不串 */
-function pageKey(d) {
-  return props.bucket + '-page-' + d
-}
-
-/** 把当前 edits 写回 localStorage（空表就删键，别留垃圾） */
-function flushEdits() {
-  if (saveTimer) {
-    clearTimeout(saveTimer)
-    saveTimer = null
-  }
-  // 跟随时屏幕上是老师的代码：不能写进学生自己的存档桶（否则他自己的那一课被覆盖）
-  if (following.value || skipFlush) return
-  if (!savedDir) return
-  try {
-    const key = storeKey(savedDir)
-    if (!Object.keys(edits).length) localStorage.removeItem(key)
-    else localStorage.setItem(key, JSON.stringify(edits))
-    storeFail.value = false
-  } catch (e) {
-    storeFail.value = true // 配额满了：内存里照常编辑，只是这次存不下
-  }
-}
-
-function scheduleSave() {
-  if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = setTimeout(flushEdits, 400)
-}
-
-/** 切目录时把上一目录的存档读回来（只认当前包里真有的文件，防止旧存档串进新版本） */
-function restoreEdits() {
-  storeFail.value = false
-  try {
-    const raw = localStorage.getItem(storeKey(dir.value))
-    if (!raw) return
-    const saved = JSON.parse(raw)
-    if (!saved || typeof saved !== 'object') return
-    for (const p in saved) {
-      if (typeof saved[p] !== 'string') continue
-      if (bundle.value.files.some((f) => f.path === p)) edits[p] = saved[p]
-    }
-  } catch (e) {
-    storeFail.value = true
-  }
-}
+const { storeFail, saved, scopeOf, storeKey, pageKey, flushEdits, scheduleSave, restoreEdits } = usePgStore({
+  bucket: () => props.bucket,
+  edits,
+  dir,
+  bundle,
+  // 跟随时屏幕上是老师的代码，不能落盘（否则学生自己那一课被覆盖）
+  isFrozen: () => frozenCheck(),
+})
 
 const pages = computed(() =>
   bundle.value ? bundle.value.files.filter((f) => isPagePath(f.path)).map((f) => f.path) : []
@@ -714,30 +298,12 @@ function isDirty(p) {
   return edits[p] !== undefined && edits[p] !== f.text
 }
 
-function groupDirty(g) {
-  return g.items.some((it) => isDirty(it.path))
-}
-
-function shortName(g, p) {
-  return g.dir && p.indexOf(g.dir) === 0 ? p.slice(g.dir.length) : p
-}
-
-function shortPage(p) {
-  const b = baseOf(p)
-  const d = p.slice(0, p.length - b.length)
-  return d ? d.replace(/\/$/, '') + '/' + b : b
-}
-
-function visibleItems(g) {
-  if (showAll.value) return g.items
-  const vis = g.items.filter((it) => it.role !== 'page' && it.path !== g.entry)
-  // 组里只有入口（补充课的 q1.js 那种）：别把整组压成空
-  return vis.length ? vis : g.items.filter((it) => it.role !== 'page')
-}
-
 function toggleGroup(i) {
   closed[i] = !closed[i]
 }
+
+// 文件树的「全部」勾选变了就记住（原来靠 @change，现在由子组件 emit）
+watch(showAll, saveShowAll)
 
 function saveShowAll() {
   localStorage.setItem('pg-showall', showAll.value ? '1' : '0')
@@ -770,11 +336,10 @@ onMounted(async () => {
       dir.value = localStorage.getItem('pg-dir') || examples.value[0].dir
       await loadDir()
     }
-    // 学生端：进页面时如果老师正在同步，直接接上
+    // 学生端：进页面时如果老师正在同步，直接接上（sync 为 null = 没在同步）
     if (state.role === 'student') {
       const res = await api.get('/api/pgsync').catch(() => null)
-      const pg = res && res.pg
-      if (pg && pg.active) await applySynced(pg)
+      if (res && res.sync) await resumeFrom(res.sync)
     }
   } catch (e) {
     error.value = e.message
@@ -785,7 +350,7 @@ onMounted(async () => {
 watch(
   () => props.fixedDir,
   async (v) => {
-    if (!v || v === savedDir) return
+    if (!v || v === saved.dir) return
     dir.value = v
     await loadDir()
   }
@@ -797,8 +362,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('message', onFrameMessage)
   window.removeEventListener('beforeunload', flushEdits)
   document.removeEventListener('visibilitychange', onHide)
-  if (runTimer) clearTimeout(runTimer)
-  if (ed.value) ed.value.destroy()
+  disposePreview()
+  destroy()
 })
 
 async function loadDir() {
@@ -814,8 +379,8 @@ async function loadDir() {
   try {
     const res = await api.get('/api/examples/' + encodeURIComponent(dir.value))
     bundle.value = res
-    savedDir = dir.value
-    savedScope = scopeOf()
+    saved.dir = dir.value
+    saved.scope = scopeOf()
     restoreEdits()
     const savedPage = localStorage.getItem(pageKey(dir.value))
     page.value = res.files.some((f) => f.path === savedPage && isPagePath(f.path))
@@ -840,84 +405,90 @@ async function loadDir() {
   }
 }
 
-function ensureEditor() {
-  if (!cmHost.value) return
-  // 宿主换了（换课时包时 v-if 把工作区拆了重建）：老编辑器不能再复用
-  if (ed.value && !cmHost.value.contains(ed.value.view.dom)) {
-    try {
-      ed.value.destroy()
-    } catch (e) {
-      /* 已经被拆掉也无所谓 */
-    }
-    ed.value = null
-  }
-  if (ed.value) return
-  ed.value = createEditor(cmHost.value, {
-    fontSize: fontPx.value,
-    readOnly: props.readonly,
-    onChange(text) {
-      if (!activeFile.value) return
-      const f = bundle.value && bundle.value.files.find((x) => x.path === activeFile.value)
-      if (f && text === f.text) delete edits[activeFile.value] // 改回原样＝不算改过，别占存档
-      else edits[activeFile.value] = text
-      scheduleSave()
-      if (autoRun.value) scheduleRun()
-      publishSoon() // 老师端：改动同步给学生（学生端 syncOn 恒为 false，无副作用）
+/* ---------------- 编辑器 ---------------- */
+// CodeMirror 实例与文档同步在 composables/usePgEditor.js。
+// 下面三个回调说明「改完之后依次做什么」—— 编辑器本身不认识这三块。
+const { ed, caret, ensureEditor, syncDoc, setReadOnly, setDocText, setCaret, gotoLine, currentText, adjustFont, destroy } =
+  usePgEditor({
+    cmHost,
+    fontPx,
+    activeFile,
+    bundle,
+    edits,
+    readonly: props.readonly,
+    getText: textOf,
+    onChange() {
+      scheduleSave() // ① 存本机（跟随时不写，由 usePgStore 判断）
+      scheduleRun() // ② 重跑预览
+      pushSoon() // ③ 推给学生（没在同步时内部直接返回）
     },
     onCaret(c) {
-      caret.line = c.line
-      caret.col = c.col
-      // 老师端：光标一动也推（节流 0.5 秒），学生端会跟着跳并滚到那一行
-      if (typeof c.pos === 'number') {
-        caretPos = c.pos
-        if (syncOn.value) publishSoon()
-      }
+      pushCursor(c.pos)
     },
-    onRun: run,
+    onRun() {
+      run()
+    },
+    afterCreate() {
+      // 换课时包会重建编辑器，跟随中要重新锁上只读
+      if (following.value) setReadOnly(true)
+    },
   })
-  // 换课时包会重建编辑器：跟随中的话把只读补回去
-  if (following.value) ed.value.setReadOnly(true)
-}
 
-function syncDoc() {
-  // 编辑器还没建好（宿主刚渲染、或换课时包时工作区被重建）：下一帧补一次，
-  // 否则会出现「点了文件但代码块里是空的」
-  if (!ed.value) {
-    nextTick(() => {
-      ensureEditor()
-      if (ed.value) syncDoc()
-    })
-    return
-  }
-  const text = textOf(activeFile.value)
-  ed.value.setDoc(text)
-  ed.value.setLanguage(activeFile.value)
-  // 兜底：该有内容却是空的（刚重建 / 还没量过），下一帧再设一次
-  if (text && ed.value.view.state.doc.length === 0) {
-    requestAnimationFrame(() => {
-      if (ed.value && ed.value.view.state.doc.length === 0) ed.value.setDoc(text)
-    })
-  }
-}
-
-watch(activeFile, async () => {
-  await nextTick()
-  syncDoc()
+/* ---------------- 老师推代码给学生 ---------------- */
+const {
+  syncOn,
+  following,
+  followFile,
+  canSync,
+  syncTitle,
+  toggle: toggleSync,
+  pushSoon,
+  pushCursor,
+  onMessage: onSyncMsg,
+  resumeFrom,
+  isFrozen,
+} = usePgSync({
+  classId: syncClassId,
+  dir,
+  activeFile,
+  page,
+  bundle,
+  edits,
+  fixedDir: props.fixedDir,
+  role: state.role,
+  // 只把「编辑器要做的三件事」递过去，sync 不需要知道 CodeMirror 长什么样
+  editor: { setReadOnly, setDocText, setCaret, syncDoc },
+  getText: textOf,
+  loadDir,
+  runPreview: () => run(),
+  saveLater: () => scheduleSave(),
+  error,
+  autoRun,
 })
 
 /*
- * 老师这边「换文件 / 换预览页」也要推给学生（原来只在打字时推）：
- * 学生跟着跳文件、跳页面，才算真的"同步这一节"。
+ * 预览区的 iframe 在子组件里，而 usePgPreview 要往它的 srcdoc 里塞文档。
+ * 子组件用 defineExpose 把元素本身暴露出来，这里转交给 frame 这个 ref。
  */
-watch([activeFile, page], () => {
-  if (syncOn.value) publishSoon()
-})
+const previewRef = ref(null)
+watch(
+  () => (previewRef.value ? previewRef.value.frameEl : null),
+  (el) => {
+    frame.value = el
+  }
+)
 
-function adjustFont(d) {
-  fontPx.value = Math.min(24, Math.max(11, fontPx.value + d))
-  localStorage.setItem('pg-font', String(fontPx.value))
-  if (ed.value) ed.value.setFontSize(fontPx.value)
-}
+// 接上：存档模块问「能不能落盘」时，看同步状态
+frozenCheck = () => isFrozen()
+
+/*
+ * 跟随时锁只读。
+ * 不能只在 applySync 里调一次 —— 那时工作区可能正在重建（换课时包会 v-if 拆掉重来），
+ * 新编辑器还没建好，setReadOnly 落空，学生就能改老师的代码。
+ */
+watch(following, (v) => {
+  nextTick(() => setReadOnly(!!v))
+})
 
 /* ---------------- 打开文件 / 页面 ---------------- */
 
@@ -926,7 +497,7 @@ function openGroup(g) {
   page.value = g.page
   localStorage.setItem(pageKey(dir.value), g.page)
   // 组里没有源码（纯 HTML 课）：点标题就等于"看这个页面的源码"
-  if (visibleItems(g).length === 0) activeFile.value = g.page
+  if (visibleItemsOf(g, showAll.value).length === 0) activeFile.value = g.page
   if (autoRun.value) scheduleRun()
 }
 
@@ -974,196 +545,43 @@ function clearSaved() {
   run()
 }
 
-/* ---------------- 运行 ---------------- */
+/* ---------------- 运行与预览 ----------------
+ * 拼 srcdoc / 抓 iframe 报错 / 重跑时保住滚动位置，全在 composables/usePgPreview.js
+ */
+const {
+  pageErrors,
+  copied,
+  resOpen,
+  codeErrors,
+  resErrors,
+  kindLabel,
+  clearErrors,
+  jumpToError,
+  copyErrors,
+  readFrameScroll,
+  applyFrameScroll,
+  onFrameLoad,
+  onFrameMessage,
+  scheduleRun,
+  run,
+  dispose: disposePreview,
+} = usePgPreview({
+  frame,
+  bundle,
+  page,
+  dir,
+  allFiles,
+  npmPage,
+  error,
+  running,
+  activeFile,
+  getEditor: () => ed.value,
+  onOpenFile: async () => {
+    await nextTick()
+    syncDoc()
+  },
+})
 
-function scheduleRun() {
-  if (runTimer) clearTimeout(runTimer)
-  runTimer = setTimeout(run, 700)
-}
-
-/* 把 iframe 里的路径裁成「本课里的文件名」，一眼看得出是哪个文件 */
-function shortFile(f) {
-  const str = String(f || '')
-  if (!str || str === 'about:srcdoc' || str === 'srcdoc') return ''
-  const m = str.match(/\/([^/]+)$/)
-  return m ? decodeURIComponent(m[1]) : str
-}
-
-/* 调用栈只留「哪个文件第几行」那几行，且把长地址裁短 */
-function tidyStack(stack, fallbackFile) {
-  const lines = String(stack || '')
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => /^at |^\w*Error/.test(l))
-  const keep = lines
-    .filter((l) => /\/examples\/|srcdoc|:\d+:\d+/.test(l))
-    .map((l) => l.replace(/https?:\/\/[^/]+/g, '').replace(/about:srcdoc/gi, fallbackFile || '页面'))
-    .slice(0, 4)
-  return keep.length ? keep : lines.slice(0, 3)
-}
-
-function onFrameMessage(e) {
-  const d = e.data
-  if (!d || !d.__pg) return
-  if (e.source !== (frame.value && frame.value.contentWindow)) return
-
-  const kind = d.kind || 'error'
-  const msg = String(d.m || '未知错误').trim()
-  const file = shortFile(d.f)
-  const line = Number(d.l) || 0
-  const col = Number(d.c) || 0
-
-  // 同一轮里重复报同一个错（比如每次重跑都报），只留一条
-  const dup = pageErrors.value.some((x) => x.msg === msg && x.line === line && x.kind === kind)
-  if (dup) return
-
-  const entry = {
-    id: ++pageErrSeq,
-    kind,
-    name: String(d.name || ''),
-    msg,
-    file,
-    line,
-    col,
-    loc: line ? (file ? file + ' · 第 ' + line + ' 行' + (col ? '，第 ' + col + ' 列' : '') : '第 ' + line + ' 行' + (col ? '，第 ' + col + ' 列' : '')) : '',
-    frames: tidyStack(d.stack, file),
-  }
-  // 代码报错插到最前面（资源类的往后排）
-  if (kind !== 'resource') {
-    const at = pageErrors.value.findIndex((x) => x.kind === 'resource')
-    if (at < 0) pageErrors.value.push(entry)
-    else pageErrors.value.splice(at, 0, entry)
-  } else {
-    pageErrors.value.push(entry)
-  }
-  // 只留最近 6 条，避免一个循环报错把面板刷爆
-  if (pageErrors.value.length > 6) pageErrors.value.splice(0, pageErrors.value.length - 6)
-}
-
-/* 代码报错（要认真看）与资源报错（示例图片 404，多数与代码无关）分开展示 */
-const codeErrors = computed(() => pageErrors.value.filter((e) => e.kind !== 'resource'))
-const resErrors = computed(() => pageErrors.value.filter((e) => e.kind === 'resource'))
-const resOpen = ref(false)
-
-function kindLabel(e) {
-  if (e.kind === 'reject') return 'Promise'
-  if (e.kind === 'console') return 'console'
-  if (e.kind === 'resource') return '资源'
-  if (e.kind === 'compile') return '编译'
-  return e.name || '错误'
-}
-
-function clearErrors() {
-  pageErrors.value = []
-}
-
-/** 报错里有行号：跳到编辑器对应行（若报错来自本课另一个文件，先切过去） */
-async function jumpToError(e) {
-  if (!e.line) return
-  if (e.file && bundle.value && e.file !== activeFile.value) {
-    const hit = bundle.value.files.find((f) => f.path === e.file || f.path.endsWith('/' + e.file))
-    if (hit) {
-      activeFile.value = hit.path
-      await nextTick()
-      syncDoc()
-    }
-  }
-  if (ed.value && ed.value.gotoLine) ed.value.gotoLine(e.line)
-}
-
-function flashCopied() {
-  copied.value = true
-  if (copyTimer) clearTimeout(copyTimer)
-  copyTimer = setTimeout(() => (copied.value = false), 1500)
-}
-
-async function copyErrors() {
-  const text = pageErrors.value
-    .map((e) => kindLabel(e) + ': ' + e.msg + (e.loc ? '\n  ' + e.loc : '') + (e.frames.length ? '\n  ' + e.frames.join('\n  ') : ''))
-    .join('\n\n')
-  try {
-    await navigator.clipboard.writeText(text)
-    flashCopied()
-  } catch (err) {
-    /* 剪贴板被拒（http 环境）：退回老办法 */
-    const ta = document.createElement('textarea')
-    ta.value = text
-    document.body.appendChild(ta)
-    ta.select()
-    try {
-      document.execCommand('copy')
-      flashCopied()
-    } catch (e2) {
-      copied.value = false
-    }
-    ta.remove()
-  }
-}
-
-/** 读预览区当前的滚动位置（滚动元素可能是 body / documentElement） */
-function readFrameScroll() {
-  try {
-    const w = frame.value && frame.value.contentWindow
-    if (!w) return null
-    const d = w.document
-    const se = d.scrollingElement || d.documentElement || d.body
-    return { x: se ? se.scrollLeft : 0, y: se ? se.scrollTop : 0 }
-  } catch (e) {
-    return null
-  }
-}
-
-/** 把滚动位置放回去（布局可能还在变，隔一帧再补一次） */
-function applyFrameScroll(pos) {
-  if (!pos) return
-  const put = () => {
-    try {
-      const w = frame.value && frame.value.contentWindow
-      if (!w) return
-      const d = w.document
-      const se = d.scrollingElement || d.documentElement || d.body
-      if (se) {
-        se.scrollLeft = pos.x
-        se.scrollTop = pos.y
-      }
-      if (typeof w.scrollTo === 'function') w.scrollTo(pos.x, pos.y)
-    } catch (e) {
-      /* 拿不到就算了 */
-    }
-  }
-  put()
-  requestAnimationFrame(put)
-}
-
-function onFrameLoad() {
-  if (!pendingScroll) return
-  applyFrameScroll(pendingScroll)
-  pendingScroll = null
-}
-
-async function run() {
-  if (!bundle.value || !page.value) return
-  error.value = ''
-  pageErrors.value = []
-  if (npmPage.value) {
-    running.value = false
-    return
-  }
-  if (!frame.value) return
-  // 同一个页面重跑（打字自动运行）：记住当前位置，加载完放回去；换页面则从顶部开始
-  pendingScroll = page.value === lastRunPage ? readFrameScroll() : null
-  lastRunPage = page.value
-  try {
-    await ensureSfcSrcdoc()
-    frame.value.srcdoc = buildPreviewDoc(allFiles.value, page.value, '/examples/' + encodeURI(dir.value) + '/')
-    running.value = true
-  } catch (e) {
-    error.value = '预览失败：' + e.message
-    running.value = false
-  }
-}
-
-/* 交作业页面要拿这里的东西：改了哪些文件 / 有没有改动 / 手动重跑 / 重新装一次 */
 defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload: loadDir })
 </script>
 
@@ -1182,23 +600,33 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   color: #1d5568;
 }
 
+
+
 .syncbar .mono {
   font-family: Consolas, 'Cascadia Mono', monospace;
   font-size: 12px;
 }
 
+
+
 .syncbar .dim {
   color: #5b7b86;
 }
+
+
 .pg {
   display: flex;
   flex-direction: column;
 }
 
+
+
 .fontbox {
   display: inline-flex;
   gap: 4px;
 }
+
+
 
 /* 整页占满一屏：头部固定，工作区吃掉剩下的高度。
    原来用 calc(100vh - 179px) 估算，不同页头高度下会差几十像素 —— 一屏看不全。 */
@@ -1208,6 +636,8 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   flex-direction: column;
   overflow: hidden;
 }
+
+
 
 .pg > .content {
   flex: 1 1 auto;
@@ -1219,6 +649,8 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   padding-bottom: 14px;
 }
 
+
+
 .work {
   flex: 1 1 auto;
   min-height: 0;
@@ -1226,6 +658,8 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   align-items: stretch; /* 默认是 stretch，但这里显式写，避免被别的 .work 规则改成 center */
   gap: 12px;
 }
+
+
 
 /* 竖排：一屏放不下两块。高度仍锁 100dvh，滚动交给内容区自己 ——
    这样不会出现 body 滚动条把整页挤窄、头部跟着回缩的情况。 */
@@ -1235,6 +669,8 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   overflow: hidden;
 }
 
+
+
 .pg-tall > .content {
   flex: 1 1 auto;
   min-height: 0;
@@ -1243,9 +679,13 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   scrollbar-color: rgba(0, 0, 0, 0.28) transparent;
 }
 
+
+
 .pg-tall > .content::-webkit-scrollbar {
   width: 10px;
 }
+
+
 
 .pg-tall > .content::-webkit-scrollbar-thumb {
   background: rgba(0, 0, 0, 0.22);
@@ -1254,29 +694,41 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   background-clip: content-box;
 }
 
+
+
 .pg-tall > .content::-webkit-scrollbar-thumb:hover {
   background: rgba(0, 0, 0, 0.35);
   background-clip: content-box;
 }
 
+
+
 .pg-tall > .content::-webkit-scrollbar-track {
   background: transparent;
 }
+
+
 
 .pg-tall .work {
   flex: 0 0 auto;
   min-height: 0;
 }
 
+
+
 .pg-tall .work {
   width: 100%;
 }
+
+
 
 .pg-tall .stack {
   flex: 1 1 auto;
   width: 100%;
   min-width: 0;
 }
+
+
 
 .pg-tall .editor,
 .pg-tall .preview {
@@ -1289,6 +741,8 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   margin-right: 12px;
 }
 
+
+
 /* 收起代码后：预览直接吃满 */
 .work.nocode .preview {
   flex: 1 1 auto !important;
@@ -1296,10 +750,7 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   min-height: 70vh;
 }
 
-.files {
-  flex: 0 0 206px;
-  min-height: 0;
-}
+
 
 /* 代码 + 预览这一叠：横排时左右分，竖排时上下分 */
 .stack {
@@ -1311,13 +762,19 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   gap: 0;
 }
 
+
+
 .work.dir-row .stack {
   flex-direction: row;
 }
 
+
+
 .work.dir-col .stack {
   flex-direction: column;
 }
+
+
 
 .editor {
   flex-grow: 0;
@@ -1326,11 +783,7 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   min-height: 120px;
 }
 
-.preview {
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
-}
+
 
 /* 中间那条可以拖的缝：横排拖宽度，竖排拖高度 */
 .pg-split {
@@ -1342,9 +795,13 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   background: linear-gradient(to right, transparent 4px, var(--line) 4px, var(--line) 6px, transparent 6px);
 }
 
+
+
 .pg-split:hover {
   background: linear-gradient(to right, transparent 4px, var(--brand) 4px, var(--brand) 6px, transparent 6px);
 }
+
+
 
 /* 竖排：分栏条贴右边框（就是代码块的右边界），往左拖回左右排 */
 .pg-split.edge-right {
@@ -1360,9 +817,13 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   background: linear-gradient(to right, transparent 4px, var(--line) 4px, var(--line) 6px, transparent 6px);
 }
 
+
+
 .pg-split.edge-right:hover {
   background: linear-gradient(to right, transparent 4px, var(--brand) 4px, var(--brand) 6px, transparent 6px);
 }
+
+
 
 /* 代码收起后：左边留一条抓手，往右拖能把代码块拉回来 */
 .pg-split.edge-left {
@@ -1375,6 +836,8 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   cursor: ew-resize;
   background: linear-gradient(to right, transparent 3px, var(--brand) 3px, var(--brand) 6px, transparent 6px);
 }
+
+
 
 /* 窄屏：无论选的哪种，都按上下排显示，免得两块都挤成一条 */
 @media (max-width: 1180px) {
@@ -1391,149 +854,7 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   }
 }
 
-.files,
-.editor,
-.preview {
-  background: #fff;
-  border-radius: 4px;
-  box-shadow: var(--shadow);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  min-height: 0;
-}
 
-.files-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 9px 11px;
-  font-size: 12px;
-  color: var(--sub);
-  border-bottom: 1px solid var(--line-soft);
-  background: #fbfcff;
-}
-
-.eye {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11.5px;
-  color: var(--sub);
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.treescroll {
-  flex: 1;
-  overflow: auto;
-  padding-bottom: 8px;
-}
-
-.files-foot {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 10px;
-  border-top: 1px solid var(--line-soft);
-  background: #fbfcff;
-  font-size: 11.5px;
-  color: var(--sub);
-  white-space: nowrap;
-}
-
-.files-foot .dot.off {
-  background: #cbd5e1;
-}
-
-.files-foot .dot.fail {
-  background: #ef4444;
-}
-
-.linkbtn {
-  border: none;
-  background: none;
-  padding: 0 2px;
-  color: #0e7490;
-  font-size: 11.5px;
-  cursor: pointer;
-  text-decoration: underline;
-  flex: 0 0 auto;
-}
-
-.linkbtn:hover {
-  color: #155e75;
-}
-
-.grp + .grp {
-  border-top: 1px solid var(--line-soft);
-}
-
-.ghead {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  width: 100%;
-  padding: 7px 10px;
-  border: none;
-  background: none;
-  text-align: left;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: #0e7490;
-  cursor: pointer;
-}
-
-.ghead:hover {
-  background: #f6f8fd;
-}
-
-.ghead.on {
-  background: #ecfeff;
-}
-
-.ghead.static {
-  color: #94a3b8;
-  font-weight: 600;
-  cursor: default;
-  justify-content: space-between;
-}
-
-.caret {
-  width: 12px;
-  flex: 0 0 12px;
-  color: #94a3b8;
-  font-size: 11px;
-}
-
-.caret.none {
-  visibility: hidden;
-}
-
-.item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 5px 10px 5px 24px;
-  border: none;
-  background: none;
-  text-align: left;
-  font-size: 12.5px;
-  color: #374151;
-  cursor: pointer;
-}
-
-.item:hover {
-  background: #f6f8fd;
-}
-
-.item.on {
-  background: #eef2ff;
-  color: #3730a3;
-  font-weight: 600;
-}
 
 /* 文件类型徽标由 components/FileIcon.vue 提供（16px 圆角小牌子 + 颜色 + 字符） */
 
@@ -1546,6 +867,8 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   flex: 0 0 6px;
 }
 
+
+
 .ellip {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1553,6 +876,8 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   flex: 1;
   min-width: 0;
 }
+
+
 
 .ed-head {
   display: flex;
@@ -1566,14 +891,20 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   min-height: 38px;
 }
 
+
+
 .mono {
   font-family: Consolas, monospace;
   color: #334155;
 }
 
+
+
 .spacer {
   flex: 1;
 }
+
+
 
 .cm-host {
   flex: 1;
@@ -1582,9 +913,13 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   background: #282c34;
 }
 
+
+
 .cm-host :deep(.cm-editor) {
   height: 100%;
 }
+
+
 
 .cm-host :deep(.cm-scroller) {
   overflow: auto;
@@ -1592,11 +927,15 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
 }
 
+
+
 /* 代码块滚动条：细、圆角、悬停变亮（默认那条又宽又灰） */
 .cm-host :deep(.cm-scroller::-webkit-scrollbar) {
   width: 10px;
   height: 10px;
 }
+
+
 
 .cm-host :deep(.cm-scroller::-webkit-scrollbar-thumb) {
   background: rgba(255, 255, 255, 0.22);
@@ -1605,56 +944,20 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   background-clip: content-box;
 }
 
+
+
 .cm-host :deep(.cm-scroller::-webkit-scrollbar-thumb:hover) {
   background: rgba(255, 255, 255, 0.4);
   background-clip: content-box;
 }
 
+
+
 .cm-host :deep(.cm-scroller::-webkit-scrollbar-track) {
   background: transparent;
 }
 
-.frame {
-  flex: 1;
-  width: 100%;
-  border: none;
-  background: #fff;
-  min-height: 0;
-}
 
-.npmcard {
-  flex: 1;
-  overflow: auto;
-  padding: 26px 24px;
-  background: #fffdf7;
-  color: #475569;
-  font-size: 13.5px;
-  line-height: 1.75;
-}
-
-.npmcard h3 {
-  margin: 6px 0 10px;
-  font-size: 15px;
-  color: #92400e;
-}
-
-.npmcard ol {
-  margin: 10px 0;
-  padding-left: 20px;
-}
-
-.npmcard li {
-  margin: 4px 0;
-}
-
-.npmicon {
-  font-size: 26px;
-  color: #f59e0b;
-}
-
-.npmcard p {
-  margin: 8px 0;
-}
 
 /* ---------------- 预览报错面板 ----------------
  * 学生在右侧看到的是「哪个文件、第几行、什么错、调用栈」，能直接照着改；
@@ -1670,117 +973,7 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   flex: 0 0 auto;
 }
 
-.perr-head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 8px;
-  background: #fee2e2;
-  border-bottom: 1px solid #fecaca;
-  font-family: system-ui, 'Microsoft YaHei', sans-serif;
-  font-size: 12px;
-}
 
-.perr-head b {
-  font-weight: 600;
-  color: #991b1b;
-}
-
-.perr-head .dim {
-  color: #b4645c;
-  font-size: 11.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.perr-badge {
-  flex: 0 0 auto;
-  min-width: 18px;
-  padding: 0 5px;
-  border-radius: 9px;
-  background: #dc2626;
-  color: #fff;
-  font-size: 11px;
-  line-height: 16px;
-  text-align: center;
-}
-
-.perr-badge.soft {
-  background: #d99a1b;
-}
-
-.perr-list .res-sum {
-  margin-bottom: 8px;
-  color: #92400e;
-}
-
-.perr-list .res-sum .dim {
-  color: #b08350;
-  font-size: 11.5px;
-}
-
-.perr-mini {
-  flex: 0 0 auto;
-  border: 1px solid #fca5a5;
-  background: #fff;
-  color: #b91c1c;
-  border-radius: 3px;
-  padding: 1px 7px;
-  font-size: 11.5px;
-  cursor: pointer;
-}
-
-.perr-mini:hover {
-  background: #fff1f1;
-}
-
-.perr-x {
-  flex: 0 0 auto;
-  border: none;
-  background: none;
-  color: #b91c1c;
-  cursor: pointer;
-  font-size: 15px;
-  line-height: 1;
-  padding: 0 2px;
-}
-
-.perr-list {
-  margin: 0;
-  padding: 8px 10px 4px 26px;
-}
-
-.perr-list li {
-  margin-bottom: 9px;
-}
-
-.perr-list li::marker {
-  color: #f87171;
-  font-size: 11px;
-}
-
-.perr-line {
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-  flex-wrap: wrap;
-}
-
-.perr-tag {
-  flex: 0 0 auto;
-  padding: 0 5px;
-  border: 1px solid #fca5a5;
-  border-radius: 3px;
-  background: #fff1f1;
-  color: #b91c1c;
-  font-size: 11px;
-  line-height: 16px;
-  font-family: system-ui, 'Microsoft YaHei', sans-serif;
-}
 
 /* Promise 未捕获：橙色；console.error：灰色（不是「坏掉」，是代码自己打的） */
 .perr-list .k-reject .perr-tag {
@@ -1789,11 +982,7 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   color: #c2410c;
 }
 
-.perr-list .k-console .perr-tag {
-  border-color: #cbd5e1;
-  background: #f8fafc;
-  color: #475569;
-}
+
 
 /* .vue 编译失败：紫色，和运行时错误区分开（这类看不见行号，只能看消息） */
 .perr-list .k-compile .perr-tag {
@@ -1802,6 +991,8 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   color: #6d28d9;
 }
 
+
+
 /* 资源加载失败（图片 / 外部脚本 404）：不是代码写坏，用中性黄提醒 */
 .perr-list .k-resource .perr-tag {
   border-color: #fcd34d;
@@ -1809,57 +1000,7 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   color: #92400e;
 }
 
-.perr-list .k-resource .perr-msg {
-  color: #92400e;
-}
 
-.perr-msg {
-  flex: 1 1 240px;
-  min-width: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.perr-list .k-console .perr-msg {
-  color: #475569;
-}
-
-.perr-jump {
-  flex: 0 0 auto;
-  border: 1px solid #fca5a5;
-  background: #fff;
-  color: #b91c1c;
-  border-radius: 3px;
-  padding: 0 6px;
-  font-size: 11px;
-  line-height: 18px;
-  cursor: pointer;
-  font-family: system-ui, 'Microsoft YaHei', sans-serif;
-}
-
-.perr-jump:hover {
-  background: #fee2e2;
-}
-
-.perr-loc {
-  margin-top: 2px;
-  color: #9a3412;
-  font-size: 11.5px;
-}
-
-.perr-stack {
-  margin: 5px 0 0;
-  padding: 6px 8px;
-  border: 1px dashed #fecaca;
-  border-radius: 3px;
-  background: #fffafa;
-  color: #7c2d12;
-  font: 11.5px/1.55 Consolas, 'Cascadia Mono', monospace;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 104px;
-  overflow: auto;
-}
 
 .check {
   display: flex;
@@ -1870,6 +1011,8 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload:
   white-space: nowrap;
 }
 
+
+
 code {
   font-family: Consolas, monospace;
   background: #f1f4f9;
@@ -1877,4 +1020,6 @@ code {
   border-radius: 5px;
   font-size: 12.5px;
 }
+
+
 </style>

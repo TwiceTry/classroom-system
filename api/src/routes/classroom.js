@@ -250,37 +250,72 @@ export default async function classroomRoutes(app) {
   const PG_KEY = (cid) => 'pg:' + cid
   const livePg = (classId) => (classId ? repo.getState(PG_KEY(classId), null) : null)
 
-  /** 学生端：我这班现在在同步什么代码 */
+  /**
+   * 「老师把代码推给全班」的当前状态。
+   *
+   * 字段就是**推的那一刻屏幕上的样子**，不含任何前端状态：
+   *   dir/file/page  老师在看哪一课、哪个文件、哪个预览页
+   *   cursor         光标字符偏移（学生端跟着跳）
+   *   content        当前文件全文
+   *   seq            单调递增；学生端只接受比手上更大的（防网络乱序把旧代码盖回去）
+   *   by/at          谁推的、什么时候
+   *
+   * 消息类型统一成 `pgsync`（以前广播的是 `pg`，前端根本不认，功能等于没接上）。
+   */
   app.get('/api/pgsync', { preHandler: requireAuth() }, async (req) => {
     const t = req.user
-    if (!t.classId) return { pg: null }
-    return { pg: livePg(t.classId) }
+    if (!t.classId) return { sync: null }
+    return { sync: livePg(t.classId) }
   })
 
-  /** 教师端：读 / 推 */
   app.get('/api/classes/:id/pg-sync', { preHandler: requireAuth('teacher') }, async (req) => {
     const cls = repo.getClass(req.params.id)
     if (!cls) throw notFound('班级不存在')
-    return { pg: livePg(cls.id) }
+    return { sync: livePg(cls.id) }
   })
 
+  /** 老师推：seq 由服务端分配（前端不用管） */
   app.post('/api/classes/:id/pg-sync', {
     preHandler: requireAuth('teacher'),
-    schema: { body: { type: 'object', properties: { pg: { type: ['object', 'string', 'null'] } } }, additionalProperties: true },
+    schema: {
+      body: {
+        type: 'object',
+        properties: {
+          dir: { type: 'string', maxLength: 300 },
+          file: { type: 'string', maxLength: 300 },
+          page: { type: 'string', maxLength: 300 },
+          cursor: { type: 'number' },
+          content: { type: 'string' },
+        },
+      },
+    },
     handler: async (req) => {
       const cls = repo.getClass(req.params.id)
       if (!cls) throw notFound('班级不存在')
-      const payload = req.body.pg === undefined ? req.body : req.body.pg
-      if (payload === null || payload === '') {
-        repo.setState(PG_KEY(cls.id), null)
-        broadcast({ t: 'pg', pg: null })
-        return { ok: true, pg: null }
+      const prev = livePg(cls.id)
+      const sync = {
+        seq: (prev && Number(prev.seq)) ? Number(prev.seq) + 1 : 1,
+        dir: String(req.body.dir || ''),
+        file: String(req.body.file || ''),
+        page: String(req.body.page || ''),
+        cursor: Number(req.body.cursor) || 0,
+        content: String(req.body.content || ''),
+        by: req.user.name || '教师',
+        at: Date.now(),
       }
-      const pg = Object.assign({}, payload, { at: Date.now(), by: req.user.name || '教师' })
-      repo.setState(PG_KEY(cls.id), pg)
-      const delivered = broadcast({ t: 'pg', pg })
-      return { ok: true, pg, delivered }
+      repo.setState(PG_KEY(cls.id), sync)
+      const delivered = broadcast({ t: 'pgsync', sync })
+      return { sync, delivered }
     },
+  })
+
+  /** 老师停：学生端收到 sync:null 就把自己的代码还回去 */
+  app.delete('/api/classes/:id/pg-sync', { preHandler: requireAuth('teacher') }, async (req, reply) => {
+    const cls = repo.getClass(req.params.id)
+    if (!cls) throw notFound('班级不存在')
+    repo.setState(PG_KEY(cls.id), null)
+    broadcast({ t: 'pgsync', sync: null })
+    reply.status(204).send()
   })
 
   /* ---------------- 学生端菜单显示开关 ---------------- */
