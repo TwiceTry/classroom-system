@@ -786,12 +786,14 @@ async function save() {
     const res = await api.patch('/api/scheme', { raw: raw.value })
     errors.value = []
     warnings.value = res.warnings || []
-    // PATCH 只回版本号与这一条变更：把它们就地合进来（否则页头的 v 号不刷新）
-    raw.value.version = res.version
+    // PATCH 回版本号与这一条变更：就地合进来（否则页头的 v 号不刷新）。
+    // 兼容两种形状：顶层 version/change，或包在 scheme 里。
+    const newVer = res.version !== undefined ? res.version : res.scheme && res.scheme.version
+    raw.value.version = newVer
     if (res.change) raw.value.changes = (raw.value.changes || []).concat([res.change])
     savedRaw.value = JSON.stringify(raw.value)
     await loadScheme(true) // 导航、评分表立刻按新方案
-    toast.value = '已保存 · v' + res.version + '（导航与评分表已同步）'
+    toast.value = '已保存 · v' + (newVer === undefined ? '?' : newVer) + '（导航与评分表已同步）'
     previewing.value = false
   } catch (e) {
     error.value = e.message

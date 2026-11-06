@@ -12,6 +12,7 @@ import * as presence from '../lib/presence.js'
 import * as scheme from '../lib/scheme.js'
 import { scoring, withCourseScheme } from '../lib/scheme.js'
 import * as schemeio from '../lib/schemeio.js'
+import { RULES } from '../lib/rules.js'
 
 /**
  * 当前方案的原文（编辑器要完整对象，不能是解析后的裁剪版）。
@@ -27,7 +28,22 @@ function rawOfCurrent() {
   }
 }
 
-/** 判分规则清单（编辑器下拉用） */
+/**
+ * 判分规则清单（方案编辑器用）。
+ *
+ * 前端是这样用它：
+ *   规则下拉        ← rules[].type / rules[].name
+ *   规则说明        ← rules[].desc
+ *   **参数输入框**  ← 遍历 rules[].schema 渲染（起始分 / 缺勤扣分 / 单次上限 / 等级表 …）
+ *
+ * 这里原来只给了 { type, name, hint }，`schema` 是 undefined，
+ * 于是编辑器「计分规则」下面**一个参数框都不渲染**：
+ * 起始分、缺勤一次扣几分、单次上限、等级表、量规维度，老师全都改不了，
+ * 只能看到下拉框和一条空说明。表现就是「基准扣分没有起始分设置项」。
+ *
+ * 真正的定义在 lib/rules.js 的 RULES 里（schema 是纯数据，可以安全序列化），
+ * 这里把它合并进来，避免两处各写一份、又对不上。
+ */
 const RULE_LIST = [
   { type: 'base', name: '基准扣分', hint: '全勤满分，缺勤/迟到按次数扣' },
   { type: 'acc', name: '累计加减', hint: '每次加减分累加，封顶满分' },
@@ -35,7 +51,13 @@ const RULE_LIST = [
   { type: 'last', name: '取最后一次', hint: '多次提交取最后一次' },
   { type: 'raw', name: '卷面折算', hint: '录卷面分，乘系数' },
   { type: 'rubric', name: '量规评分', hint: '按维度逐项打分求和' },
-]
+].map((r) => {
+  const def = RULES[r.type]
+  return Object.assign({}, r, {
+    desc: (def && def.desc) || r.hint,
+    schema: (def && def.schema) || [],
+  })
+})
 
 /** 采集形态清单 */
 const FORM_LIST = [

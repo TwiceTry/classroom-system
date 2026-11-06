@@ -49,12 +49,28 @@ export default async function schemeEditRoutes(app) {
     },
     handler: async (req) => {
       const course = courseOf(req)
-      const incoming = req.body.scheme || req.body
+      /*
+       * 用 schemeFromBody 而不是 `req.body.scheme || req.body`。
+       *
+       * 前端保存时提交的是 `{ raw: {...} }`（raw 是编辑器里方案原文的叫法），
+       * 而这里原来只认 `scheme` 或裸对象 → 拿到的是外层壳 `{ raw }`，
+       * 它既没有 id 也没有 items，于是保存必定失败：
+       *   「缺少 id；items 不能为空」
+       * 下面那个 schemeFromBody 早就把三种形状都处理了（scheme / raw / 裸对象），
+       * 只是这个接口忘了用它 —— 导入、预检都正常，唯独「保存方案」永远失败。
+       */
+      const incoming = schemeFromBody(req.body)
       if (!incoming || typeof incoming !== 'object') throw badRequest('body 里没有方案对象')
       return withCourseScheme(course, () => {
         const out = scheme.save(incoming, req.user.name || '教师', String(req.body.note || ''))
+        const changes = out.raw.changes || []
         return {
           ok: true,
+          // 顶层带上版本号与这次的变更记录：前端保存后要就地更新页头的 v 号和变更日志。
+          // 原先只放在 scheme 里，前端读 res.version / res.change 拿到 undefined，
+          // 提示就变成「已保存 · vundefined」。
+          version: out.raw.version,
+          change: changes.length ? changes[changes.length - 1] : null,
           warnings: out.warnings || [],
           scheme: {
             id: out.raw.id,
