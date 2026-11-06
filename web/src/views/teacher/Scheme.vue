@@ -171,18 +171,24 @@
             />
             <input v-else-if="f.type === 'string'" v-model="params[f.key]" class="input" />
 
-            <!-- 嵌套对象（考勤的归零规则） -->
+            <!-- 嵌套对象（考勤的归零规则）：可能没有，未设置时不能直接读它的子字段 -->
             <div v-else-if="f.type === 'object'" class="subfields">
-              <label v-for="sf in f.fields" :key="sf.key" class="field inline">
-                <span>{{ sf.label }}</span>
-                <input
-                v-model="params[f.key][sf.key]"
-                class="input"
-                :type="sf.type === 'number' ? 'number' : 'text'"
-                style="width: 110px"
-                />
-              </label>
-              <button class="btn mini" @click="params[f.key] = undefined">清空（不需要这条规则）</button>
+              <template v-if="params[f.key]">
+                <label v-for="sf in f.fields" :key="sf.key" class="field inline">
+                  <span>{{ sf.label }}</span>
+                  <input
+                  v-model="params[f.key][sf.key]"
+                  class="input"
+                  :type="sf.type === 'number' ? 'number' : 'text'"
+                  style="width: 110px"
+                  />
+                </label>
+                <button class="btn mini" @click="params[f.key] = undefined">清空（不需要这条规则）</button>
+              </template>
+              <template v-else>
+                <span class="dim mini">未启用{{ f.optional ? '（可选）' : '' }}</span>
+                <button class="btn mini" @click="enableObj(f)">启用</button>
+              </template>
             </div>
 
             <!-- 等级表 -->
@@ -740,14 +746,38 @@ function ruleName(type) {
   return r ? r.name : type
 }
 
+/** 按 schema 给一个嵌套对象参数填默认值（归零规则这类） */
+function enableObj(f) {
+  if (!params.value || !f) return
+  const o = {}
+  for (const sf of f.fields || []) {
+    if (sf.defaultValue !== undefined) o[sf.key] = sf.defaultValue
+  }
+  params.value[f.key] = o
+}
+
 function onRuleChange() {
   // 换规则就重置参数，免得带着上一条规则的字段（服务端也会校验）
   if (!cur.value) return
-  cur.value.rule.params = {}
-  if (cur.value.rule.type === 'avg') cur.value.rule.params.grades = [{ key: 'A', label: 'A（100）', factor: 1 }]
-  if (cur.value.rule.type === 'rubric') cur.value.rule.params.dims = [{ key: 'd1', name: '维度一', full: cur.value.full }]
-  if (cur.value.rule.type === 'raw') cur.value.rule.params.rawFull = 100
-  if (cur.value.rule.type === 'base' || cur.value.rule.type === 'acc') cur.value.rule.params.start = cur.value.full
+  const t = cur.value.rule.type
+  const sch = ((rules.value.find((r) => r.type === t) || {}).schema) || []
+  const p = {}
+  /*
+   * 先按 schema 的 defaultValue 铺一遍。
+   * 以前只给几个特例赋值（avg/rubric/raw/start），其余字段全靠用户自己填 ——
+   * 输入框绑的是 undefined，看着是空的，而且切几次规则再切回来，
+   * 像「缺勤一次扣」「最低分」这种就没值了。
+   */
+  for (const f of sch) {
+    if (f.type === 'object') continue // 可选嵌套对象不自动创建，界面上点「启用」
+    if (f.defaultValue !== undefined) p[f.key] = f.defaultValue
+  }
+  if (t === 'avg' && !p.grades) p.grades = [{ key: 'A', label: 'A（100）', factor: 1 }]
+  if (t === 'rubric' && !p.dims) p.dims = [{ key: 'd1', name: '维度一', full: cur.value.full }]
+  if (t === 'raw') p.rawFull = p.rawFull === undefined ? 100 : p.rawFull
+  // 起始分默认等于本项满分（全勤就是满分 / 从零累加时通常是 0，按 schema 默认值走）
+  if ((t === 'base' || t === 'acc') && p.start === undefined) p.start = cur.value.full
+  cur.value.rule.params = p
 }
 
 function move(i, d) {
