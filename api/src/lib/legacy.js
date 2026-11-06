@@ -14,6 +14,7 @@
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
+import { addStudents } from './repo.js'
 
 const require = createRequire(import.meta.url)
 const HERE = path.dirname(fileURLToPath(import.meta.url)) // api/src/lib
@@ -44,5 +45,23 @@ export const sheet = require(path.join(LEGACY, 'sheet.js'))
 export const timetable = require(path.join(LEGACY, 'timetable.js'))
 /** 浏览器兼容性兜底页的信息（最低 Chrome 版本 / 绿色版包 / 找谁要） */
 export const compat = require(path.join(LEGACY, 'compat.js'))
+/** 学生目录（data/students/<班>/<学号>/…）的创建与路径规则 */
+export const studentsLib = require(path.join(LEGACY, 'students.js'))
+
+/**
+ * 给 coursepack-import 打一个必要的补丁。
+ *
+ * 它内部拿到 `studentsLib` 后，导入名单时只调 `ensureMany(classId, students)` ——
+ * 而旧的 `ensureMany` **只建学生目录，不写名单**（CSV 时代名单在 classes.csv 里，
+ * 导入时由 save() 落盘）。到了 SQLite 这里，save() 是空操作 →
+ * 课程导进来了，班级也建了，**名单却是 0 个人**。
+ *
+ * 这里把它改成「建目录 + 写库」。用的是同一个模块对象，
+ * coursepack-import 里的引用会立刻看到改动。
+ */
+studentsLib.ensureMany = (classId, list) => {
+  for (const s of list || []) if (s && s.sid) studentsLib.ensure(classId, s.sid)
+  addStudents(classId, list || [])
+}
 
 export { ROOT }

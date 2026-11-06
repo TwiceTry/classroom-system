@@ -11,6 +11,9 @@ import { scoring, scheme, withCourseScheme } from '../lib/scheme.js'
 import { sheet as sheetLib } from '../lib/legacy.js'
 import { broadcast } from './cast.js'
 
+/** 上传类接口的体积上限（与《课程包格式规范》§8 一致：整包 500MB） */
+const BIG_BODY = 512 * 1024 * 1024
+
 /** 考勤会话（当前在点哪个班的哪一节，抽过谁）—— 存 state 表 */
 const ATT_KEY = (classId) => 'attend:' + classId
 /** 当前聚焦（全班屏幕上显示谁）—— 存 state 表 */
@@ -473,6 +476,7 @@ export default async function classroomRoutes(app) {
    *   ?apply=1 才真写库，否则只返回解析结果（预检）
    */
   app.post('/api/classes/:id/roster/sheet', {
+    bodyLimit: BIG_BODY,
     preHandler: requireAuth('teacher'),
     schema: { body: {} },
     handler: async (req, reply) => {

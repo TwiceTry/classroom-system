@@ -14,6 +14,9 @@ import * as repo from '../lib/repo.js'
 import { dbAdapter } from '../lib/db-adapter.js'
 import { coursepack, coursepackImport, classio } from '../lib/legacy.js'
 
+/** 上传类接口的体积上限（与《课程包格式规范》§8 一致：整包 500MB） */
+const BIG_BODY = 512 * 1024 * 1024
+
 /** 把上传上来的 zip 落到临时文件（旧 lib 的 readPackage 要路径） */
 function writeTempZip(buf) {
   const file = path.join(os.tmpdir(), 'ts-pack-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6) + '.zip')
@@ -35,7 +38,7 @@ export default async function coursepackRoutes(app) {
   /* ---------------- 课程包 ---------------- */
 
   /** 预检：这个包会带来什么（不落盘） */
-  app.post('/api/courses/import/inspect', { preHandler: requireAuth('teacher') }, async (req) => {
+  app.post('/api/courses/import/inspect', { preHandler: requireAuth('teacher'), bodyLimit: BIG_BODY }, async (req) => {
     const buf = req.rawBodyBuffer
     if (!buf || !buf.length) throw badRequest('没有收到 zip')
     const tmp = writeTempZip(buf)
@@ -52,7 +55,7 @@ export default async function coursepackRoutes(app) {
   })
 
   /** 应用：真正导入 */
-  app.post('/api/courses/import/apply', { preHandler: requireAuth('teacher') }, async (req) => {
+  app.post('/api/courses/import/apply', { preHandler: requireAuth('teacher'), bodyLimit: BIG_BODY }, async (req) => {
     const buf = req.rawBodyBuffer
     if (!buf || !buf.length) throw badRequest('没有收到 zip')
     const strategy = String(req.query.strategy || 'merge')
@@ -152,7 +155,7 @@ export default async function coursepackRoutes(app) {
   })
 
   /** 班级包预检 */
-  app.post('/api/courses/:id/classes/inspect', { preHandler: requireAuth('teacher') }, async (req) => {
+  app.post('/api/courses/:id/classes/inspect', { preHandler: requireAuth('teacher'), bodyLimit: BIG_BODY }, async (req) => {
     const course = repo.getCourse(req.params.id)
     if (!course) throw notFound('课程不存在')
     const buf = req.rawBodyBuffer
@@ -161,7 +164,7 @@ export default async function coursepackRoutes(app) {
   })
 
   /** 班级包应用：?mode=merge|replace */
-  app.post('/api/courses/:id/classes/apply', { preHandler: requireAuth('teacher') }, async (req) => {
+  app.post('/api/courses/:id/classes/apply', { preHandler: requireAuth('teacher'), bodyLimit: BIG_BODY }, async (req) => {
     const course = repo.getCourse(req.params.id)
     if (!course) throw notFound('课程不存在')
     const buf = req.rawBodyBuffer

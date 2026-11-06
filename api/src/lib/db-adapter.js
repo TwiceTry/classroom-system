@@ -25,9 +25,17 @@ export const dbAdapter = {
 
   upsertCourse: (c) => repo.upsertCourse(c),
 
-  /** 旧签名是 createClass(id, name, courseId) */
-  createClass: (id, name, courseId) =>
-    repo.insertClass({ id, name, courseId, createdAt: new Date().toISOString(), rollcallRound: 1 }),
+  /**
+   * 旧签名是 createClass(id, name, courseId)。
+   *
+   * 返回值必须带 `students: []` —— 旧导入代码紧接着就跑
+   * `target.students.map(...)`，缺这个数组会直接崩「reading 'map'」，
+   * 而且崩在「班级刚建好、名单还没写」的时刻，留下空班级。
+   */
+  createClass: (id, name, courseId) => {
+    const row = repo.insertClass({ id, name, courseId, createdAt: new Date().toISOString(), rollcallRound: 1 })
+    return Object.assign({}, row, { students: [] })
+  },
 
   /** CSV 时代的手动落盘；SQLite 是即时写入，这里什么都不用做 */
   save: () => {},

@@ -66,16 +66,55 @@ export async function buildApp(opts = {}) {
   )
 
   /** 统一错误体：{ error: { code, message, details } } */
+  /**
+   * 状态码 → 稳定的错误码。
+   * 复用旧模块（coursepack-import / classio / schemeio …）时，它们抛的是
+   * `{ status, message }`，没有 code —— 这里补一个，前端就不用按中文匹配。
+   */
+  const CODE_BY_STATUS = {
+    400: 'bad_request',
+    401: 'unauthorized',
+    403: 'forbidden',
+    404: 'not_found',
+    409: 'conflict',
+    413: 'too_large',
+    415: 'unsupported_media_type',
+    422: 'unprocessable',
+  }
+
   app.setErrorHandler((err, req, reply) => {
-    const status = err.statusCode && err.statusCode >= 400 ? err.statusCode : 500
-    const isKnown = err instanceof ApiError || (err.statusCode && err.statusCode < 500)
+    /*
+     * 两种错误形状都要认：
+     *   · 新代码：ApiError（statusCode + code）
+     *   · 旧模块：HttpError（只有 status）
+     * 只认 statusCode 的话，旧模块抛的「不是 zip」「sha256 不符」
+     * 「学号跨班重复」全会被吞成 500「服务器内部错误」——
+     * 老师根本看不出该改哪儿，而这恰恰是规范 §7 最强调的地方。
+     */
+    const legacyStatus = typeof err.status === 'number' && err.status >= 400 ? err.status : 0
+    const rawStatus = Number(err.statusCode || legacyStatus) || 0
+    const status = rawStatus >= 400 ? rawStatus : 500
+    const isKnown = err instanceof ApiError || (rawStatus >= 400 && rawStatus < 500)
+
     if (!isKnown) req.log.error({ err }, '未捕获异常')
     if (reply.sent) return
+
+    /*
+     * 旧模块把「哪几条不对」挂在 err.errors 上（比如课程包：
+     * 「course.id 不合法」「第 3 个文件的 sha256 不符」）。
+     * 只回一句「有 N 个问题」老师没法改，所以把第一条塞进 message、全部放进 details。
+     */
+    const list = Array.isArray(err.errors) ? err.errors : null
+    let message = isKnown ? err.message : '服务器内部错误'
+    if (list && list.length) message += '：' + list[0] + (list.length > 1 ? ' 等 ' + list.length + ' 条' : '')
+
+    const details = err.details !== undefined ? err.details : list ? { errors: list, warnings: err.warnings || [] } : undefined
+
     reply.status(status).send({
       error: {
-        code: err.code || (status === 500 ? 'internal' : 'error'),
-        message: isKnown ? err.message : '服务器内部错误',
-        ...(err.details !== undefined ? { details: err.details } : {}),
+        code: err.code || (status === 500 ? 'internal' : CODE_BY_STATUS[status] || 'error'),
+        message,
+        ...(details !== undefined ? { details } : {}),
       },
     })
   })

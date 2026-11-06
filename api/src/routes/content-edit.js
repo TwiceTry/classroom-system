@@ -13,6 +13,9 @@ import * as repo from '../lib/repo.js'
 import { contentRootOf } from './courses.js'
 import { coursefiles, contentio } from '../lib/legacy.js'
 
+/** 上传类接口的体积上限（与《课程包格式规范》§8 一致：整包 500MB） */
+const BIG_BODY = 512 * 1024 * 1024
+
 /** 课程 + 内容根；学生不许碰讲义 */
 function ctxOf(req, needTeacher = true) {
   const course = repo.getCourse(req.params.id)
@@ -112,7 +115,7 @@ export default async function contentEditRoutes(app) {
   })
 
   /** 上传单个文件：?path=lecture/ 或 ?path=lecture/名字.md，body 是原始字节 */
-  app.post('/api/courses/:id/files/upload', { preHandler: requireAuth('teacher') }, async (req) => {
+  app.post('/api/courses/:id/files/upload', { preHandler: requireAuth('teacher'), bodyLimit: BIG_BODY }, async (req) => {
     const { root } = ctxOf(req)
     const rel = String(req.query.path || '')
     if (!rel) throw badRequest('缺少 path')
@@ -133,7 +136,7 @@ export default async function contentEditRoutes(app) {
   })
 
   /** 导入预检（不落盘）：body 是 zip */
-  app.post('/api/courses/:id/content/inspect', { preHandler: requireAuth('teacher') }, async (req) => {
+  app.post('/api/courses/:id/content/inspect', { preHandler: requireAuth('teacher'), bodyLimit: BIG_BODY }, async (req) => {
     const { course } = ctxOf(req)
     const dir = String(req.query.dir || '')
     if (!dir) throw badRequest('缺少 dir')
@@ -143,7 +146,7 @@ export default async function contentEditRoutes(app) {
   })
 
   /** 导入应用：?mode=merge|replace */
-  app.post('/api/courses/:id/content/apply', { preHandler: requireAuth('teacher') }, async (req) => {
+  app.post('/api/courses/:id/content/apply', { preHandler: requireAuth('teacher'), bodyLimit: BIG_BODY }, async (req) => {
     const { course } = ctxOf(req)
     const dir = String(req.query.dir || '')
     if (!dir) throw badRequest('缺少 dir')
