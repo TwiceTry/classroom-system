@@ -29,17 +29,19 @@
         <p v-if="a.note" class="note">{{ a.note }}</p>
 
         <div class="hwfoot">
-          <span v-if="!a.myLatest" class="dim mini">还没交过</span>
+          <!-- 字段名对齐后端：mySubmission（原先是 myLatest / mine，永远拿不到） -->
+          <span v-if="!a.mySubmission" class="dim mini">还没交过</span>
           <span v-else class="mini">
-            交过 {{ a.mine.length }} 次，最近 {{ when(a.myLatest.createdAt) }}
-            <template v-if="a.myLatest.score !== null"> · <b class="score">{{ a.myLatest.score }}</b> 分</template>
+            已提交 {{ when(a.mySubmission.createdAt) }}
+            <template v-if="a.mySubmission.score !== undefined && a.mySubmission.score !== null"> · <b class="score">{{ a.mySubmission.score }}</b> 分</template>
             <template v-else> · 待批</template>
+            <template v-if="a.mySubmission.late"> · 迟交</template>
           </span>
           <span class="spacer"></span>
           <router-link v-if="a.status === 'open'" class="btn mini primary" :to="'/student/projects/' + a.id">
-            {{ a.myLatest ? '再交一次' : '去提交' }}
+            {{ a.mySubmission ? '再交一次' : '去提交' }}
           </router-link>
-          <router-link v-else-if="a.myLatest" class="btn mini" :to="'/student/projects/' + a.id">看我的提交</router-link>
+          <router-link v-else-if="a.mySubmission" class="btn mini" :to="'/student/projects/' + a.id">看我的提交</router-link>
           <span v-else class="btn mini" style="opacity: 0.5; cursor: default">等老师开始</span>
         </div>
       </article>

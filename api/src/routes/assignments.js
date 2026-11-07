@@ -472,9 +472,24 @@ export default async function assignmentRoutes(app) {
     if (!cls) throw notFound('班级不存在')
     const course = cls.courseId ? repo.getCourse(cls.courseId) : null
 
+    /*
+     * 按考核项过滤。
+     *
+     * 学生端的「课堂作业 / 大作业 / 机试」是三个独立页面，各自请求
+     * `?itemKey=homework|project|exam`，但这里原先**根本没读这个参数** ——
+     * 于是三个页面拿到的都是同一份「本课程全部作业」，
+     * 学生点「课堂作业」会看到大作业和机试混在一起。
+     *
+     * 不传 itemKey 时返回全部（保留原来的用法，命令行/调试仍可用）；
+     * 传了就按考核项精确过滤。将来加新的考核项时，前端只要传自己的 itemKey，
+     * 这里不用改。
+     */
+    const wantItem = String(req.query.itemKey || '').trim()
+
     const items = repo
       .listAssignments(course ? course.id : undefined)
       .filter((a) => !a.courseId || a.courseId === (course ? course.id : ''))
+      .filter((a) => !wantItem || String(a.itemKey || '') === wantItem)
       .map((a) => {
         const mine = repo.findSubmission(a.id, t.sid)
         const visible = a.status === 'open' || !!mine

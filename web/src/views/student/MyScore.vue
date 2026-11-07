@@ -86,18 +86,19 @@ async function load() {
   }
 }
 
+/*
+ * 规则说明直接取后端给的 hint。
+ *
+ * 这里原来硬编码了一张 map，写着「默认全勤 10 分、缺勤 −2、迟到 −1」——
+ * 而方案里实际是「起始 5 分、缺勤每次 −1、迟到不扣」。
+ * 学生看着这张说明去算自己的分，怎么都算不平。
+ *
+ * 后端的 hint 是**按当前方案参数现算**的（改了分值、改了扣分规则，它跟着变），
+ * 所以前端不该再存一份副本 —— 任何写死的说明迟早会和真实规则脱节。
+ */
 function hintOf(key) {
-  const row = data.value.rows.find((r) => r.key === key)
-  if (!row) return ''
-  const map = {
-    attend: '默认全勤 10 分，只记异常；缺勤 −2，迟到 / 早退 −1，缺勤满 3 次本项计 0。',
-    interact: '发言 / 提问 / 上台演示 / 小组协作都要加分，上限 10 分。',
-    homework: '每次作业判 A / B / C，取均分折算到 20 分；迟交 ×50%，未交或抄袭 0 分。',
-    exam: '卷面 100 分按 30% 折算，以最后一次录入为准。',
-    project: '按量规四维打分：功能完整 12 + 代码结构 9 + 界面体验 6 + 部署与文档 3。',
-    bonus: '特定选题方向等选题加分，计入总分但总分不超过 100。',
-  }
-  return map[key] || ''
+  const it = (data.value.items || []).find((x) => x.key === key)
+  return (it && it.hint) || ''
 }
 
 function fmt(iso) {

@@ -26,19 +26,25 @@
         <p v-else class="note dim">按老师的要求改代码，改完点提交。</p>
 
         <div class="hwfoot">
-          <span v-if="!a.myLatest" class="dim mini">还没交过</span>
+          <!--
+            这里原来读 a.myLatest / a.mine，而后端给的是 mySubmission —— 字段名对不上，
+            于是**交了也永远显示「还没交过」**，按钮也一直是「去做作业」。
+            现在统一用后端的 mySubmission。
+          -->
+          <span v-if="!a.mySubmission" class="dim mini">还没交过</span>
           <span v-else class="mini">
-            交过 {{ a.mine.length }} 次，最近一次 {{ when(a.myLatest.createdAt) }}
-            <template v-if="a.myLatest.score !== null">
-              · <b class="score">{{ a.myLatest.score }}</b> 分
+            已提交 {{ when(a.mySubmission.createdAt) }}
+            <template v-if="a.mySubmission.score !== undefined && a.mySubmission.score !== null">
+              · <b class="score">{{ a.mySubmission.score }}</b> 分
             </template>
             <template v-else>· 待批</template>
+            <template v-if="a.mySubmission.late"> · 迟交</template>
           </span>
           <span class="spacer"></span>
           <router-link v-if="a.status === 'open'" class="btn mini primary" :to="'/student/assignments/' + a.id">
-            {{ a.myLatest ? '继续改 / 重交' : '去做作业' }}
+            {{ a.mySubmission ? '继续改 / 重交' : '去做作业' }}
           </router-link>
-          <router-link v-else-if="a.myLatest" class="btn mini" :to="'/student/assignments/' + a.id">
+          <router-link v-else-if="a.mySubmission" class="btn mini" :to="'/student/assignments/' + a.id">
             看我的提交
           </router-link>
           <span v-else class="btn mini" :class="{ disabled: true }" style="opacity: 0.5; cursor: default">

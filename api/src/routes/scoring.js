@@ -101,7 +101,20 @@ export default async function scoringRoutes(app) {
     const course = repo.getCourse(String(req.query.courseId || ''))
     const anyCourse = course || repo.listCourses().find((c) => !c.archived) || null
     /** 只要导航用的那点东西（学生端每页首屏都会拉） */
-    const brief = String(req.query.brief || '') === '1'
+    /*
+     * 只给学生「导航用的那点东西」。
+     *
+     * 这个接口登录即可访问（学生端侧栏要靠 modules 渲染），
+     * 但完整响应里有 raw（方案原文，含 changes 变更日志）、rules（含参数 schema）、
+     * items[].rule.params（精确扣分规则）—— 那是**教师端编辑器**的数据，
+     * 学生没必要看到「老师什么时候改了哪条规则」。
+     *
+     * 原来靠调用方自觉传 ?brief=1，但学生不带参数照样能拿全。
+     * 改成按角色强制：学生一律走 brief，老师仍可用 ?brief=1 取精简版做轻量轮询。
+     * 这样以后前端换写法、或者有人直接敲接口，都不会漏。
+     */
+    const isTeacher = !!(req.user && req.user.role === 'teacher')
+    const brief = !isTeacher || String(req.query.brief || '') === '1'
 
     // 「这节课开了哪些学生入口」：存隐藏列表
     const vis = anyCourse ? repo.getState('stuvis:' + anyCourse.id, null) : null

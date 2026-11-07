@@ -23,16 +23,17 @@
         </div>
         <p v-if="a.note" class="note">{{ a.note }}</p>
         <div class="hwfoot">
-          <span v-if="a.myLatest" class="mini">
-            <template v-if="a.myLatest.score !== null">已交卷 · <b class="score">{{ a.myLatest.score }}</b> 分</template>
+          <!-- 字段名对齐后端：mySubmission（原先是 myLatest，永远拿不到，交卷了也显示「还没开考」） -->
+          <span v-if="a.mySubmission" class="mini">
+            <template v-if="a.mySubmission.score !== undefined && a.mySubmission.score !== null">已交卷 · <b class="score">{{ a.mySubmission.score }}</b> 分</template>
             <template v-else>已交卷 · 等老师判</template>
           </span>
           <span v-else class="dim mini">还没开考</span>
           <span class="spacer"></span>
           <router-link v-if="a.status === 'open'" class="btn mini primary" :to="'/student/modules/' + itemKey + '/' + a.id">
-            {{ a.myLatest ? '再看我的答卷' : '开考' }}
+            {{ a.mySubmission ? '再看我的答卷' : '开考' }}
           </router-link>
-          <span v-else-if="a.myLatest" class="btn mini" style="opacity: 0.6; cursor: default">已结束</span>
+          <span v-else-if="a.mySubmission" class="btn mini" style="opacity: 0.6; cursor: default">已结束</span>
           <span v-else class="btn mini" style="opacity: 0.5; cursor: default">等老师开始</span>
         </div>
       </article>
