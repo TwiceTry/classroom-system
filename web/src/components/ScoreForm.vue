@@ -58,7 +58,7 @@
               :class="{ on: grade === g.key }"
               @click="grade = g.key"
             >
-              {{ g.name }}
+              {{ g.label || g.name || g.key }}
             </button>
           </div>
           <label class="check">

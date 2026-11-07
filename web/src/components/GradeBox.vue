@@ -32,7 +32,7 @@
           :class="{ on: v.grade === g.key }"
           @click="v.grade = g.key"
         >
-          {{ g.name }}
+          {{ g.label || g.name || g.key }}
         </button>
         <label class="check mini">
           <input v-model="v.late" type="checkbox" />
@@ -65,11 +65,22 @@ const v = props.modelValue
 
 const mode = computed(() => (props.item.rule ? props.item.rule.type : 'avg'))
 
+/*
+ * 等级折算：按**本项满分**算，不是固定 100。
+ *
+ * 这里原来写的是 100 × 系数：作业项满分 20 时，选 A 会显示「= 100 分」，
+ * 而保存下去实际是 20 分（后端 grading.js 也有过同一个错，已修）。
+ * 老师看到 100、结果是 20，等于在骗人。
+ *
+ * 现在与后端同口径：item.full × 等级系数 × 迟交系数，夹到 [0, full]。
+ */
 const letterScore = computed(() => {
   const g = (props.item.grades || []).find((x) => x.key === v.grade)
   if (!g) return '—'
-  const late = props.item.lateFactor === undefined ? 1 : Number(props.item.lateFactor)
-  return Math.round(100 * g.factor * (v.late ? late : 1) * 10) / 10
+  const late = props.item.lateFactor === undefined ? 0.5 : Number(props.item.lateFactor)
+  const full = Number(props.item.full) || 100
+  const raw = full * g.factor * (v.late ? late : 1)
+  return Math.round(Math.min(full, Math.max(0, raw)) * 10) / 10
 })
 
 const rawScore = computed(() => {
