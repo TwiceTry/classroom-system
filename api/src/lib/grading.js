@@ -100,8 +100,21 @@ export function gradeSubmission(a, sub, who, body) {
         if (!g) throw badRequest('等级不在方案的等级表里')
         ev.grade = g.key
         ev.late = !!body.late
+        /*
+         * 按**本项满分**折算，不是固定 100。
+         *
+         * 原来这里写的是 `100 * factor * late`：作业项满分 20 时，
+         * 判 A 存进 submission.score 的就是 100（判 B 迟交是 42.5），
+         * 而计分引擎按方案算出的是 20（和 8.5）—— 两套数字对不上。
+         * 老师在批阅页看到「100 分」，实际只计了 20 分；
+         * 导出成绩表读的也是这个字段，会把分带错。
+         *
+         * 现在与计分引擎同口径：item.full × 等级系数 × 迟交系数，并夹到 [0, full]。
+         */
+        const lateFactor = item.lateFactor === undefined ? 0.5 : Number(item.lateFactor)
+        const full = Number(item.full) || 100
         score = scoring.round1(
-          100 * g.factor * (ev.late ? (item.lateFactor === undefined ? 0.5 : item.lateFactor) : 1)
+          scoring.clamp(full * g.factor * (ev.late ? lateFactor : 1), 0, full)
         )
       }
       repo.insertEvent(ev)
