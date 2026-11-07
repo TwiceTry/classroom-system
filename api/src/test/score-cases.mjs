@@ -51,39 +51,88 @@ function check(name, events, expect) {
   }
 }
 
-/* ============ base（考勤）============
- * params: start=5, perAbsent=1, perLate=0, floor=0
- *         zeroRule{kind:缺勤, count:3, lateMerge:2}
+/*
+ * ============ base（考勤）============
  *
- * 注意 perLate=0：迟到本身不扣分，只影响"是否归零"。
+ * **期望值从方案参数算出来，不写死数字。**
+ *
+ * 原来这里写死了「start=5 / perAbsent=1 / perLate=0」，于是老师在界面上
+ * 把起始分改成 10，这 12 条全红 —— 而算法根本没变。测试测的应该是
+ * 「给定这些参数，算得对不对」，不是「参数恰好等于某个值」。
  */
-check('全勤（无记录）→ start=5', [], { attend: 5, total: 5 })
-check('缺勤 1 次 → 5-1=4', [ev('attend', { kind: '缺勤' })], { attend: 4 })
-check('缺勤 2 次 → 5-2=3', [ev('attend', { kind: '缺勤' }), ev('attend', { kind: '缺勤' })], { attend: 3 })
-check('缺勤 3 次 → 触发归零=0', [ev('attend', { kind: '缺勤' }), ev('attend', { kind: '缺勤' }), ev('attend', { kind: '缺勤' })], { attend: 0 })
-check('迟到 2 次 → 不扣分（perLate=0），2<3 不归零', [ev('attend', { kind: '迟到' }), ev('attend', { kind: '迟到' })], { attend: 5 })
+const attendItem = items.find((i) => i.key === 'attend')
+const AP = (attendItem && attendItem.rule && attendItem.rule.params) || {}
+const S = Number(AP.start !== undefined ? AP.start : attendItem ? attendItem.full : 5)
+const AB = AP.perAbsent === undefined ? 2 : Number(AP.perAbsent)
+const LT = AP.perLate === undefined ? 1 : Number(AP.perLate)
+const FLOOR = Number(AP.floor || 0)
+const FULL_A = Number(attendItem ? attendItem.full : 5)
+const ZR = AP.zeroRule || null
+const ZC = ZR ? Number(ZR.count || 3) : 0
+const ZM = ZR ? Number(ZR.lateMerge || 0) : 0
+
+/** 与 scoreBase 同口径：扣分 + 归零 + 夹到 [floor, full] */
+const clampA = (v) => Math.min(FULL_A, Math.max(FLOOR, Math.round(v * 10) / 10))
+const expectAttend = (absent, late) => {
+  if (ZR && ZR.kind === '缺勤') {
+    const merged = ZM > 0 ? Math.floor(late / ZM) : 0
+    if (absent + merged >= ZC) return 0
+  }
+  return clampA(S - absent * AB - late * LT)
+}
+
+console.log(`  （考勤参数：start=${S} perAbsent=${AB} perLate=${LT} floor=${FLOOR} ` +
+  `zeroRule=${ZR ? ZR.kind + '≥' + ZC + '次，迟到' + ZM + '折1' : '无'}）`)
+
+check(`全勤（无记录）→ ${S}`, [], { attend: expectAttend(0, 0), total: expectAttend(0, 0) })
+check(`缺勤 1 次 → ${S}-${AB}`, [ev('attend', { kind: '缺勤' })], { attend: expectAttend(1, 0) })
+check(`缺勤 2 次 → ${S}-${AB}×2`, [ev('attend', { kind: '缺勤' }), ev('attend', { kind: '缺勤' })], { attend: expectAttend(2, 0) })
+if (ZR) {
+  check(
+    `缺勤 ${ZC} 次 → 触发归零`,
+    Array.from({ length: ZC }, () => ev('attend', { kind: '缺勤' })),
+    { attend: 0 }
+  )
+}
 check(
-  '缺勤 1 + 迟到 2 → 扣 1 分；折算 1+1=2 <3 不归零',
+  `迟到 2 次 → 每次扣 ${LT}，2 次折算 ${ZM > 0 ? Math.floor(2 / ZM) : 0} < ${ZC} 不归零`,
+  [ev('attend', { kind: '迟到' }), ev('attend', { kind: '迟到' })],
+  { attend: expectAttend(0, 2) }
+)
+check(
+  '缺勤 1 + 迟到 2 → 扣 1 个缺勤 + 2 个迟到',
   [ev('attend', { kind: '缺勤' }), ev('attend', { kind: '迟到' }), ev('attend', { kind: '迟到' })],
-  { attend: 4 }
+  { attend: expectAttend(1, 2) }
 )
 check(
-  '缺勤 2 + 迟到 2 → 折算 2+1=3 ≥3 → 归零',
+  '缺勤 2 + 迟到 2 → 折算后若达阈值则归零',
   [ev('attend', { kind: '缺勤' }), ev('attend', { kind: '缺勤' }), ev('attend', { kind: '迟到' }), ev('attend', { kind: '迟到' })],
-  { attend: 0 }
+  { attend: expectAttend(2, 2) }
 )
-check('已撤销的缺勤不计', [ev('attend', { kind: '缺勤', voided: true })], { attend: 5 })
-check('请假不扣分', [ev('attend', { kind: '请假' })], { attend: 5 })
+check('已撤销的缺勤不计', [ev('attend', { kind: '缺勤', voided: true })], { attend: expectAttend(0, 0) })
+check('请假不扣分', [ev('attend', { kind: '请假' })], { attend: expectAttend(0, 0) })
 
 /* ============ acc（课堂互动）============
- * params: start=0，封顶 = full(10)
- * 实现里只累加 delta（perHitMax 这个参数目前没被用到，见文末说明）
+ * start 由参数给，封顶 = 该项满分。
+ * 实现只累加 delta（perHitMax 目前没被用到，见文末说明）。
  */
-check('互动 3 次各 +1 → 3', [ev('interact', { delta: 1 }), ev('interact', { delta: 1 }), ev('interact', { delta: 1 })], { interact: 3 })
-check('互动一次 +2 → 2', [ev('interact', { delta: 2 })], { interact: 2 })
-check('互动 15 次各 +1 → 封顶 10', Array.from({ length: 15 }, () => ev('interact', { delta: 1 })), { interact: 10 })
+const interactItem = items.find((i) => i.key === 'interact')
+const IA = (interactItem && interactItem.rule && interactItem.rule.params) || {}
+const FULL_I = Number(interactItem ? interactItem.full : 10)
+const START_I = Number(IA.start || 0)
+const acc = (sum) => Math.min(FULL_I, Math.max(0, START_I + sum))
+
+console.log(`  （互动参数：start=${START_I} 满分=${FULL_I}）`)
+
+check(`互动 3 次各 +1 → ${acc(3)}`, [ev('interact', { delta: 1 }), ev('interact', { delta: 1 }), ev('interact', { delta: 1 })], { interact: acc(3) })
+check(`互动一次 +2 → ${acc(2)}`, [ev('interact', { delta: 2 })], { interact: acc(2) })
+check(
+  `互动 15 次各 +1 → 封顶 ${FULL_I}`,
+  Array.from({ length: 15 }, () => ev('interact', { delta: 1 })),
+  { interact: acc(15) }
+)
 check('互动 -1 → 夹到 0', [ev('interact', { delta: -1 })], { interact: 0 })
-check('已撤销的互动不计', [ev('interact', { delta: 1, voided: true })], { interact: 0 })
+check('已撤销的互动不计', [ev('interact', { delta: 1, voided: true })], { interact: START_I })
 
 /* ============ avg（课堂作业）============
  * params: grades A=1 B=0.85 C=0.7 D=0.6 F=0, lateFactor=0.5, skipWorst=0
@@ -117,21 +166,38 @@ check('机试 0 分 → 0', [ev('exam', { raw: 0 })], { exam: 0 })
 check('两次录入取最后一次 → 50×0.3=15', [ev('exam', { raw: 100 }), ev('exam', { raw: 50 })], { exam: 15 })
 
 /* ============ 汇总 ============ */
+/* 各项满分都从方案取，别写死数字（老师随时会改分值） */
+const itemFull = (k) => {
+  const it = items.find((i) => i.key === k)
+  return Number(it ? it.full : 0)
+}
+const F_HW = itemFull('homework')
+const F_PRJ = itemFull('project')
+const F_EXAM = itemFull('exam')
+const F_INT = itemFull('interact')
+
 check(
-  '全满组合：5 + 10 + 20 + 30 + 30 = 95',
+  `全满组合：考勤 ${S} + 互动 ${F_INT} + 作业 ${F_HW} + 大作业 ${F_PRJ} + 机试 ${F_EXAM}`,
   [
     ...Array.from({ length: 10 }, () => ev('interact', { delta: 1 })),
     ev('homework', { grade: 'A' }),
     ev('project', { dims: { func: 12, code: 9, ui: 6, doc: 3 } }),
     ev('exam', { raw: 100 }),
   ],
-  { attend: 5, interact: 10, homework: 20, project: 30, exam: 30, total: 95 }
+  {
+    attend: S,
+    interact: F_INT,
+    homework: F_HW,
+    project: F_PRJ,
+    exam: F_EXAM,
+    total: S + F_INT + F_HW + F_PRJ + F_EXAM,
+  }
 )
 
 check(
   '各项独立：只交作业，总评就是作业分',
   [ev('homework', { grade: 'A' })],
-  { attend: 5, homework: 20, total: 25 }
+  { attend: S, homework: F_HW, total: S + F_HW }
 )
 
 /* ============ 封顶（cap）============
@@ -150,12 +216,13 @@ check(
     },
   ])
   const r = computeStudentWith(withBonus, 100, [ev('exam', { raw: 100 }), ev('bonus', { delta: 20 })], 'S1')
-  // 机试 30 + 加分 20 + 考勤全勤 5 = 55，未超 100
-  const okCap = Math.abs(r.total - 55) < 1e-9 && r.capped === false
+  // 机试满分 + 加分 20 + 考勤全勤 S，未超封顶 100
+  const expectSum = F_EXAM + 20 + S
+  const okCap = Math.abs(r.total - expectSum) < 1e-9 && r.capped === false
   if (okCap) pass++
   else {
     fail++
-    detail.push('✗ 加分项计入总分（30+20+5=55）→ 实际 ' + r.total + ' capped=' + r.capped)
+    detail.push('✗ 加分项计入总分（' + F_EXAM + '+20+' + S + '=' + expectSum + '）→ 实际 ' + r.total + ' capped=' + r.capped)
   }
 
   const heavy = items.concat([

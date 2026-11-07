@@ -104,12 +104,50 @@ function initPassword() {
 }
 initPassword()
 
-/** 当前教师口令（每次读都是最新 —— 界面上改完立刻生效） */
+/*
+ * 热加载：老师**手改** data/config.json 之后，不用重启也能生效。
+ *
+ * 之前 config 只在进程启动时读一次（模块加载时），于是：
+ * 改了文件 → 登录还是旧口令 → 以为改错了 → 再去查代码。
+ * 实际上只是没重启。
+ *
+ * 这里按 mtime 判断文件有没有被动过：动过就重读 teacherPassword。
+ * 一次 statSync，微秒级，而且只在有人尝试登录/校验口令时才发生。
+ * 界面上改口令本来就会同时更新内存，所以这条主要服务于「手工编辑文件」。
+ */
+let _pwdMtime = 0
+try {
+  _pwdMtime = fs.statSync(CONFIG_FILE).mtimeMs
+} catch (e) {
+  /* 文件还不存在（首次启动）：下次读口令时再取 */
+}
+
+function reloadPasswordIfChanged() {
+  let st
+  try {
+    st = fs.statSync(CONFIG_FILE)
+  } catch (e) {
+    return // 文件被删了/读不到：保持内存里的口令，不把服务搞挂
+  }
+  if (st.mtimeMs === _pwdMtime) return
+  _pwdMtime = st.mtimeMs
+
+  const again = readConfigFile()
+  const filePwd = String(again.teacherPassword || '').trim()
+  if (!filePwd || filePwd === currentPassword) return // 口令没变（改的是别的字段）
+
+  currentPassword = filePwd
+  passwordSource = 'file'
+  console.log('[config] data/config.json 已变更，教师口令重新加载（无需重启）')
+}
+
+/** 当前教师口令：每次读都会先看文件有没有被手改过 */
 export function getPassword() {
+  reloadPasswordIfChanged()
   return currentPassword
 }
 
-/** 口令来源：file / env-migrated / default */
+/** 口令来源：file / env-init / default */
 export function getPasswordSource() {
   return passwordSource
 }
@@ -124,6 +162,12 @@ export function setPassword(pwd) {
   flushPassword(s)
   currentPassword = s
   passwordSource = 'file'
+  // 刚写过的文件，记下 mtime，免得下一次 getPassword 又白读一遍
+  try {
+    _pwdMtime = fs.statSync(CONFIG_FILE).mtimeMs
+  } catch (e) {
+    /* ignore */
+  }
   return true
 }
 
@@ -135,14 +179,14 @@ export const config = {
   edgeKey,
   tokenHours: Number(stored.tokenHours || 12),
 
-  // 用 getter：界面上改完口令，这里立刻就是新值（不需要重启进程）
+  // getter：读的时候顺带检查 config.json 有没有被手改（见 reloadPasswordIfChanged）
   get teacherPassword() {
-    return currentPassword
+    return getPassword()
   },
   get passwordIsDefault() {
     // 判的是「当前口令是不是默认值」，不是「它从哪来」。
     // 首次启动落盘 teacher 之后，来源会变成 file，但口令依然是默认的 —— 得继续提醒。
-    return currentPassword === 'teacher'
+    return getPassword() === 'teacher'
   },
 
   dataDir: DATA_DIR,

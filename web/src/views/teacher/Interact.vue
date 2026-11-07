@@ -299,10 +299,24 @@ async function give(s, delta, label) {
     delta,
     reason: label || '课堂互动',
   }
+  const before = Number((students.value.find((x) => x.sid === s.sid) || {}).score) || 0
   await api.post(url('/events'), body)
   await reload(true)
   const hit = students.value.find((x) => x.sid === s.sid)
   current.value = hit || current.value
+
+  const after = Number(hit ? hit.score : 0)
+  const cap = Number(full.value) || 0
+  /*
+   * 加分顶到满分时，分数不会涨，但次数会 +1。
+   * 不说清楚的话，老师看到「怎么没加」会连着点好几下 —— 分数没变，
+   * 「次数」却一路涨，事后再看记录会莫名其妙。
+   */
+  if (delta > 0 && cap > 0 && after >= cap && after <= before + 1e-9) {
+    show(s.name + ' 已经是满分 ' + cap + ' 了，分数加不上去（这一下只记了一次）')
+    return
+  }
+
   show(s.name + ' ' + (delta > 0 ? '+' + delta : delta) + '（' + (hit ? hit.score : '?') + ' / ' + full.value + '）')
 }
 
