@@ -24,17 +24,31 @@ const ROOT = path.resolve(HERE, '..', '..', '..')
  * 后面所有要登录学生的测试都会 401 —— 看起来像大规模故障，其实是脏状态。
  * 每次从干净状态开始，测试结果才可信。
  */
-function resetStudentAuth() {
+async function resetStudentAuth() {
   try {
     const f = path.join(ROOT, 'data/config.json')
     const c = JSON.parse(fs.readFileSync(f, 'utf8'))
     const sa = c.studentAuth || {}
-    if (sa.mode === 'local' && sa.verifyEachTime === false) return
-    c.studentAuth = Object.assign({}, sa, { mode: 'local', verifyEachTime: false })
-    fs.writeFileSync(f, JSON.stringify(c, null, 2), 'utf8')
-    console.log('（已复位学生登录方式 local / 不强制核验）')
+    if (sa.mode !== 'local' || sa.verifyEachTime !== false) {
+      c.studentAuth = Object.assign({}, sa, { mode: 'local', verifyEachTime: false })
+      fs.writeFileSync(f, JSON.stringify(c, null, 2), 'utf8')
+      console.log('（已复位学生登录方式 local / 不强制核验）')
+    }
   } catch (e) {
     /* 读不到就算了，别让总入口挂掉 */
+  }
+
+  /*
+   * 失败计数和禁用记录也要清。
+   * login-admin-flow 会造「连错 3 次」「老师禁用」这类状态，崩在半路就留给下一组测试，
+   * 表现成「学生突然登不进去」，很难查。
+   */
+  try {
+    const { unblockAll } = await import('../lib/login-fails.js')
+    const n = unblockAll()
+    if (n) console.log('（已清 ' + n + ' 条登录失败/禁用记录）')
+  } catch (e) {
+    /* 表还没建出来时忽略 */
   }
 }
 
@@ -60,6 +74,7 @@ const SETS = {
     ['机试全链路（设卷→答题→判卷→折算）', 'exam-flow.mjs'],
     ['起手代码（初始态 / 我的提交 / 恢复最初状态）', 'starter-flow.mjs'],
     ['学生登录方式（学号姓名 / 青果账号密码）', 'student-auth.mjs'],
+    ['班级登录管理（状态 / 禁用 / 解除）', 'login-admin-flow.mjs'],
   ],
 }
 
@@ -67,7 +82,7 @@ const want = process.argv.slice(2)
 const groups = want.length ? want : ['unit', 'e2e']
 
 // 要跑 e2e 就先复位学生登录方式，避免上一次崩溃留下的 kg 模式把结果全打成 401
-if (groups.includes('e2e')) resetStudentAuth()
+if (groups.includes('e2e')) await resetStudentAuth()
 
 let failed = 0
 for (const g of groups) {
