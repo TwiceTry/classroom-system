@@ -564,7 +564,18 @@ function drawOne() {
   const hit = pool[idx]
   drawn.add(hit.sid)
   current.value = hit
-  announce({ sid: hit.sid, seq: drawn.size, total: students.value.length, lock: spotLock.value })
+  /*
+   * name 必须带上：服务端只是原样广播 payload（classroom.js announceSpotlight），
+   * 学生端 Spotlight.vue 是 `name.value = msg.name || ''`。
+   * 少了它，学生端弹窗在、高度也在，但名字一片空白。
+   */
+  announce({
+    sid: hit.sid,
+    name: hit.name || '',
+    seq: drawn.size,
+    total: students.value.length,
+    lock: spotLock.value,
+  })
   saveAttendState()
 }
 

@@ -24,6 +24,23 @@ const SPOT_KEY = (classId) => 'spot:' + classId
 /** 把「聚焦某人」推给全班（学生端会全屏显示这个人的名字/看他的屏幕） */
 function announceSpotlight(classId, payload) {
   const spot = Object.assign({ kind: 'interact', at: Date.now() }, payload)
+  /*
+   * name 兜底：这一层是点名学生端弹窗的**唯一出口**，
+   * 而学生端 Spotlight.vue 读的是 `msg.name || ''` —— 没这个字段，
+   * 弹窗照样出现（高度也在），就是上面一片空白，看起来像坏了。
+   *
+   * 调用方（课堂互动抽人 / 考勤点名）以前都没传 name，
+   * 与其每处都记得传，不如在这里按 sid 从名单补一次：
+   * 名单本来就在内存里，一次 find 而已。以后加新调用也不会漏。
+   */
+  if (spot.sid && !spot.name) {
+    try {
+      const stu = repo.rosterOf(classId).find((s) => s.sid === spot.sid)
+      if (stu && stu.name) spot.name = stu.name
+    } catch (e) {
+      /* 补不上就算了，别因为显示名字把点名流程搞挂 */
+    }
+  }
   repo.setState(SPOT_KEY(classId), spot)
   const delivered = broadcast(Object.assign({ t: 'spotlight' }, spot))
   return delivered
