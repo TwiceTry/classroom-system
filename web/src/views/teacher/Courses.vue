@@ -113,6 +113,19 @@
         </label>
         <p class="dim mini">两个入口内容一样，按请求轮询分流。失败不会换另一个再试（换了也只是多消耗一次失败次数）。</p>
 
+        <label class="chkrow">
+          <input v-model="auth.verifyEachTime" type="checkbox" @change="saveAuth" />
+          <span>
+            <b>每次登录都向智慧校园核验</b>
+            <em class="dim mini">
+              关闭（默认）：第一次核验通过后记住密码，之后本地比对 ——
+              学生登录快（50 毫秒级），也少消耗智慧校园的失败次数。
+              打开：每次都问智慧校园（1 秒多），最准，但每次都在消耗它的失败计数。
+              这个区别学生看不到，他只需要输学号 + 密码。
+            </em>
+          </span>
+        </label>
+
         <div class="creds">
           <p class="dim mini">
             已记住 <b>{{ auth.rememberedCount || 0 }}</b> 个学生的密码（存的是不可逆的派生值，不是明文）。
@@ -433,7 +446,7 @@ const err = ref('')
 const toast = ref('')
 
 /* 学生登录方式（全局配置，不属于某一门课） */
-const auth = reactive({ mode: 'local', kgBases: [], rememberedCount: 0 })
+const auth = reactive({ mode: 'local', kgBases: [], rememberedCount: 0, verifyEachTime: false })
 
 async function loadAuth() {
   try {
@@ -441,6 +454,7 @@ async function loadAuth() {
     auth.mode = r.mode === 'kg' ? 'kg' : 'local'
     auth.kgBases = Array.isArray(r.kgBases) ? r.kgBases : []
     auth.rememberedCount = Number(r.rememberedCount || 0)
+    auth.verifyEachTime = r.verifyEachTime === true
   } catch (e) {
     toast.value = '读不到学生登录设置：' + e.message
   }
@@ -460,9 +474,14 @@ async function clearCreds() {
 
 async function saveAuth() {
   try {
-    const r = await api.patch('/api/settings/student-auth', { mode: auth.mode, kgBases: auth.kgBases })
+    const r = await api.patch('/api/settings/student-auth', {
+      mode: auth.mode,
+      kgBases: auth.kgBases,
+      verifyEachTime: auth.verifyEachTime,
+    })
     auth.mode = r.mode === 'kg' ? 'kg' : 'local'
     auth.kgBases = Array.isArray(r.kgBases) ? r.kgBases : []
+    auth.verifyEachTime = r.verifyEachTime === true
     toast.value =
       '已保存：学生现在用' + (auth.mode === 'kg' ? '学号 + 智慧校园密码' : '学号 + 姓名') + '登录'
   } catch (e) {
@@ -1035,5 +1054,21 @@ async function exportPack(c, parts) {
 }
 .input.wide {
   width: 220px;
+}
+
+.chkrow {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 8px 0;
+  cursor: pointer;
+}
+.chkrow span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.chkrow em {
+  font-style: normal;
 }
 </style>

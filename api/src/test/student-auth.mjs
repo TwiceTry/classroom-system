@@ -129,14 +129,26 @@ try {
     ok('本地比对通过即可登录', r.s === 200 && !!r.j.token, 'status=' + r.s)
     ok('走本地，没打青果（<500ms）', ms < 500, ms + 'ms')
 
-    /* 密码错：默认拒绝，且**不自动**去打青果（否则连输几次就把账号打锁） */
-    const t1 = Date.now()
-    const bad = await j('POST', '/api/auth/login/student', { sid: SID, password: 'wrong-password' })
-    const ms1 = Date.now() - t1
-    const m1 = (bad.j && bad.j.error && bad.j.error.message) || ''
-    ok('本地密码错 → 401', bad.s === 401, 'status=' + bad.s)
-    ok('提示引导「用青果再验一次」', m1.indexOf('青果再验') >= 0, m1.slice(0, 30))
-    ok('不自动打青果（<500ms）', ms1 < 500, ms1 + 'ms')
+    /*
+     * 密码错的路径**只在允许联网时才测**。
+     *
+     * 原因很实际：新逻辑下「本地对不上 → 去问青果」，而这里用的是名册里的**真实学号**。
+     * 每跑一次测试就给这个学号在青果那边记一次失败，
+     * 跑几次就把人锁了 —— 那不是测试，那是搞破坏。
+     * 默认（TS_KG_LIVE 未开）就跳过这一支，只验证本地成功路径。
+     */
+    if (!SKIP_KG) {
+      const t1 = Date.now()
+      const bad = await j('POST', '/api/auth/login/student', { sid: SID, password: 'wrong-password' })
+      const ms1 = Date.now() - t1
+      const m1 = (bad.j && bad.j.error && bad.j.error.message) || ''
+      ok('本地密码错 → 401', bad.s === 401, 'status=' + bad.s)
+      ok('提示里没有「再验」这类内部说法', m1.indexOf('再验') < 0, m1.slice(0, 34))
+      ok('提示是「学号或密码不对」（或次数/锁定）', /学号或密码不对|次数|锁定/.test(m1), m1.slice(0, 34))
+      ok('这时会去问青果（>300ms）', ms1 > 300, ms1 + 'ms')
+    } else {
+      console.log('  · 跳过「密码错 → 问青果」（会消耗真实学号的失败次数）')
+    }
 
     /* 表里只有派生值，没有明文列 */
     const { openDb } = await import(pathToFileURL(path.join(ROOT, 'api/src/db/index.js')).href)
@@ -154,6 +166,35 @@ try {
 
     const all = await j('DELETE', '/api/settings/student-auth/creds', undefined, T)
     ok('能清空全部', all.s === 200, 'removed=' + (all.j && all.j.removed))
+  }
+
+  /* ---------- 教师端开关：是否每次都向青果核验 ---------- */
+  {
+    const creds = await import(pathToFileURL(path.join(ROOT, 'api/src/lib/student-creds.js')).href)
+    creds.remember(SID, 'Test-Pass-123')
+
+    const on = await j('PATCH', '/api/settings/student-auth', { verifyEachTime: true }, T)
+    ok('能打开「每次登录都核验」', on.j && on.j.verifyEachTime === true, JSON.stringify(on.j && on.j.verifyEachTime))
+
+    /* 开了之后：哪怕本地记得、密码也对，仍然以青果为准（同样只在允许联网时才跑） */
+    if (!SKIP_KG) {
+      const t0 = Date.now()
+      const r = await j('POST', '/api/auth/login/student', { sid: SID, password: 'Test-Pass-123' })
+      const ms = Date.now() - t0
+      ok('开着时即使本地有记录也去问青果（>300ms）', ms > 300, r.s + ' / ' + ms + 'ms')
+    } else {
+      console.log('  · 跳过「开着时去问青果」（会消耗真实学号的失败次数）')
+    }
+
+    const off = await j('PATCH', '/api/settings/student-auth', { verifyEachTime: false }, T)
+    ok('能关掉', off.j && off.j.verifyEachTime === false, JSON.stringify(off.j && off.j.verifyEachTime))
+
+    const t1 = Date.now()
+    const r2 = await j('POST', '/api/auth/login/student', { sid: SID, password: 'Test-Pass-123' })
+    const ms1 = Date.now() - t1
+    ok('关掉后回到本地比对（登录成功且 <500ms）', r2.s === 200 && ms1 < 500, r2.s + ' / ' + ms1 + 'ms')
+
+    creds.forgetAll()
   }
 
   /* ---------- 入口配置 ---------- */

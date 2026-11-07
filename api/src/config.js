@@ -223,7 +223,17 @@ export function getStudentAuth() {
   const bases = Array.isArray(sa.kgBases)
     ? sa.kgBases.map((x) => String(x || '').trim()).filter((x) => /^https?:\/\//i.test(x)).slice(0, 5)
     : []
-  return { mode, kgBases: bases.length ? bases : DEFAULT_KG_BASES.slice() }
+  /*
+   * verifyEachTime：每次登录都去问青果，不用本地记住的密码。
+   *
+   *   false（默认）—— 记住密码后本地比对，省一次 1.3 秒的远端往返
+   *   true         —— 每次都以青果为准（最准，但慢，且每次都在消耗青果的失败计数）
+   *
+   * 这是**老师**的决定，学生端不该看见这个区别：
+   * 学生永远只输「学号 + 密码」，错了就是「学号或密码不对」。
+   */
+  const verifyEachTime = sa.verifyEachTime === true
+  return { mode, kgBases: bases.length ? bases : DEFAULT_KG_BASES.slice(), verifyEachTime }
 }
 
 /** 改学生登录方式；只动 studentAuth 这一个键，别的配置原样保留 */
@@ -242,7 +252,10 @@ export function setStudentAuth(patch = {}) {
   }
   if (!bases.length) bases = DEFAULT_KG_BASES.slice()
 
-  const next = Object.assign({}, cur, { studentAuth: { mode, kgBases: bases } })
+  const verifyEachTime =
+    patch.verifyEachTime === undefined ? prev.verifyEachTime === true : patch.verifyEachTime === true
+
+  const next = Object.assign({}, cur, { studentAuth: { mode, kgBases: bases, verifyEachTime } })
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2), 'utf8')
   return getStudentAuth()
 }

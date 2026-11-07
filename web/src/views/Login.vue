@@ -47,28 +47,12 @@
           />
         </label>
         <p v-if="authMode === 'local'" class="note">学号和姓名要和名单一致。登录后只能看到自己的分数。</p>
-        <p v-else class="note">
-          用学校智慧校园平台的账号（学号）和密码登录。输错会累计次数，满 5 次平台会锁号，请确认后再输。
-        </p>
+        <p v-else class="note">用学校智慧校园平台的账号和密码登录。</p>
         <button class="btn primary" :disabled="busy || !canSubmit">
           {{ busy ? '正在登录…' : '进入课堂' }}
         </button>
         <p v-if="!courses.length" class="note warn">老师还没有建课程。</p>
         <p v-if="err" class="note err">{{ err }}</p>
-        <!--
-          本地记住的密码对不上时（多半是学生刚在智慧校园改过密码），
-          给一个显式入口 —— 点它才会去问青果。
-          不自动去问：青果满 5 次锁号，学生手滑连输几次就把自己账号打锁了。
-        -->
-        <button
-          v-if="needRemote"
-          type="button"
-          class="btn mini"
-          :disabled="busy"
-          @click="loginStudent(true)"
-        >
-          用青果再验一次
-        </button>
       </form>
 
       <form v-else class="form" @submit.prevent="loginTeacher">
@@ -139,9 +123,6 @@ const form = reactive({ courseId: '', sid: '', name: '', password: '', stuPwd: '
  */
 const authMode = ref('local')
 
-/* 本地记住的密码对不上时亮出「用青果再验一次」按钮（只有学生点了才会打青果） */
-const needRemote = ref(false)
-
 async function loadAuthMode() {
   try {
     const res = await api.get('/api/auth/student-mode')
@@ -181,21 +162,15 @@ function switchTab(t) {
   err.value = ''
 }
 
-/**
- * @param {boolean} useRemote 学生主动点了「用青果再验一次」。
- *   注意模板里是 `@submit.prevent="loginStudent"`，回车提交时第一个参数是事件对象，
- *   所以这里必须跟 true 严格比较，不能直接当真值用。
- */
-async function loginStudent(useRemote) {
+async function loginStudent() {
   if (!canSubmit.value) return
   busy.value = true
   err.value = ''
-  needRemote.value = false
   try {
     // 按当前模式带上对应凭据：local 要姓名，kg 要密码
     const payload =
       authMode.value === 'kg'
-        ? { sid: form.sid, password: form.stuPwd, verifyRemote: useRemote === true }
+        ? { sid: form.sid, password: form.stuPwd }
         : { sid: form.sid, name: form.name }
     const res = await api.post('/api/auth/login/student', payload)
     applyLogin(res)
@@ -203,8 +178,6 @@ async function loginStudent(useRemote) {
     router.replace(route.query.next || '/student/materials')
   } catch (e) {
     err.value = e.message
-    // 后端说「密码不对、可以试试青果」时，才亮出那个按钮
-    needRemote.value = authMode.value === 'kg' && /青果再验/.test(e.message)
   } finally {
     busy.value = false
   }

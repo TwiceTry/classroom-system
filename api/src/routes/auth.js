@@ -42,8 +42,6 @@ export default async function authRoutes(app) {
           sid: { type: 'string', maxLength: 40 },
           name: { type: 'string', maxLength: 40 },
           password: { type: 'string', maxLength: 128 },
-          /* 学生主动要求「用青果再验一次」（改过密码后本地哈希对不上时用） */
-          verifyRemote: { type: 'boolean' },
         },
       },
     },
@@ -69,34 +67,37 @@ export default async function authRoutes(app) {
         if (!stuK) throw unauthorized('这个学号不在本课程的名单里，找老师确认一下')
 
         /*
-         * 第二步：先看本地记没记住。
-         *   记住且对得上 → 直接放行（不打青果：快，也不消耗它的失败次数）
-         *   没记过       → 必须去问青果（第一次登录）
-         *   对不上       → 默认拒绝；只有学生**主动点「用青果再验一次」**才走远端
+         * 第二步：青果说了算，只是有缓存。
          *
-         * 为什么「对不上」不自动去问青果：青果满 5 次锁号，
-         * 自动回落等于让学生手滑几下就把自己账号打锁。
+         *   老师开了「每次登录都核验」→ 每次都问青果（最准，慢，且每次都消耗失败计数）
+         *   否则（默认）           → 记住过且对得上就直接放行，省一次远端往返
+         *                            没记过 / 对不上 → 仍然问青果，通过就更新记忆
+         *
+         * 注意：这个区别**学生看不见**。学生永远只输「学号 + 密码」，
+         * 失败就是「学号或密码不对」，不该让他理解「本地缓存 / 远端校验」这些内部机制。
          */
         const creds = await import('../lib/student-creds.js')
-        const local = creds.verify(sid, password)
-        const wantRemote = req.body.verifyRemote === true
+        const local = sa.verifyEachTime ? null : creds.verify(sid, password)
 
-        if (local === true) {
-          /* 本地已验证，直接过 */
-        } else if (local === null || wantRemote) {
+        if (local !== true) {
           const { verifyStudent } = await import('../lib/kg-auth.js')
           const r = await verifyStudent(sid, password, { bases: sa.kgBases })
-          if (!r.ok) throw unauthorized(r.message)
+          if (!r.ok) {
+            /*
+             * 只说该说的：锁定 / 短信二次验证 / 输错次数 —— 这些是学生必须知道的后果，
+             * 不告诉他，他会一直重试直到把账号打锁。
+             * 其余（验证码没认对、青果返回怪东西…）一律收敛成「学号或密码不对」，
+             * 既不误导，也不暴露实现细节。
+             */
+            const m = String(r.message || '')
+            throw unauthorized(/锁定|短信|次数|超时|连不上/.test(m) ? m : '学号或密码不对')
+          }
           // 青果认了 → 记下来，下次本地比对
           try {
             creds.remember(sid, password)
           } catch (e) {
             /* 记不住不影响这次登录 */
           }
-        } else {
-          throw unauthorized(
-            '密码不对。如果最近在智慧校园改过密码，点「用青果再验一次」重新确认'
-          )
         }
       } else {
         const name = String(req.body.name || '').trim()
@@ -193,6 +194,8 @@ export default async function authRoutes(app) {
           properties: {
             mode: { type: 'string', enum: ['local', 'kg'] },
             kgBases: { type: 'array', items: { type: 'string', maxLength: 200 }, maxItems: 5 },
+            /* 每次登录都向青果核验（不沿用本地记住的密码） */
+            verifyEachTime: { type: 'boolean' },
           },
         },
       },
