@@ -27,7 +27,7 @@
             </div>
             <div class="bar"><i :style="{ width: (r.score / r.item.full) * 100 + '%' }"></i></div>
             <div class="irow">
-              <span class="ihint">{{ r.events.filter((e) => !e.voided).length }} 条记录</span>
+              <span class="ihint">{{ (r.events || []).filter((e) => !e.voided).length }} 条记录</span>
               <!-- 有独立模块的项不在这里记分：分数只能由模块批阅写入，避免两处重复记 -->
               <router-link
                 v-if="moduleTo(r.item.key)"
@@ -98,7 +98,13 @@ function moduleTo(key) {
 
 const sortedEvents = computed(() => {
   const all = []
-  for (const r of props.row.rows) for (const e of r.events) all.push(e)
+  /*
+   * r.events 要防 undefined：/api/classes/:id/scores 返回的 rows[] 目前只有
+   * { item, score } —— 没有 events 字段（scoring.js 里是有 events 的，
+   * 说明那个接口另外做了裁剪，或者走了别的分支）。
+   * 不防的话点开学生抽屉直接整页报错：Cannot read properties of undefined。
+   */
+  for (const r of props.row.rows || []) for (const e of r.events || []) all.push(e)
   return all.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
 })
 

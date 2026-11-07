@@ -247,7 +247,22 @@ export default async function scoringRoutes(app) {
       const slimItem = (i) => ({ key: i.key, name: i.name, short: i.short, full: i.full, extra: !!i.extra })
       const slimBoard = Object.assign({}, board, {
         list: (board.list || []).map((r) =>
-          Object.assign({}, r, { rows: (r.rows || []).map((x) => ({ item: slimItem(x.item), score: x.score })) })
+          Object.assign({}, r, {
+            /*
+             * events 必须带上：学生抽屉要按项列出「N 条记录」并展示明细
+             * （StudentDrawer 里 `for (const e of r.events)`）。
+             *
+             * 之前瘦身只留了 { item, score }，抽屉一点开就整页报错
+             * Cannot read properties of undefined (reading 'filter')。
+             * 体积上不会翻倍 —— 这些 event 本来就在顶层 events 里返回，
+             * 这里只是把它们按人按项分了下组。
+             */
+            rows: (r.rows || []).map((x) => ({
+              item: slimItem(x.item),
+              score: x.score,
+              events: x.events || [],
+            })),
+          })
         ),
         itemAvg: (board.itemAvg || []).map((x) => ({ item: slimItem(x.item), avg: x.avg })),
       })
