@@ -848,6 +848,18 @@ def edge_report():
         verbose('快照上报失败：%s: %s' % (type(e).__name__, e))
 
 
+def watchdog_loop():
+    """投屏通道看门狗（每 10 秒）"""
+    while True:
+        time.sleep(10)
+        if not FANOUT_ENABLED:
+            continue
+        try:
+            FANOUT.watchdog()
+        except Exception:
+            pass
+
+
 def edge_loop():
     """边缘端的上报循环：几秒一次快照。"""
     while True:
@@ -1701,8 +1713,9 @@ class WsConn(object):
             return False
         is_key = bool(buf) and len(buf) > 1 and (buf[1] & 1)
         if is_key:
-            if len(self._key_queue) < 3:
-                self._key_queue.append(buf)
+            if len(self._key_queue) >= 3:
+                self._key_queue.pop(0)
+            self._key_queue.append(buf)
         else:
             if self._key_queue:
                 return True
@@ -1728,7 +1741,29 @@ class WsConn(object):
             return
         self._flushing = True
         try:
-            self.sock.sendall(encode_ws_frame(WS_BIN, buf, self.mask_out))
+            """
+            加超时的原因（长稳测试查出来的）：
+
+            on_up_stu_bin 里是 `for c in targets: c.send_latest(buf)` —— 串行。
+            而 sendall 是同步阻塞的：只要有一个学生 TCP 窗口满（他那台卡了、
+            或者网线松了），这一次 sendall 就卡在那儿，后面几十个学生都收不到，
+            on_up_stu_bin 也就回不去 → 上游连接不再读 → 服务端 keyQueue 满 3 张
+            → 开始丢帧。
+
+            实测：40 人时画面在第 7 帧就冻住；10 人时 100% 不丢。
+            差别不在带宽，在「有没有一个慢的拖住全队」。
+
+            1 秒还写不完 64KB，说明这个学生确实跟不上 —— 直接踢掉他，
+            他那边会重连，其他人继续。
+            """
+            self.sock.settimeout(1.0)
+            try:
+                self.sock.sendall(encode_ws_frame(WS_BIN, buf, self.mask_out))
+            finally:
+                try:
+                    self.sock.settimeout(None)
+                except Exception:
+                    pass
             # 写完接着发下一帧
             def done():
                 self._flushing = False
@@ -1974,9 +2009,16 @@ class CastFanout(object):
         self.local_stu = []      # 本地学生端连接
         self.idents = {}         # id(conn) -> {'classId','sid','name','token'}（本地观看者）
         self.ctl_hello = None
+        self.ctl_mode = 'idle'   # 教师端的投屏状态，重连后要补发
         self.frames = 0
         self.bytes = 0
         self.fanned = 0
+        # 分发耗时探针（只测量，不做决策）
+        self.send_ms = 0.0        # 最近一帧分发耗时
+        self.send_ms_max = 0.0    # 峰值
+        self.send_ms_sum = 0.0    # 累计
+        self.send_n = 0           # 帧数
+        self.targets_last = 0     # 最近一帧发给了几个学生
 
     # ---------- 本地连接 ----------
     def attach_local(self, ws, role):
@@ -2145,6 +2187,8 @@ class CastFanout(object):
                 if up:
                     up.send_text(text)
             else:
+                if msg.get('t') == 'mode':
+                    self.ctl_mode = msg.get('mode') or 'idle'
                 up = self.up_ctl
                 if up:
                     up.send_text(text)
@@ -2244,13 +2288,22 @@ class CastFanout(object):
         （公网下行那份流量已经付掉了，本地省下来的不多，
           但至少局域网里不会跑 N 份解码。）
         """
+        t0 = time.time()
         with self.lock:
             self.frames += 1
             self.bytes += len(buf)
             targets = list(self.local_stu)
         for c in targets:
             c.send_latest(buf)
-        self.fanned += len(targets)
+        cost_ms = (time.time() - t0) * 1000.0
+        with self.lock:
+            self.fanned += len(targets)
+            self.send_ms = cost_ms
+            self.send_ms_sum += cost_ms
+            self.send_n += 1
+            self.targets_last = len(targets)
+            if cost_ms > self.send_ms_max:
+                self.send_ms_max = cost_ms
 
     # ---------- 上游通道 ----------
     def ensure_up_ctl(self):
@@ -2270,10 +2323,34 @@ class CastFanout(object):
         return ws
 
     def on_up_ctl_closed(self, ws):
+        """上游教师通道断了 → 用原来的 hello 重连。
+
+        为什么必须重连：这条通道是投屏帧的**唯一入口**。
+        长稳测试发现，公网隧道下它大约 30 秒就断一次（NAT/隧道空闲回收），
+        不重连的话教师在投屏、学生画面却永远停在第 7 帧 ——
+        而且教师端一点察觉都没有（本地连接还好好的）。
+        """
         with self.lock:
             if self.up_ctl is ws:
                 self.up_ctl = None
+            hello = self.ctl_hello
         verbose('上游教师通道断开')
+        if not hello:
+            return
+        # 等一会儿再重连：立刻重连常常又撞上同一个抖动
+        time.sleep(1.0)
+        try:
+            up = self.ensure_up_ctl()
+            if up:
+                up.send_text(hello)
+                # 关键：补发 mode。不补的话服务端不知道这条新连接也在投，
+                # state.mode 停在 idle，帧进来也不推给学生（画面冻在断线那一刻）。
+                if self.ctl_mode and self.ctl_mode != 'idle':
+                    up.send_text(json.dumps({'t': 'mode', 'mode': self.ctl_mode},
+                                            ensure_ascii=False))
+                verbose('上游教师通道已重连（mode=%s）' % self.ctl_mode)
+        except Exception as e:
+            verbose('上游教师通道重连失败：%s' % e)
 
     def on_up_stu_closed(self, ws):
         """上游学生通道断了 → 用原来的 hello 重连。"""
@@ -2282,9 +2359,51 @@ class CastFanout(object):
                 self.up_stu = None
             hello = self.stu_hello
         if hello:
+            # 注意：重连必须走 ensure_up_stu(None)，不能把旧 hello 传进去。
+            # 传了的话 path 会用默认的 '/ws?role=student'（**没有 edge 签名**），
+            # 服务端 verifyEdge 返回 null → 不许用 for 名单 → 1008 直接关掉。
+            # 表现就是：第一次连上好好的，隧道一断就再也回不来，画面永久冻住。
             verbose('上游学生通道断开，尝试重连')
             time.sleep(1.0)
-            self.ensure_up_stu(hello)
+            # 传 None：让 ensure_up_stu 重新构造 hello + 重新算签名时间戳
+            self.ensure_up_stu(None)
+
+    def watchdog(self):
+        """每 10 秒查一次两条上游通道，断了就重连。
+
+        为什么不只靠 on_close：socket 半开（对端不吭声也不发 FIN）、
+        读线程异常退出、服务端单方面踢人 —— 这些情况 close 回调不一定来，
+        通道就永久死掉，学生画面冻在最后一帧，而且**一点报错都没有**。
+        主动查一次代价极小（就是个布尔判断），可靠性高得多。
+        """
+        try:
+            # 教师通道：只要教师曾经连过（ctl_hello 有值）
+            need_ctl = False
+            with self.lock:
+                up = self.up_ctl
+                has_ctl = bool(self.ctl_hello)
+            if has_ctl and (up is None or up.closed):
+                need_ctl = True
+            if need_ctl:
+                verbose('看门狗：教师通道没了，重连')
+                up = self.ensure_up_ctl()
+                if up:
+                    up.send_text(self.ctl_hello)
+                    if self.ctl_mode and self.ctl_mode != 'idle':
+                        up.send_text(json.dumps({'t': 'mode', 'mode': self.ctl_mode},
+                                                ensure_ascii=False))
+
+            # 学生通道：只有在真的有人在看时才需要
+            with self.lock:
+                stu = self.up_stu
+            with EDGE.lock:
+                watching = any(r.get('casting') and r.get('token')
+                               for r in EDGE.students.values())
+            if watching and (stu is None or stu.closed):
+                verbose('看门狗：学生通道没了，重连')
+                self.sync_watchers()
+        except Exception as e:
+            verbose('看门狗出错：%s' % e)
 
     def stats(self):
         with self.lock:
@@ -2299,6 +2418,10 @@ class CastFanout(object):
                 'frames': self.frames,
                 'bytes': self.bytes,
                 'framesToWatchers': self.fanned,
+                'targetsLast': self.targets_last,
+                'sendMs': round(self.send_ms, 1),
+                'sendMsMax': round(self.send_ms_max, 1),
+                'sendMsAvg': round(self.send_ms_sum / max(1, self.send_n), 1),
             }
 
 
@@ -2490,6 +2613,14 @@ def main():
         _edge_thread = threading.Thread(target=edge_loop, daemon=True)
         _edge_thread.start()
         print('  边缘端快照：每 %d 秒把本地在场/在看状态聚合成一个请求上报' % EDGE_SNAPSHOT_INTERVAL)
+
+    # 投屏通道看门狗：每 10 秒查一次，断了就重连。
+    # 不依赖 on_close 回调（socket 半开时它不一定来）。
+    if FANOUT_ENABLED:
+        _wd_thread = threading.Thread(target=watchdog_loop, daemon=True)
+        _wd_thread.start()
+        print('  投屏看门狗：每 10 秒检查一次上游通道')
+
     httpd = Server((LISTEN_HOST, LISTEN_PORT), HealthHandler)
     try:
         httpd.serve_forever()
