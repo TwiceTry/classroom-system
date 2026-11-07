@@ -95,7 +95,12 @@ async function request(path, opts) {
 
   let res
   try {
-    res = await fetch(withCourse(path), Object.assign({}, o, { headers }))
+    /*
+     * cache: 'no-store' —— 这些接口全是「现读」的实时数据（登录方式、作业进度、分数…），
+     * 被浏览器 HTTP 缓存住就会出现「明明保存了，刷新还是旧值」。
+     * 放在 o 之前，单次请求想覆盖仍然可以覆盖。
+     */
+    res = await fetch(withCourse(path), Object.assign({ cache: 'no-store' }, o, { headers }))
   } catch (e) {
     throw new Error('连不上服务器，请确认教师机上的课堂系统正在运行')
   }

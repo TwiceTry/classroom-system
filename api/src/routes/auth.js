@@ -221,12 +221,16 @@ export default async function authRoutes(app) {
    * 学生登录页要知道该显示哪种表单（学号+姓名 / 学号+密码）。
    * 公开接口，**只回 mode** —— 不回青果地址，没必要让外面知道入口。
    */
-  app.get('/api/auth/student-mode', async () => {
+  app.get('/api/auth/student-mode', async (req, reply) => {
+    // 老师随时可能切模式，这个响应不能被任何一层缓存住
+    reply.header('Cache-Control', 'no-store, must-revalidate')
     return { mode: getStudentAuth().mode }
   })
 
   /** 教师看当前学生登录校验方式 */
-  app.get('/api/settings/student-auth', { preHandler: requireAuth('teacher') }, async () => {
+  app.get('/api/settings/student-auth', { preHandler: requireAuth('teacher') }, async (req, reply) => {
+    // 老师刚改完就刷新，必须看到新值 —— 不允许缓存
+    reply.header('Cache-Control', 'no-store, must-revalidate')
     const sa = getStudentAuth()
     let rememberedCount = 0
     try {
