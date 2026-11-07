@@ -108,7 +108,8 @@ export function buildPreviewDoc(files, page, basePath) {
   const pageSrc = map[page] || ''
   const pageDir = page.indexOf('/') >= 0 ? page.slice(0, page.lastIndexOf('/') + 1) : ''
 
-  // 1) <base>：让页面里的 ../vue.global.js、../playground/sfc-boot.js 按真实目录解析
+  // 1) <base>：让页面里的相对路径（./App.vue、main.mjs、图片）按真实目录解析
+  //    /lib/xxx 这类绝对路径不受 base 影响，运行时库走那条
   let src = pageSrc
   const inject = '<base href="' + basePath + encodeURI(pageDir) + '">' + ERROR_BRIDGE
   if (/<head[^>]*>/i.test(src)) src = src.replace(/<head[^>]*>/i, (m) => m + inject)

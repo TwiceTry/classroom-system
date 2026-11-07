@@ -189,6 +189,39 @@ export async function buildApp(opts = {}) {
     return reply.status(200).headers(base).send(fs.createReadStream(indexHtml))
   }
 
+  /*
+   * 公共运行时：/lib/*
+   *
+   * 「代码示例」里的页面要加载 Vue、SFC 加载器、启动器，这三样是**第三方库**，
+   * 不是老师的课程内容。原来它们躺在 content/代码示例/ 里，页面用 ../vue.global.js 相对引用 ——
+   * 于是服务端必须靠一份「文件名白名单」把它们挑出来放行（浏览器原生 <script> 带不上令牌）。
+   *
+   * 现在统一放到 /lib/ 前缀下，语义清了：
+   *   /lib/*   公开的运行时库（第三方，谁都能下）
+   *   /api/*   业务接口（要登录）
+   *
+   * 好处：
+   *   · 白名单没了，加库不用改代码
+   *   · 带长缓存（这些文件基本不变，1.8MB 的 sfc-loader 不该每 5 分钟重下）
+   *   · 页面写绝对路径 /lib/...，不受 <base> 影响，预览更稳
+   *   · 课程包里不再重复携带 2.4MB 的库
+   */
+  await app.register(fastifyStatic, {
+    root: path.join(import.meta.dirname, 'lib', 'runtime'),
+    prefix: '/lib/',
+    decorateReply: false, // 第二个 static 实例，避免重复装饰 reply
+    /*
+     * 长缓存：这些库只有升级版本才变，1.8MB 的 sfc-loader 不该每次开课重下。
+     * 用 maxAge + immutable（@fastify/static 自己会拼 Cache-Control），
+     * 别在 setHeaders 里手写 —— 那样会被它自己的默认值 max-age=0 覆盖。
+     */
+    maxAge: '365d',
+    immutable: true,
+    setHeaders(res) {
+      res.setHeader('Access-Control-Allow-Origin', '*')
+    },
+  })
+
   if (hasWeb) {
     app.get('/', serveIndex)
     await app.register(fastifyStatic, {

@@ -39,11 +39,11 @@ try {
 const RUNTIMES = [
   path.join(EX, 'vue.global.js'),
   path.join(EX, 'vue3-sfc-loader.js'),
-  path.join(EX, 'playground/editor.js'),
-  path.join(EX, 'playground/highlight.js'),
-  path.join(EX, 'playground/playground-app.js'),
-  path.join(EX, 'playground/sfc-boot.js'),
-  path.join(EX, 'playground/srcdoc.js'),
+  path.join(EX, 'editor.js'),
+  path.join(EX, 'highlight.js'),
+  path.join(EX, 'playground-app.js'),
+  path.join(EX, 'sfc-boot.js'),
+  path.join(EX, 'srcdoc.js'),
   path.join(VENDOR, 'marked.min.js'),
   path.join(VENDOR, 'srcdoc.js'),
 ]

@@ -229,6 +229,7 @@ export function usePgPreview(opts) {
       await ensureSfcSrcdoc()
       /*
        * base 指向 /api/example-files/ 而不是 /examples/：
+     * （运行时库已搬到 /lib/，绝对路径，不走 base）
        * 示例页面里的 `../vue.global.js`、`../playground/sfc-boot.js` 是**共享运行时**
        * （放在「代码示例/」根目录，不在每个示例目录里）。
        * base 指错地方，这些 script 会落到 SPA 兜底拿回 index.html，

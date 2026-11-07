@@ -155,35 +155,29 @@ export default async function compatRoutes(app) {
   /**
    * 示例工程的静态文件服务（预览 iframe 的 <base> 指到这里）。
    *
-   * 为什么需要它：示例页面写的是 `<script src="../vue.global.js">` ——
-   * vue.global.js / vue3-sfc-loader.js / playground/sfc-boot.js 这些**共享运行时**
-   * 放在「代码示例/」根目录，不在每个示例目录里。
+   * 用途：预览里除了「内存文件字典」能命中的文件，其余（讲义配图、示例里的 .js/.css、图片）
+   * 都从这里按真实路径取 —— 没命中的才走这个接口。
    *
-   * 预览是 iframe srcdoc，相对路径按 <base> 解析；如果 base 指向一个取不到文件的地址，
-   * `../vue.global.js` 会落到 SPA 兜底、拿回 index.html，
-   * 于是控制台报 `Uncaught SyntaxError: Unexpected token '<'` —— Vue 示例全部渲染不出来。
+   * 注意 <base> 的解析：相对路径按 base 解析，base 指错地方就会落到 SPA 兜底、
+   * 拿回 index.html，控制台报 `Uncaught SyntaxError: Unexpected token '<'`。
    *
-   * 这里直接把「代码示例/」当静态目录提供服务：
-   *   · 内存文件字典优先（学生改动走内存），没命中的才走这个接口
-   *   · 浏览器可缓存，不必把 2.4MB 的 sfc-loader 塞进 /api/examples 的 JSON 里
+   * 共享运行时（Vue / SFC 加载器 / 启动器）**不走这里**了 —— 它们在 /lib/ 下，
+   * 页面用绝对路径引用（见 app.js）。
    */
   /*
-   * 这三个是**共享运行时**（第三方库 + 启动脚本），不是老师的课程内容：
-   *   vue.global.js        Vue 3 全局构建
-   *   vue3-sfc-loader.js   浏览器里编译 .vue
-   *   playground/sfc-boot.js 把窗口里的 .vue 挂上去
-   * 它们由模板里的 `<script src="../xxx">` 直接加载 —— 那是**浏览器原生请求，
-   * 带不了 Authorization 头**，所以不能要求登录，否则 Vue 示例全部白屏。
-   * 其余文件（老师写的示例代码）仍然要登录才给。
+   * 这里只服务**老师写的课程内容**（讲义配图、示例里的 .js/.css 之类）。
+   *
+   * 原来还有一份「共享运行时白名单」（vue.global.js / vue3-sfc-loader.js / playground/sfc-boot.js），
+   * 因为它们躺在 content/代码示例/ 里、被页面用 ../ 相对引用，而浏览器原生 <script> 带不上令牌。
+   *
+   * 现在那三个已经搬到 /lib/ 前缀（见 app.js），页面写绝对路径 /lib/xxx，
+   * 所以这个接口回归单一职责：**一律要登录**。白名单没了，加库也不用改这里的代码。
    */
-  const SHARED_RUNTIME = new Set(['vue.global.js', 'vue3-sfc-loader.js', 'playground/sfc-boot.js'])
-
   app.get('/api/example-files/*', async (req, reply) => {
     const rel = String(req.params['*'] || '').replace(/\\/g, '/')
     if (!rel) throw badRequest('缺少文件路径')
 
-    const isShared = SHARED_RUNTIME.has(rel)
-    if (!isShared && !fromRequest(req.raw)) throw new ApiError(401, 'unauthorized', '需要登录')
+    if (!fromRequest(req.raw)) throw new ApiError(401, 'unauthorized', '需要登录')
 
     const course = req.query.courseId
       ? repo.getCourse(String(req.query.courseId))
