@@ -687,6 +687,30 @@ export default async function assignmentRoutes(app) {
       const entries = Array.isArray(req.body.files) ? req.body.files : []
       const existing = repo.findSubmission(a.id, t.sid)
 
+      /*
+       * 校验必须放在**删旧文件之前**。
+       *
+       * 原来的顺序是：rmSync 清掉上次的目录 → writeFiles → 最后才判「没有要提交的文件」。
+       * 于是学生提交一张空表（或前端漏传 files）时，上一次的提交已经被删干净了，
+       * 然后收到 400「没有要提交的文件」—— 作业就这么丢了，找不回来。
+       * 先把不该发生的情况挡掉，再动磁盘。
+       */
+      /*
+       * 「至少要有点东西」：课堂作业/机试必须有文件；
+       * 大作业可以是 附件 / 说明 / 链接 三选一，但**不能全空**。
+       * 前端本来就有这句提示（ProjectDetail：「说明、链接、附件至少要有一项」），
+       * 但只在浏览器里拦，绕过前端直接调接口就能把提交清成空。
+       */
+      if (a.kind === 'project') {
+        const note = String(req.body.note || '').trim()
+        const url = String(req.body.url || '').trim()
+        if (!entries.length && !note && !url) {
+          throw badRequest('这次大作业至少要交一项：附件、说明或链接')
+        }
+      } else if (!entries.length) {
+        throw badRequest('没有要提交的文件')
+      }
+
       // 覆盖式：先清掉上次的目录
       if (existing) {
         const dir = store.dirOf(a.kind, cls.id, t.sid, a.id)
@@ -697,7 +721,6 @@ export default async function assignmentRoutes(app) {
         }
       }
       const written = entries.length ? store.writeFiles(a.kind, cls.id, t.sid, a.id, entries) : []
-      if (a.kind !== 'project' && !written.length) throw badRequest('没有要提交的文件')
 
       const late = !!(a.dueAt && Date.parse(a.dueAt) && Date.now() > Date.parse(a.dueAt))
       if (late && !a.allowLate) throw conflict('已经过了截止时间（' + a.dueAt + '），这次不收迟交')

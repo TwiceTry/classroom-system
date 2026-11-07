@@ -122,7 +122,7 @@
             </select>
           </label>
           <p class="dim mini">
-            保存后会自动建好 <code>data/courses/&lt;id&gt;/content/{{ '{lecture,materials,代码示例,exams}' }}</code> 四个空目录。
+            保存后会自动建好 <code>data/courses/&lt;id&gt;/content/{{ '{lecture, materials, 代码示例, exams, assets}' }}</code> 五类内容目录（讲义 / 材料 / 代码示例 / 试卷 / 图片素材）。
           </p>
         </div>
         <div class="modal-foot">

@@ -125,14 +125,30 @@ export default async function coursepackRoutes(app) {
       const fromRoot = contentRootOf(src)
       const toRoot = contentRootOf(newCourse)
       fs.mkdirSync(path.dirname(toRoot), { recursive: true })
-      if (fs.existsSync(fromRoot)) fs.cpSync(fromRoot, toRoot, { recursive: true })
+      /*
+       * 不要用 fs.cpSync。
+       * 在 Windows + Node 22 上复制这个内容目录会让**整个进程退出**
+       * （退出码 0xC0000409，栈溢出保护），所以「复制课程」点一下服务就没了。
+       * copyDir 是自己写的 readdir + copyFileSync 递归，稳。
+       */
+      const { copyDir } = await import('../lib/fsutil.js')
+      copyDir(fromRoot, toRoot)
 
-      // 方案也另存一份（id 跟着新课程，版本从 1 起）
-      const { scheme, withCourseScheme } = await import('../lib/scheme.js')
-      const raw = scheme.readRawById(src.schemeId || src.id)
+      /*
+       * 方案也另存一份（id 跟着新课程，版本从 1 起）。
+       *
+       * 注意 scheme.js 的导出里**没有** `scheme` 这个具名导出 ——
+       * 原来写 `const { scheme, withCourseScheme } = await import(...)`，
+       * scheme 永远是 undefined，`scheme.readRawById` 直接抛 TypeError，
+       * 「复制课程」于是必然 500（以前还会因为 cpSync 把整个进程搞崩，
+       * 连这条错误都看不到）。
+       * 按名字直接调导出的函数。
+       */
+      const schemeMod = await import('../lib/scheme.js')
+      const raw = schemeMod.readRawById(src.schemeId || src.id)
       if (raw) {
         const copy = Object.assign({}, raw, { id: newId, name: newCourse.name, version: 1, changes: [] })
-        withCourseScheme(src, () => scheme.saveAs(copy, newId, req.user.name || '教师', '从 ' + src.name + ' 复制'))
+        schemeMod.saveAs(copy, newId, (req.user && req.user.name) || '教师', '从 ' + (src.name || src.id) + ' 复制')
       }
 
       reply.status(201)

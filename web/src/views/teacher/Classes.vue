@@ -339,33 +339,33 @@
     <label class="check"><input v-model="importMode" type="radio" value="replace" /> 覆盖本班名单</label>
     </div>
 
-    <p v-if="parsed.length || (report && report.parsed)" class="hint" style="margin-top: 10px">
-    解析到 <b>{{ report && report.parsed ? report.parsed : parsed.length }}</b> 人<template v-if="sheetName">（{{ sheetName }}）</template><template v-if="parsed.length">：{{ previewNames }}</template>}
+    <p v-if="parsed.length || (report && report.counts)" class="hint" style="margin-top: 10px">
+    解析到 <b>{{ report && report.counts ? report.counts.parsed : parsed.length }}</b> 人<template v-if="sheetName">（{{ sheetName }}）</template><template v-if="parsed.length">：{{ previewNames }}</template>}
     </p>
 
     <!-- 服务端干跑：这一步只算不写 -->
     <div v-if="checking" class="hint" style="margin-top: 8px">正在核对名单…</div>
-    <div v-if="report" class="import-plan" style="margin-top: 8px">
+    <div v-if="report && report.counts" class="import-plan" style="margin-top: 8px">
       <div class="ip-row">
         <span class="ip-k">变更</span>
         <span>
-          新增 <b class="add">{{ report.added }}</b> 人 ·
-          改名 {{ report.updated }} 人 ·
-          不变 {{ report.unchanged }} 人
-          <template v-if="report.removed">· <b class="del">移出 {{ report.removed }}</b> 人</template>
+          新增 <b class="add">{{ report.counts.added }}</b> 人 ·
+          改名 {{ report.counts.updated }} 人 ·
+          不变 {{ report.counts.unchanged }} 人
+          <template v-if="report.counts.removed">· <b class="del">移出 {{ report.counts.removed }}</b> 人</template>
         </span>
       </div>
       <div class="ip-row">
         <span class="ip-k">班级人数</span>
-        <span>{{ report.before }} → <b>{{ report.after }}</b> 人</span>
+        <span>{{ report.currentCount }} → <b>{{ report.currentCount + report.counts.added - report.counts.removed }}</b> 人</span>
       </div>
-      <div v-if="report.renamed.length" class="ip-row">
+      <div v-if="report.details && report.details.updated.length" class="ip-row">
         <span class="ip-k">改名</span>
-        <span class="dim">{{ report.renamed.map((r) => r.sid + '：' + r.from + ' → ' + r.to).join('、') }}</span>
+        <span class="dim">{{ report.details.updated.map((r) => r.sid + '：' + (r.from || '（空）') + ' → ' + r.to).join('、') }} <template v-if="report.counts.updated > report.details.updated.length">等 {{ report.counts.updated }} 人</template></span>
       </div>
-      <div v-if="report.removedSids.length" class="ip-row">
+      <div v-if="report.details && report.details.removed.length" class="ip-row">
         <span class="ip-k">移出</span>
-        <span class="del">{{ report.removedSids.join('、') }}<template v-if="report.removed > report.removedSids.length"> …</template></span>
+        <span class="del">{{ report.details.removed.map((r) => r.name + '（' + r.sid + '）').join('、') }} <template v-if="report.counts.removed > report.details.removed.length">等 {{ report.counts.removed }} 人</template></span>
       </div>
       <div class="ip-tip dim">核对无误再点右下角「确认导入」——这一步之前一个字节都没写。</div>
     </div>
@@ -395,7 +395,7 @@
         importingBusy
           ? '导入中…'
           : report
-            ? '确认导入（' + (report.incoming || report.parsed || parsed.length) + ' 人）'
+            ? '确认导入（' + (report.counts ? report.counts.parsed : parsed.length) + ' 人）'
             : '先选名单'
       }}
     </button>
@@ -1041,9 +1041,9 @@ async function doImport() {
     if (sheetFile.value) {
       const r = await postSheet(true)
       importing.value = false
-      const bits = ['新增 ' + r.added + ' 人']
-      if (r.updated) bits.push('改名 ' + r.updated + ' 人')
-      if (r.removed) bits.push('移出 ' + r.removed + ' 人')
+      const bits = ['新增 ' + (r.counts ? r.counts.added : 0) + ' 人']
+      if (r.counts && r.counts.updated) bits.push('改名 ' + r.counts.updated + ' 人')
+      if (r.counts && r.counts.removed) bits.push('移出 ' + r.counts.removed + ' 人')
       toast.value = '导入完成：' + bits.join('，') + '，本班共 ' + r.total + ' 人'
       sheetFile.value = null
       sheetName.value = ''
@@ -1057,9 +1057,9 @@ async function doImport() {
     }
     const res = await api.post('/api/classes/' + active.value.id + '/roster/apply', body)
     importing.value = false
-    const bits = ['新增 ' + res.added + ' 人']
-    if (res.updated) bits.push('改名 ' + res.updated + ' 人')
-    if (res.removed) bits.push('移出 ' + res.removed + ' 人')
+    const bits = ['新增 ' + (res.counts ? res.counts.added : 0) + ' 人']
+    if (res.counts && res.counts.updated) bits.push('改名 ' + res.counts.updated + ' 人')
+    if (res.counts && res.counts.removed) bits.push('移出 ' + res.counts.removed + ' 人')
     toast.value = '导入完成：' + bits.join('，') + '，本班共 ' + res.total + ' 人'
     await refresh()
     await load()

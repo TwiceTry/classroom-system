@@ -73,24 +73,53 @@ function parseRoster(body) {
   return out
 }
 
-/** 对比现有名册与要导入的名单，给出「会发生什么」 */
+/**
+ * 对比现有名册与要导入的名单，给出「会发生什么」
+ *
+ * 返回三组字段，**类型分开、各司其职**：
+ *   counts  —— 数字。文案里的「新增 3 人」只能从这里取。
+ *   details —— 对象数组（最多 12 条，带姓名）。展开「看是哪几个人」用这个。
+ *   added / updated / removed —— 完整的 sid 数组，给需要精确比对的地方用。
+ *
+ * 原来只有 added / updated / removed 三个数组，而前端文案写成
+ * `'新增 ' + r.added + ' 人'` —— 数组拼字符串会渲染成「新增 9000001,9000002 人」；
+ * 又因为明细被 slice(0,12)，replace 模式下老师看到「移出 12 人」，
+ * 而实际要删的可能是 61 个 —— 破坏性操作被严重低估。
+ * 计数和明细混在一个字段里迟早出事，所以这里一次分开。
+ */
 function rosterPlan(current, incoming, mode) {
   const cur = new Map(current.map((s) => [s.sid, s]))
   const inc = new Map(incoming.map((s) => [s.sid, s]))
   const added = [...inc.keys()].filter((sid) => !cur.has(sid))
   const updated = [...inc.keys()].filter((sid) => cur.has(sid) && (cur.get(sid).name || '') !== (inc.get(sid).name || ''))
   const removed = mode === 'replace' ? [...cur.keys()].filter((sid) => !inc.has(sid)) : []
+  const unchanged = inc.size - added.length - updated.length
+
   return {
+    counts: {
+      parsed: inc.size,
+      added: added.length,
+      updated: updated.length,
+      removed: removed.length,
+      unchanged,
+    },
+    details: {
+      added: added.slice(0, 12).map((sid) => inc.get(sid)),
+      // 改名要给「原名 → 新名」，只有新名字的话老师没法确认改对了没有
+      updated: updated.slice(0, 12).map((sid) => ({
+        sid,
+        name: inc.get(sid).name || '',
+        from: cur.get(sid).name || '',
+        to: inc.get(sid).name || '',
+      })),
+      removed: removed.slice(0, 12).map((sid) => cur.get(sid)),
+      /** 明细是否被截断（前端据此显示「等 N 人」） */
+      truncated: added.length > 12 || updated.length > 12 || removed.length > 12,
+    },
     added,
     updated,
     removed,
-    unchanged: inc.size - added.length - updated.length,
-    plan: {
-      total: inc.size,
-      added: added.slice(0, 12).map((sid) => inc.get(sid)),
-      updated: updated.slice(0, 12).map((sid) => inc.get(sid)),
-      removed: removed.slice(0, 12).map((sid) => cur.get(sid)),
-    },
+    unchanged,
   }
 }
 
@@ -529,12 +558,15 @@ export default async function classroomRoutes(app) {
       const incoming = parseRoster(req.body)
       if (!incoming.length) throw badRequest('没读到有效的学号')
 
+      // 改动之前算账，返回给前端用来提示「新增 / 改名 / 移出 各几人」
+      const plan = rosterPlan(repo.rosterOf(cls.id), incoming, mode)
+
       if (mode === 'replace') {
         const keep = new Set(incoming.map((s) => s.sid))
         for (const s of repo.rosterOf(cls.id)) if (!keep.has(s.sid)) repo.removeStudent(cls.id, s.sid)
       }
       const items = repo.addStudents(cls.id, incoming)
-      return { ok: true, mode, total: items.length, students: items }
+      return { ok: true, mode, total: items.length, students: items, ...plan }
     },
   })
 
@@ -570,19 +602,40 @@ export default async function classroomRoutes(app) {
         )
       }
 
+      /*
+       * plan 要在**改动之前**算，才能说清「这一下会新增几个 / 移出几个」。
+       * 干跑和真导入都要，所以提前算一次。
+       */
+      const current = repo.rosterOf(cls.id)
+      const plan = rosterPlan(current, parsed.students, mode)
+
+      /*
+       * 被跳过的行必须一起返回。
+       * rowsToRoster 会把「学号与第 N 行重复」「姓名不像人名」记进 issues，
+       * 但原先只有「一行都没成功」时才拿它拼错误信息；部分成功时直接丢掉 ——
+       * 老师导入完发现少了一个人，完全不知道是被哪天跳过的。
+       */
+      const issues = parsed.issues || []
+
       if (!doApply) {
-        const current = repo.rosterOf(cls.id)
-        const plan = rosterPlan(current, parsed.students, mode)
-        return { ok: true, mode, preview: parsed.students.slice(0, 8), count: parsed.students.length, currentCount: current.length, ...plan }
+        return {
+          ok: true,
+          mode,
+          preview: parsed.students.slice(0, 8),
+          count: parsed.students.length,
+          currentCount: current.length,
+          issues,
+          ...plan,
+        }
       }
 
       if (mode === 'replace') {
         const keep = new Set(parsed.students.map((s) => s.sid))
-        for (const s of repo.rosterOf(cls.id)) if (!keep.has(s.sid)) repo.removeStudent(cls.id, s.sid)
+        for (const s of current) if (!keep.has(s.sid)) repo.removeStudent(cls.id, s.sid)
       }
       const items = repo.addStudents(cls.id, parsed.students)
       reply.status(201)
-      return { ok: true, mode, total: items.length, students: items }
+      return { ok: true, mode, total: items.length, students: items, issues, ...plan }
     },
   })
 

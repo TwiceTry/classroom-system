@@ -57,7 +57,11 @@
           </select>
         </label>
         <label class="field">质量
-          <select class="select" :value="cfg.quality" @change="cfg.quality = Number($event.target.value)">
+          <!--
+            选项值是 'diff' / 'full'（语义档位），但 toBlob 的第三参数要 0~1 的数值。
+            原来直接 Number('full') → NaN，喂给 toBlob 就成了非法质量。
+          -->
+          <select class="select" :value="cfg.quality >= 1 ? 'full' : 'diff'" @change="onQuality">
             <option :value="0.7">q70（省带宽）</option>
             <option :value="0.8">q80</option>
             <option :value="0.85">q85（文字更锐）</option>
@@ -202,6 +206,14 @@ function onRes(e) {
 
 function onFps(e) {
   cast.applyFps(Number(e.target.value))
+}
+
+/**
+ * 画质档位：diff = 省带宽（0.85），full = 最高画质（1）。
+ * toBlob 的质量参数只认 0~1 的数字，不能直接把 'full' 塞进去。
+ */
+function onQuality(e) {
+  cfg.quality = e.target.value === 'full' ? 1 : 0.85
 }
 
 function onMode(e) {

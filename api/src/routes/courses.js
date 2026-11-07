@@ -129,6 +129,8 @@ export default async function courseRoutes(app) {
           name: { type: 'string', minLength: 1, maxLength: 60 },
           note: { type: 'string' },
           semester: { type: 'string' },
+          /* 新建时从哪份方案复制（前端下拉「复制现有方案：xxx」） */
+          copySchemeFrom: { type: 'string' },
         },
       },
     },
@@ -145,6 +147,52 @@ export default async function courseRoutes(app) {
         archived: false,
       })
       ensureContentSkeleton(id)
+
+      /*
+       * 把选定课程的方案复制一份过来。
+       *
+       * 原先 POST 的 schema 里没有 copySchemeFrom，前端传了也被 Fastify 丢掉，
+       * 于是新课程从来没有 data/schemes/<id>.json —— 打开「考核方案」页看到的
+       * 其实是**示例课程**的默认方案（scheme.id = example-course），
+       * 和老师以为的「复制了刚才那门课」完全不是一回事。
+       *
+       * 复制过来的是新课程的第一版：版本从 1 开始，不继承别人的变更历史。
+       */
+      const copyFrom = String(req.body.copySchemeFrom || '').trim()
+      if (copyFrom && copyFrom !== id) {
+        try {
+          /*
+           * 目标位置若有残留（历史遗留的 <id>.json），先清掉再写。
+           * 否则 saveAs 会把它当"上一版"，版本号从 v2 起、还继承旧的变更日志。
+           */
+          try {
+            const dst = schemeLib.fileOf(id)
+            if (fs.existsSync(dst)) fs.unlinkSync(dst)
+          } catch (e) {
+            /* 删不掉就算了，后面写文件会覆盖 */
+          }
+
+          const src = schemeLib.readRawById(copyFrom)
+          if (src) {
+            const raw = JSON.parse(JSON.stringify(src))
+            raw.id = id
+            raw.name = req.body.name.trim()
+            delete raw.version // saveAs 会置成 1
+            raw.changes = []
+            schemeLib.saveAs(raw, id, req.user && req.user.name ? req.user.name : '教师', '新建课程时复制自 ' + copyFrom)
+            /*
+             * 光有文件还不够：withCourseScheme 认的是 course.schemeId，
+             * 为空就退回默认方案（example-course）。不把课程指过去的话，
+             * 老师进「考核方案」看到的仍是示例课程的配置。
+             */
+            const fresh = repo.getCourse(id)
+            if (fresh) repo.upsertCourse(Object.assign({}, fresh, { schemeId: id }))
+          }
+        } catch (e) {
+          // 复制失败不该让建课失败：课程已经建好，老师之后能在「考核方案」页手选或导入
+        }
+      }
+
       reply.status(201)
       return view(c)
     },
@@ -188,6 +236,21 @@ export default async function courseRoutes(app) {
       })
     }
     repo.deleteCourse(c.id)
+
+    /*
+     * 方案文件跟着删。
+     * 不删的话 data/schemes 会攒一堆没人认领的 <课程id>.json，
+     * 而且下次建同名课程时 saveAs 会读到旧文件 —— 版本号从 v2 起、
+     * 变更日志继承上一个课程的历史，看起来像是"继承了别人的记录"。
+     * 默认方案（example-course）永远留着，那是新课程的兜底。
+     */
+    try {
+      const f = schemeLib.fileOf(c.id)
+      if (f && fs.existsSync(f) && c.id !== schemeLib.DEFAULT_ID) fs.unlinkSync(f)
+    } catch (e) {
+      /* 清不掉不该让删课失败 */
+    }
+
     reply.status(204).send()
   })
 }
