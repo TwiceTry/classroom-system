@@ -19,7 +19,17 @@ import * as timetable from '../lib/timetable.js'
 import { contentRootOf } from './courses.js'
 
 const START = Date.now()
-const PKG = JSON.parse(fs.readFileSync(path.join(ROOT, 'api', 'package.json'), 'utf8'))
+
+/*
+ * 版本号以**仓库根的 package.json** 为准。
+ *
+ * 以前读的是 api/package.json —— 那个文件的 version 停在 2.0.1 再没动过，
+ * 于是发到 2.2.1 之后 /api/health 还一直报 2.0.1。
+ * 部署完查健康检查的人会以为没升上去，真的会去翻日志找原因。
+ *
+ * 单一真源：根 package.json。发版只改那一处，health 自动跟着对。
+ */
+const PKG = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
 
 /** 当前课程：?courseId= 优先，否则第一门未归档的课 */
 function currentCourse(req, user) {
