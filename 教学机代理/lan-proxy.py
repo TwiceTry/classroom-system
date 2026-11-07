@@ -250,6 +250,15 @@ TTL_HTML = int(float(conf_get('cache.ttl.html', '300')))
 REVALIDATE_SEC = int(float(conf_get('cache.ttl.html.verify', '30')))
 
 
+# ---------------- 出口流量计数 ----------------
+# 老师最常问的一句是「一节课用掉多少流量」。这里累加的是
+# **从上游读回来的响应体字节**（不含请求头，量很小）和走上游的请求数。
+# 命中缓存的不计 —— 那些字节没出公网，这正是缓存的价值。
+#
+# 名字别用 UP：那个变量在本文件里是「上游 Target 对象」，会被覆盖。
+TRAFFIC = {'bytes': 0, 'reqs': 0}
+
+
 class CacheStore(object):
     """内存 LRU：按字节数与条数封顶，先进先出淘汰"""
 
@@ -1144,6 +1153,7 @@ class Handler(BaseHTTPRequestHandler):
         reused = False
         resp = None
         try:
+            TRAFFIC['reqs'] += 1  # 走上游的请求数（命中缓存不会到这里）
             conn, reused = self.open_upstream(target, reuse=reusable)
         except Exception as e:
             verbose('连不上 %s %s：%s' % (tag, target.raw, e))
@@ -1275,6 +1285,7 @@ class Handler(BaseHTTPRequestHandler):
             chunk = resp.read(65536)
             if not chunk:
                 break
+            TRAFFIC['bytes'] += len(chunk)  # 出口流量：流式转发
             self.wfile.write(chunk)
         try:
             self.wfile.flush()
@@ -1287,6 +1298,7 @@ class Handler(BaseHTTPRequestHandler):
             chunk = resp.read(65536)
             if not chunk:
                 break
+            TRAFFIC['bytes'] += len(chunk)  # 出口流量：整包读入
             buf += chunk
         return buf
 
@@ -2226,6 +2238,17 @@ def main():
     # 自检页
     class HealthHandler(Handler):
         def do_GET(self):
+            if self.path == '/__proxy_stats/reset':
+                # 压测用：出口计数清零，方便量「这一轮用了多少公网流量」
+                TRAFFIC['bytes'] = 0
+                TRAFFIC['reqs'] = 0
+                body = b'{"ok": true, "reset": true}'
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if self.path == '/__proxy_stats':
                 st = CACHE.stats()
                 body = json.dumps({
@@ -2235,6 +2258,11 @@ def main():
                 'upstreamPool': {'size': POOL.size(), 'max': POOL_MAX},
                 'cast': FANOUT.stats(),
                     'cache': st,
+                    'upstream': {
+                        'requests': TRAFFIC['reqs'],
+                        'bytes': TRAFFIC['bytes'],
+                        'mbytes': round(TRAFFIC['bytes'] / 1048576.0, 3),
+                    },
                     'uptimeSec': int(time.time() - START),
                 }, ensure_ascii=False).encode('utf-8')
                 self.send_response(200)
