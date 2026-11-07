@@ -138,6 +138,32 @@ export default async function examRoutes(app) {
       const check = examLib.validate(norm)
       if (check.errors.length) throw badRequest(check.errors.join('；'))
 
+      /*
+       * 卷面满分与方案对不上时提醒。
+       *
+       * 方案的「卷面折算」规则自带两个数：rawFull（卷面按多少分算）和 factor（折合系数）。
+       * 如果出卷时卷面总分不是 rawFull，学生就**永远拿不到该项满分** ——
+       * 比如方案写「卷面 100 折 30 分」，而卷子只出了 30 分：
+       * 全对也只有 30 × 0.3 = 9 分，剩下的 21 分拿不到，而且界面上看不出原因。
+       *
+       * 不阻断（有人可能确实想用小卷面、或者打算手工调分），但必须说清楚后果。
+       */
+      {
+        const it = examItemOf(a)
+        const want = Number(it.rawFull || 100)
+        const f = Number(it.factor || (want ? it.full / want : 0.3))
+        if (norm.fullScore && want && Math.abs(norm.fullScore - want) > 0.01) {
+          const canGet = Math.round(norm.fullScore * f * 10) / 10
+          check.warnings.push(
+            '这份卷的卷面满分是 ' + norm.fullScore + ' 分，而方案里「' + it.name + '」按卷面 ' +
+              want + ' 分、乘以 ' + f + ' 折合成本项 ' + it.full + ' 分。' +
+              '照现在这样，学生卷面全对也只能拿到 ' + canGet + ' / ' + it.full + ' 分。' +
+              '要么把卷子改成 ' + want + ' 分，要么把方案里「' + it.name + '」的卷面满分改成 ' +
+              norm.fullScore + '。'
+          )
+        }
+      }
+
       const dir = paperDirOf(a.id)
       fs.mkdirSync(dir, { recursive: true })
       examLib.writeJson(examLib.sourceFile(a.id), src)
