@@ -326,8 +326,20 @@ def cache_policy(path):
         return TTL_ASSETS, TTL_ASSETS
     if p.startswith('/vendor/') or p == '/favicon.svg':
         return TTL_STATIC, TTL_STATIC
+    if p.startswith('/lib/'):
+        # 公共运行时库（Vue / SFC 加载器 / 启动器）。
+        #
+        # 2.2.1 起这三个从「代码示例/」搬到了服务端的 /lib/ 前缀：
+        # 它们是第三方库，不是课程内容，页面改成绝对路径引用。
+        # 量最大的是 vue3-sfc-loader.js（1.8MB）—— 不缓存的话，
+        # 30 台机器各自首次打开练习页，就是 54MB 全走公网隧道。
+        #
+        # 上游已经给了 immutable + 一年，这里只做代理侧缓存：
+        # 给 TTL_STATIC（24h）而不是 TTL_ASSETS，因为文件名不带内容哈希，
+        # 系统升级后可能换版本；万一换坏了，重启代理立刻清空（和入口页同一个操作）。
+        return TTL_STATIC, TTL_STATIC
     if p.startswith('/examples/'):
-        # 示例运行时库（名字不带哈希，但极少变）
+        # 示例里的静态文件（图片 / 各课自己的 js、css）
         return TTL_STATIC, TTL_STATIC
     if p.startswith('/api/content/asset'):
         # 讲义 / 材料里的图片

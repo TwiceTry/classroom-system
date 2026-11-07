@@ -306,7 +306,7 @@ def c_cache(cfg, args, c):
             return c.done(False, 'API 被缓存了，老师改完数据学生端要等 5 分钟')
         c.ok('%s 不缓存（%s / X-Cache=%s）' % (api, s1, x2))
 
-    path = '/examples/vue3-sfc-loader.js'
+    path = '/lib/vue3-sfc-loader.js'
     st1, b1, ms1, h1 = http(cfg['base'] + path, timeout=60, with_headers=True)
     if st1 != 200:
         c.bad('取不到 %s（%s）' % (path, st1))
@@ -486,7 +486,7 @@ def c_load(cfg, args, c):
         paths.append(js)
     if css:
         paths.append(css)
-    paths.append('/examples/vue3-sfc-loader.js')
+    paths.append('/lib/vue3-sfc-loader.js')
 
     results = []
     lock = threading.Lock()
