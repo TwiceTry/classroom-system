@@ -89,6 +89,12 @@ function ensureColumns(db) {
   // 大作业：必交附件 / 收哪些扩展名（前端早就在读这两个字段，后端一直没给）
   if (add('assignments', 'require_file', 'require_file INTEGER NOT NULL DEFAULT 1')) added.push('assignments.require_file')
   if (add('assignments', 'attachments', "attachments TEXT NOT NULL DEFAULT ''")) added.push('assignments.attachments')
+
+  // 登录失败表：学号、外部系统自报次数、老师手动禁用
+  if (add('student_login_fails', 'sid', "sid TEXT NOT NULL DEFAULT ''")) added.push('student_login_fails.sid')
+  if (add('student_login_fails', 'remote_count', 'remote_count INTEGER NOT NULL DEFAULT 0')) added.push('student_login_fails.remote_count')
+  if (add('student_login_fails', 'remote_at', "remote_at TEXT NOT NULL DEFAULT ''")) added.push('student_login_fails.remote_at')
+  if (add('student_login_fails', 'manual_blocked', 'manual_blocked INTEGER NOT NULL DEFAULT 0')) added.push('student_login_fails.manual_blocked')
   return added
 }
 

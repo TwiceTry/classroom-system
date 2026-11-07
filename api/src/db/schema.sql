@@ -165,11 +165,15 @@ CREATE TABLE IF NOT EXISTS student_credentials (
 --
 -- 用 account（登录名）而不是 sid 做主键：账号可能带前缀，失败记录要能对上他输的那个名字。
 CREATE TABLE IF NOT EXISTS student_login_fails (
-  account    TEXT PRIMARY KEY,
-  fail_count INTEGER NOT NULL DEFAULT 0,
-  blocked    INTEGER NOT NULL DEFAULT 0,
-  blocked_at TEXT    NOT NULL DEFAULT '',
-  updated_at TEXT    NOT NULL DEFAULT ''
+  account        TEXT PRIMARY KEY,
+  sid            TEXT    NOT NULL DEFAULT '',  -- 能认出来的学号（班级管理页按它显示）
+  fail_count     INTEGER NOT NULL DEFAULT 0,   -- 本系统数的失败次数
+  remote_count   INTEGER NOT NULL DEFAULT 0,   -- 外部系统自报的当日输错次数（最近一次）
+  remote_at      TEXT    NOT NULL DEFAULT '',
+  blocked        INTEGER NOT NULL DEFAULT 0,   -- 自动熔断（数到 3 次）
+  manual_blocked INTEGER NOT NULL DEFAULT 0,   -- 老师手动禁用
+  blocked_at     TEXT    NOT NULL DEFAULT '',
+  updated_at     TEXT    NOT NULL DEFAULT ''
 );
 
 -- 迁移版本（谁跑过哪些脚本）

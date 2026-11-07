@@ -58,6 +58,10 @@
       <button class="tab" :class="{ on: tab === 'log' }" @click="tab = 'log'">
         全班流水 <span class="dim">{{ events.length }}</span>
       </button>
+      <button class="tab" :class="{ on: tab === 'login' }" @click="openLogin">
+        登录管理
+        <span v-if="login.blockedCount" class="dim">{{ login.blockedCount }} 人禁登</span>
+      </button>
     </div>
 
     <section v-show="tab === 'board'" class="card">
@@ -182,6 +186,83 @@
     </li>
     <li v-if="!filteredEvents.length" class="empty">没有符合条件记录</li>
     </ul>
+    </section>
+
+    <!--
+      登录管理：学生登录方式 + 谁被禁登 + 外部系统真实的输错次数。
+      放这里而不是课程管理页 —— 老师是「按班」管人的，切个方式、放个人都在这张表上。
+    -->
+    <section v-show="tab === 'login'" class="card">
+      <CardHead>
+        <template #title>登录管理</template>
+        <template #right>
+          <button class="btn mini" @click="loadLogin">刷新</button>
+        </template>
+      </CardHead>
+
+      <div class="lgrow">
+        <label class="lgopt">
+          <input v-model="login.mode" type="radio" value="local" @change="setLoginMode('local')" />
+          <span>
+            <b>学号 + 姓名</b>
+            <em class="dim mini">和名单比对，不联网；学生只要知道学号就能进</em>
+          </span>
+        </label>
+        <label class="lgopt">
+          <input v-model="login.mode" type="radio" value="kg" @change="setLoginMode('kg')" />
+          <span>
+            <b>账号 + 密码</b>
+            <em class="dim mini">能登上学校平台才放行；第一次核验后记住，之后本地比对</em>
+          </span>
+        </label>
+      </div>
+
+      <p v-if="login.mode === 'kg'" class="dim mini">
+        连错 <b>3</b> 次本系统就暂停该账号登录（不会让它数到外部的 5 次上限）。
+        已记住 <b>{{ login.rememberedCount }}</b> 个学生的密码。
+      </p>
+
+      <table class="lgtbl">
+        <thead>
+          <tr>
+            <th>学号</th>
+            <th>姓名</th>
+            <th class="num">本系统失败</th>
+            <th class="num">平台自报输错</th>
+            <th>状态</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="s in loginRows" :key="s.sid">
+            <td class="mono">{{ s.sid }}</td>
+            <td>{{ s.name }}</td>
+            <td class="num">{{ s.failCount || '—' }}</td>
+            <td class="num">
+              <span v-if="s.remoteCount">{{ s.remoteCount }}</span>
+              <span v-else class="dim">—</span>
+            </td>
+            <td>
+              <span v-if="s.manual" class="tag err">老师禁用</span>
+              <span v-else-if="s.auto" class="tag warn" :title="'约 ' + untilText(s.until) + ' 自动恢复'">
+                连错 {{ s.failCount }} 次
+              </span>
+              <span v-else class="dim">正常</span>
+            </td>
+            <td class="ops">
+              <!-- 手动禁用的只需要一个「解除」；自动熔断的多给一个「解除禁登」 -->
+              <button v-if="s.manual" class="btn mini" @click="unblockOne(s)">解除禁用</button>
+              <template v-else>
+                <button class="btn mini danger" @click="blockOne(s)">禁用</button>
+                <button v-if="s.auto" class="btn mini" @click="unblockOne(s)">解除禁登</button>
+              </template>
+            </td>
+          </tr>
+          <tr v-if="!loginRows.length">
+            <td colspan="6" class="empty">这个班没有学生</td>
+          </tr>
+        </tbody>
+      </table>
     </section>
 
     <!-- 点名：并进这里，不再单开一个页面 -->
@@ -440,7 +521,89 @@ const itemsLine = computed(() => {
 const route = useRoute()
 const activeId = ref(localStorage.getItem('scores-class') || '')
 // 老链接 /teacher/rollcall 会重定向到这里并带上 ?tab=rollcall
-const tab = ref(['board', 'log'].indexOf(route.query.tab) >= 0 ? route.query.tab : 'board')
+const tab = ref(['board', 'log', 'login'].indexOf(route.query.tab) >= 0 ? route.query.tab : 'board')
+
+/* ---------------- 登录管理 ---------------- */
+const login = reactive({
+  mode: 'local',
+  verifyEachTime: false,
+  rememberedCount: 0,
+  blockedCount: 0,
+  students: [],
+})
+
+/** 有问题的排前面：老师打开这一页就是要看谁出事了 */
+const loginRows = computed(() => {
+  const list = (login.students || []).slice()
+  const score = (s) => (s.manual ? 3 : 0) + (s.auto ? 2 : 0) + (s.failCount || 0) + (s.remoteCount || 0)
+  list.sort((a, b) => score(b) - score(a) || String(a.sid).localeCompare(String(b.sid)))
+  return list
+})
+
+function untilText(iso) {
+  if (!iso) return ''
+  const ms = Date.parse(iso) - Date.now()
+  if (!(ms > 0)) return '已到期'
+  const h = Math.floor(ms / 3600000)
+  return h >= 1 ? h + ' 小时后' : Math.round(ms / 60000) + ' 分钟后'
+}
+
+function openLogin() {
+  tab.value = 'login'
+  loadLogin()
+}
+
+async function loadLogin() {
+  if (!activeId.value) return
+  try {
+    const r = await api.get('/api/classes/' + activeId.value + '/login-admin')
+    login.mode = r.mode === 'kg' ? 'kg' : 'local'
+    login.verifyEachTime = r.verifyEachTime === true
+    login.rememberedCount = Number(r.rememberedCount || 0)
+    login.blockedCount = Number(r.blockedCount || 0)
+    login.students = Array.isArray(r.students) ? r.students : []
+  } catch (e) {
+    toast.value = '读不到登录管理数据：' + e.message
+  }
+}
+
+/** 切登录方式：和课程管理页是同一个配置，改哪边都一样 */
+async function setLoginMode(mode) {
+  try {
+    await api.patch('/api/settings/student-auth', { mode, verifyEachTime: login.verifyEachTime })
+    toast.value = '已切换：学生现在用' + (mode === 'kg' ? '账号 + 密码' : '学号 + 姓名') + '登录'
+    await loadLogin()
+  } catch (e) {
+    toast.value = '切换失败：' + e.message
+    await loadLogin()
+  }
+}
+
+/* 切班级时如果正停在登录管理页，跟着刷新那份数据 */
+watch(activeId, () => {
+  if (tab.value === 'login') loadLogin()
+})
+
+async function blockOne(s) {
+  if (!window.confirm('禁止「' + s.name + '（' + s.sid + '）」登录？\n\n他会立刻登不进来，直到你解除。')) return
+  try {
+    await api.post('/api/classes/' + activeId.value + '/students/' + encodeURIComponent(s.sid) + '/login-block', {})
+    toast.value = '已禁止 ' + s.name + ' 登录'
+    await loadLogin()
+  } catch (e) {
+    toast.value = '操作失败：' + e.message
+  }
+}
+
+async function unblockOne(s) {
+  try {
+    await api.del('/api/classes/' + activeId.value + '/students/' + encodeURIComponent(s.sid) + '/login-block')
+    toast.value = '已解除 ' + s.name + ' 的禁登，失败次数也清零了'
+    await loadLogin()
+  } catch (e) {
+    toast.value = '操作失败：' + e.message
+  }
+}
 const q = ref('')
 const error = ref('')
 const toast = ref('')
@@ -1313,5 +1476,60 @@ th.on .sortmark {
   gap: 6px;
   font-size: 13.5px;
   color: #475569;
+}
+/* 登录管理 */
+.lgrow {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 6px 0 8px;
+}
+.lgopt {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  cursor: pointer;
+  flex: 1 1 260px;
+}
+.lgopt span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.lgopt em {
+  font-style: normal;
+}
+.lgtbl {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+  font-size: 13px;
+}
+.lgtbl th,
+.lgtbl td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.lgtbl th {
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.lgtbl .num {
+  text-align: right;
+  width: 110px;
+}
+.lgtbl .mono {
+  font-family: ui-monospace, Consolas, monospace;
+}
+.lgtbl .ops {
+  text-align: right;
+  white-space: nowrap;
+}
+.lgtbl .ops .btn {
+  margin-left: 4px;
 }
 </style>

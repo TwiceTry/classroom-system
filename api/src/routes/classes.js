@@ -167,4 +167,76 @@ export default async function classRoutes(app) {
     if (!ok) throw notFound('这个学生不在班里')
     reply.status(204).send()
   })
+
+  /* ---------------- 登录管理（学生登录方式 + 失败/禁用状态） ---------------- */
+
+  /**
+   * 班级视角的登录管理面板数据。
+   *
+   * 一次把三件事给齐：
+   *   · 当前登录方式（老师在这里就能切，不用跑去课程管理页）
+   *   · 每个学生的失败次数、**外部系统自报的真实输错次数**、是否被禁登
+   *   · 手动禁用 / 解除
+   *
+   * 外部真实次数只有登录失败那一刻才知道（没有查询接口），
+   * 所以这里显示的是「最近一次失败时它自报的当日累计」。
+   */
+  app.get('/api/classes/:id/login-admin', { preHandler: requireAuth('teacher') }, async (req, reply) => {
+    reply.header('Cache-Control', 'no-store, must-revalidate')
+    const cls = repo.getClass(req.params.id)
+    if (!cls) throw notFound('班级不存在')
+
+    const { getStudentAuth } = await import('../config.js')
+    const fails = await import('../lib/login-fails.js')
+    const creds = await import('../lib/student-creds.js')
+
+    const sa = getStudentAuth()
+    const roster = repo.rosterOf(cls.id)
+    const st = fails.statusOfSids(roster.map((s) => s.sid))
+
+    const students = roster.map((s) => {
+      const x = st.get(String(s.sid)) || null
+      return {
+        sid: s.sid,
+        name: s.name,
+        account: x ? x.account : '',
+        failCount: x ? x.failCount : 0,
+        remoteCount: x ? x.remoteCount : 0,
+        remoteAt: x ? x.remoteAt : '',
+        blocked: x ? x.blocked : false,
+        manual: x ? x.manual : false,
+        auto: x ? x.auto : false,
+        until: x ? x.until : '',
+      }
+    })
+
+    return {
+      mode: sa.mode,
+      verifyEachTime: sa.verifyEachTime,
+      kgBases: sa.kgBases,
+      rememberedCount: creds.countRemembered(),
+      blockedCount: students.filter((x) => x.blocked).length,
+      students,
+    }
+  })
+
+  /** 老师手动禁用某个学生登录 */
+  app.post('/api/classes/:id/students/:sid/login-block', { preHandler: requireAuth('teacher') }, async (req) => {
+    const cls = repo.getClass(req.params.id)
+    if (!cls) throw notFound('班级不存在')
+    if (!repo.findStudent(cls.id, req.params.sid)) throw notFound('这个学生不在班里')
+    const fails = await import('../lib/login-fails.js')
+    fails.setManual(req.params.sid, true)
+    return { ok: true, sid: req.params.sid, blocked: true }
+  })
+
+  /** 解除（手动禁用 + 自动熔断一起清） */
+  app.delete('/api/classes/:id/students/:sid/login-block', { preHandler: requireAuth('teacher') }, async (req) => {
+    const cls = repo.getClass(req.params.id)
+    if (!cls) throw notFound('班级不存在')
+    const fails = await import('../lib/login-fails.js')
+    fails.setManual(req.params.sid, false)
+    fails.unblock(req.params.sid)
+    return { ok: true, sid: req.params.sid, blocked: false }
+  })
 }

@@ -82,6 +82,22 @@ export default async function authRoutes(app) {
       let sid = String(req.body.sid || '').trim()
       if (!sid) throw badRequest('请填写学号')
 
+      /*
+       * 老师手动禁用的，**两种登录方式都要拦住**。
+       *
+       * 这一步必须在 mode 分支之前：老师禁的是「这个人」，不是「这种登录方式」。
+       * 否则切回「学号+姓名」他就又进来了 —— 那这个禁用形同虚设。
+       */
+      let manualBlocked = false
+      try {
+        const lf = await import('../lib/login-fails.js')
+        const mb = lf.check(sid)
+        manualBlocked = !!(mb.blocked && mb.why === 'manual')
+      } catch (e) {
+        /* 查不到记录就当没禁用 */
+      }
+      if (manualBlocked) throw unauthorized('这个账号已被老师禁止登录，请联系老师')
+
       const sa = getStudentAuth() // 读一次：mode 和青果入口来自同一份配置
       const mode = sa.mode
 
@@ -99,6 +115,10 @@ export default async function authRoutes(app) {
         const fails = await import('../lib/login-fails.js')
         const blocked = fails.check(account)
         if (blocked.blocked) {
+          // 老师手动禁用的，没有「自动恢复」这回事，只能找老师
+          if (blocked.why === 'manual') {
+            throw unauthorized('这个账号已被老师禁止登录，请联系老师')
+          }
           const hours = Math.max(1, Math.round(blocked.remainMs / 3600000))
           throw unauthorized(
             '这个账号今天输错次数过多，已暂时禁止登录。约 ' +
@@ -134,7 +154,9 @@ export default async function authRoutes(app) {
              * 那是我们的问题，不该算到学生头上。
              */
             if (!/超时|连不上|不可用/.test(m)) {
-              const st = fails.bump(account, r.counter)
+              // 顺手认一下学号（认不出就算了），这样班级管理页能按学号显示这条失败记录
+              const guess = matchSid(account, repo.listAllSids())
+              const st = fails.bump(account, r.counter, guess)
               if (st.justBlocked) {
                 throw unauthorized(
                   '这个账号已连续输错 ' +
