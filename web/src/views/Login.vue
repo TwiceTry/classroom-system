@@ -24,36 +24,34 @@
             <option v-for="c in courses" :key="c.id" :value="c.id">{{ c.name }}</option>
           </select>
         </label>
-        <!-- kg 模式下这个框装的是青果账号（可能带前缀），所以标签跟着换 -->
         <label class="field">
           <span>{{ authMode === 'kg' ? '账号' : '学号' }}</span>
           <input
             v-model.trim="form.sid"
             class="input"
-            :placeholder="authMode === 'kg' ? '智慧校园账号（学号）' : '名单上的学号'"
+            :placeholder="authMode === 'kg' ? '请输入账号' : '名单上的学号'"
             autocomplete="off"
           />
         </label>
         <!--
           两种校验方式由老师在「课程管理 → 学生登录方式」里切换：
-          local 用姓名，kg 用青果密码。登录页只按后端给的 mode 显示表单。
+          local 用姓名，kg 用账号+密码。登录页只按后端给的 mode 显示表单。
         -->
         <label v-if="authMode === 'local'" class="field">
           <span>姓名</span>
           <input v-model.trim="form.name" class="input" placeholder="名单上的姓名" autocomplete="off" />
         </label>
         <label v-else class="field">
-          <span>青果密码</span>
+          <span>密码</span>
           <input
             v-model="form.stuPwd"
             type="password"
             class="input"
-            placeholder="智慧校园平台的密码"
+            placeholder="请输入密码"
             autocomplete="current-password"
           />
         </label>
         <p v-if="authMode === 'local'" class="note">学号和姓名要和名单一致。登录后只能看到自己的分数。</p>
-        <p v-else class="note">用学校智慧校园平台的账号和密码登录。</p>
         <button class="btn primary" :disabled="busy || !canSubmit">
           {{ busy ? '正在登录…' : '进入课堂' }}
         </button>
@@ -123,7 +121,7 @@ const courseCountText = computed(() => {
 const form = reactive({ courseId: '', sid: '', name: '', password: '', stuPwd: '' })
 
 /**
- * 学生登录用哪种校验：local（学号+姓名，默认）/ kg（青果账号密码）。
+ * 学生登录用哪种校验：local（学号+姓名，默认）/ kg（账号+密码）。
  * 由老师在课程管理页切换；这里只决定显示哪个输入框。
  * 取不到就按 local 走 —— 宁可退回老方式，也不要让学生卡在登录页。
  */

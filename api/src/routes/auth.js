@@ -134,7 +134,8 @@ export default async function authRoutes(app) {
          */
         sid = matchSid(account, repo.listAllSids())
         if (!sid) {
-          throw unauthorized('这个账号能登录智慧校园，但还没有加入本课程班级，请联系老师')
+          // 只说「没入班」，不提是哪个系统验证过的 —— 学生不需要知道这层
+          throw unauthorized('这个账号还没有加入本课程班级，请联系老师')
         }
       } else {
         const name = String(req.body.name || '').trim()

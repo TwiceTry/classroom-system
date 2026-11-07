@@ -58,7 +58,7 @@ function pickBase(bases) {
  */
 export async function verifyStudent(sid, password, opts = {}) {
   const base = pickBase(opts.bases)
-  if (!base) return { ok: false, message: '学校没配置青果登录地址，请联系老师' }
+  if (!base) return { ok: false, message: '登录服务还没配好，请联系老师' }
 
   const timeoutMs = Number(opts.timeoutMs || 20000)
 
@@ -81,8 +81,8 @@ export async function verifyStudent(sid, password, opts = {}) {
     return {
       ok: false,
       message: isTimeout
-        ? '连接青果超时（' + base + '），请稍后再试'
-        : '连不上青果（' + base + '）：' + String((e && e.message) || e).slice(0, 60),
+        ? '登录服务连接超时，请稍后再试'
+        : '登录服务暂时连不上，请稍后再试',
     }
   }
 
@@ -100,26 +100,26 @@ export async function verifyStudent(sid, password, opts = {}) {
    */
   if (status === '402') {
     if (counter >= 5) {
-      return { ok: false, message: '青果提示：今天输错次数已满，账号被锁定了，明天再试或找老师' }
+      return { ok: false, message: '今天输错次数已满，账号被锁定了，明天再试或找老师' }
     }
     return {
       ok: false,
       message: counter
-        ? '学号或密码不对（今天已错 ' + counter + ' 次，满 5 次会锁号）'
-        : '学号或密码不对',
+        ? '账号或密码不对（今天已错 ' + counter + ' 次，满 5 次会锁定）'
+        : '账号或密码不对',
     }
   }
   if (status === '505') {
-    return { ok: false, message: '这个账号需要短信二次验证，请先在青果网页上登录一次' }
+    return { ok: false, message: '这个账号需要短信验证，请先完成验证后再登录' }
   }
   if (status === '401' || /验证码/.test(msg)) {
-    return { ok: false, message: '青果的验证码没认对，请再点一次登录' }
+    return { ok: false, message: '这次没验过，请再试一次' }
   }
   if (/密码|账号/.test(msg)) {
-    return { ok: false, message: '学号或密码不对' }
+    return { ok: false, message: '账号或密码不对' }
   }
   if (status === 'ERR') {
-    return { ok: false, message: '青果返回了看不懂的内容，请稍后再试' }
+    return { ok: false, message: '登录服务暂时不可用，请稍后再试' }
   }
-  return { ok: false, message: '青果拒绝登录：' + (msg || '未知原因').slice(0, 60) }
+  return { ok: false, message: '账号或密码不对' }
 }
