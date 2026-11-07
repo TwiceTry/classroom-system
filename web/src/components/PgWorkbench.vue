@@ -678,6 +678,34 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, resetTo
   flex-direction: column;
 }
 
+/*
+ * 左右排：锁一屏，两栏各自内部滚动。
+ *
+ * 不加这段的话 .pg 没有高度约束，整条链 .pg → .content → .work → .stack
+ * 高度都是 auto，代码一长整页就被撑出视口、底部被截掉。
+ *
+ * 注意只看 :not(.pg-tall) —— 上下排（.pg-tall）保持原设计：
+ * 两块各 78vh，故意把页面撑大，靠整页滚动上下浏览。那个行为不要动。
+ */
+.pg:not(.pg-tall) {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.pg:not(.pg-tall) > .content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.pg:not(.pg-tall) .work {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 
 
 .fontbox {
@@ -840,6 +868,14 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, resetTo
   flex-shrink: 0;
   min-width: 220px;
   min-height: 120px;
+  /*
+   * 必须是 flex 列：里面是 .ed-head（固定 38px）+ .cm-host（flex: 1）。
+   * 原来这里是 block，.cm-host 的 flex: 1 不起作用 → 高度变 auto →
+   * CodeMirror 自己撑开，超出 .editor 的部分被裁掉，长代码既看不到也滚不了。
+   */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* 滚动交给 .cm-host 里的 .cm-scroller */
 }
 
 
