@@ -3,18 +3,23 @@
     <!-- 老师开着：直接进工作台，跟 Playground 一模一样，只是右上多一个「提交」 -->
     <PgWorkbench
       v-if="a && a.status === 'open'"
+      ref="wb"
       :key="'hw-' + a.id"
       :title="a.title"
       :sub="subText"
+      :source="a.dir ? 'example' : 'assignment'"
+      :assignment-id="a.id"
       :fixed-dir="a.dir"
       :bucket="'hw-' + a.id"
+      @loaded="onLoaded"
     >
       <template #banner>
         <div class="bar" :class="{ done: mine.length }">
           <span class="tag ok">进行中</span>
           <span v-if="dueText" class="dim">截止 {{ dueText }}<template v-if="a.allowLate === false">（过了就不能交了）</template></span>
           <span v-if="!mine.length">
-            还没交。改完代码点右上角 <b>提交</b>（整份交上去，老师能直接跑起来看效果）。
+            还没交。编辑器里是<b>{{ editorLabel }}</b>，
+            改完点右上角 <b>提交</b>（整份交上去，老师能直接跑起来看效果）。
           </span>
           <span v-else>
             已交，最近一次：{{ when(mine[mine.length - 1].createdAt) }}
@@ -23,13 +28,22 @@
               · 得分 <b class="score">{{ mine[mine.length - 1].score }}</b>
             </template>
             <template v-else>· 等老师批</template>
-            <span class="dim">　再交会覆盖上一次（只保留最新）</span>
+            <span class="dim">　编辑器里是<b>{{ editorLabel }}</b>；再交会覆盖上一次（只保留最新）</span>
           </span>
         </div>
       </template>
 
       <template #actions="{ files, allFiles }">
         <router-link class="btn mini" to="/student/assignments">← 列表</router-link>
+        <!-- 像做题一样：随时可以退回老师给的初始代码，但不影响已提交的那份和分数 -->
+        <button
+          v-if="!a.dir"
+          class="btn mini"
+          :title="'把编辑器恢复成老师给的初始代码（不会删除你已经提交的那份）'"
+          @click="resetToStarter"
+        >
+          恢复最初状态
+        </button>
         <button class="btn mini primary" :disabled="busy" @click="submit(files, allFiles)">
           {{ busy ? '提交中…' : mine.length ? '重新提交（覆盖上一次）' : '提交' }}
         </button>
@@ -134,6 +148,26 @@ const id = route.params.id
 
 const a = ref(null)
 const mine = ref([])
+/* 工作台实例：「恢复最初状态」要让它重新拉起手代码 */
+const wb = ref(null)
+
+/*
+ * 编辑器这次加载的是哪一份：起手代码 / 我上次提交的 / 空。
+ * 由工作台的 loaded 事件告知 —— 不要用 mine.length 去猜，
+ * 因为点过「恢复最初状态」之后，明明有提交，编辑器里却是起手代码。
+ */
+const editorSource = ref('')
+function onLoaded(e) {
+  editorSource.value = (e && e.source) || ''
+}
+const editorLabel = computed(() => {
+  const s = editorSource.value
+  if (s === 'submission') return '你上次交的那份'
+  if (s === 'starter') return '老师给的初始代码'
+  if (s === 'empty') return '空白（老师没给初始代码）'
+  if (s === 'example') return '课程示例'
+  return a.value && a.value.hasStarter ? '老师给的初始代码' : '空白（老师没给初始代码）'
+})
 const err = ref('')
 const toast = ref('')
 const busy = ref(false)
@@ -195,6 +229,15 @@ async function load() {
   } catch (e) {
     err.value = e.message
   }
+}
+
+/**
+ * 「恢复最初状态」：把编辑器退回老师给的起手代码。
+ * 具体怎么拉数据、怎么清本地草稿交给工作台（它才知道分桶键）。
+ */
+function resetToStarter() {
+  const ins = wb.value
+  if (ins && typeof ins.resetToStarter === 'function') ins.resetToStarter()
 }
 
 /**

@@ -149,10 +149,22 @@ import DirIO from './DirIO.vue'
 import PageHead from './PageHead.vue'
 import FileIcon from './FileIcon.vue'
 
+/* 通知父组件「这次加载的是哪一份代码」（起手代码 / 我上次提交的），
+ * 父组件据此决定提示文案，不要再靠 mine.length 猜。 */
+const emit = defineEmits(['loaded'])
+
 const props = defineProps({
   title: { type: String, default: '代码练习' },
   sub: { type: String, default: '' },
   fixedDir: { type: String, default: '' }, // 非空 = 锁定目录（课堂作业用）
+  /*
+   * 代码从哪来：
+   *   'example'    —— 课程内容里的示例目录（Playground、绑定了示例的作业）
+   *   'assignment' —— 作业的三层状态（起手代码 / 我的提交），走 /api/assignments/:id/code
+   * 以前只有 fixedDir 一条路，作业拿不到「自己那份」，于是退化成拉全部示例。
+   */
+  source: { type: String, default: 'example' },
+  assignmentId: { type: String, default: '' },
   bucket: { type: String, default: 'pg' }, // 本机存档的键名前缀
   contentDir: { type: String, default: '' }, // 非空 = 页头显示「导出/导入这个内容目录」
   readonly: { type: Boolean, default: false }, // 只读（老师批阅时看学生的提交：能选中能搜索，改不动）
@@ -168,6 +180,8 @@ const dirLabel = computed(() => {
   return d
 })
 const dir = ref(props.fixedDir || '')
+/* 只在「恢复最初状态」那一次请求里为 true，让后端强制给起手代码 */
+let forceStarter = false
 const bundle = ref(null)
 const page = ref('')
 const activeFile = ref('')
@@ -324,8 +338,14 @@ onMounted(async () => {
   window.addEventListener('beforeunload', flushEdits)
   document.addEventListener('visibilitychange', onHide)
   try {
+    if (props.source === 'assignment') {
+      // 作业：不拉示例清单，直接装「我的提交 / 起手代码」
+      dir.value = '@a:' + props.assignmentId // 占位，loadDir 里会换成后端给的真实标识
+      await loadDir()
+      return
+    }
     if (props.fixedDir) {
-      // 锁定目录（课堂作业）：不用拉示例清单，直接装这一课
+      // 锁定目录（绑定了示例的作业）：不用拉示例清单，直接装这一课
       dir.value = props.fixedDir
       await loadDir()
       return
@@ -368,7 +388,7 @@ onBeforeUnmount(() => {
 
 async function loadDir() {
   flushEdits() // 先把上一个目录的改动存回它自己的桶
-  if (!props.fixedDir) localStorage.setItem('pg-dir', dir.value)
+  if (!props.fixedDir && props.source !== 'assignment') localStorage.setItem('pg-dir', dir.value)
   page.value = ''
   activeFile.value = ''
   pageErrors.value = []
@@ -376,10 +396,25 @@ async function loadDir() {
   Object.keys(edits).forEach((k) => delete edits[k])
   Object.keys(closed).forEach((k) => delete closed[k])
   bundle.value = null
+  const isAssignment = props.source === 'assignment'
   try {
-    const res = await api.get('/api/examples/' + encodeURIComponent(dir.value))
+    /*
+     * 作业走 /api/assignments/:id/code —— 它一次把「该给学生看哪份代码」定好：
+     *   有提交 → 给提交；没有 → 给起手代码；都没有 → 空。
+     * 加 ?from=starter 就是「恢复最初状态」。
+     */
+    const url = isAssignment
+      ? '/api/assignments/' + encodeURIComponent(props.assignmentId) + '/code' + (forceStarter ? '?from=starter' : '')
+      : '/api/examples/' + encodeURIComponent(dir.value)
+    const res = await api.get(url)
     bundle.value = res
+    // 作业的 dir 由后端给（@a:<作业id> 起手代码 / @s:<提交id> 我的提交），本地草稿按它分桶
+    if (isAssignment && res && res.dir) dir.value = res.dir
+    if (isAssignment && res && res.source === 'empty') {
+      error.value = '这次作业还没有起手代码（老师没给初始文件）。'
+    }
     saved.dir = dir.value
+    emit('loaded', { source: (res && res.source) || (isAssignment ? '' : 'example'), dir: dir.value })
     saved.scope = scopeOf()
     restoreEdits()
     const savedPage = localStorage.getItem(pageKey(dir.value))
@@ -535,6 +570,30 @@ function resetAll() {
   run()
 }
 
+/**
+ * 「恢复最初状态」：把编辑器换回老师给的起手代码。
+ *
+ * 只清**未提交的本地改动**，**不动已经提交的那份** ——
+ * 提交上挂着分数和计分记录，删了等于把分一起撤掉（那是「清空提交」的语义，不是这个按钮）。
+ */
+async function resetToStarter() {
+  if (props.source !== 'assignment' || following.value) return
+  const ok = window.confirm(
+    '把编辑器恢复成老师给的初始代码？\n\n· 还没提交的改动会丢掉\n· 已经提交的那份和分数不受影响'
+  )
+  if (!ok) return
+  Object.keys(edits).forEach((k) => delete edits[k])
+  Object.keys(closed).forEach((k) => delete closed[k])
+  forceStarter = true
+  try {
+    await loadDir() // loadDir 开头的 flushEdits 会把空表对应的存档键删掉
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    forceStarter = false
+  }
+}
+
 /** 文件面板底部的「清空」：只清当前这一课的本机存档 */
 function clearSaved() {
   if (!dirtyCount.value) return
@@ -582,7 +641,7 @@ const {
   },
 })
 
-defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, reload: loadDir })
+defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, resetToStarter, reload: loadDir })
 </script>
 
 <style scoped>

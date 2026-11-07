@@ -16,6 +16,8 @@ import { ApiError, badRequest, notFound, conflict, forbidden } from '../lib/erro
 import { UPLOAD_DIR, config } from '../config.js'
 import * as repo from '../lib/repo.js'
 import * as store from '../lib/submitstore.js'
+import * as starter from '../lib/starter.js'
+import * as assignlib from '../lib/assignlib.js'
 import * as scheme from '../lib/scheme.js'
 import { withCourseScheme } from '../lib/scheme.js'
 import { broadcast } from './cast.js'
@@ -60,8 +62,17 @@ function dirTitleOf(a) {
 
 const view = (a) => ({
   id: a.id,
-  // 有没有「自己那份代码」：没挂示例就是建课时复制的一份
-  selfCode: !a.dir,
+  /*
+   * 这次作业的代码从哪来（工作台据此决定去哪读）：
+   *   'example' —— 绑定了课程内容里的示例目录（dir 有值）
+   *   'starter' —— 老师给的起手代码，全班共用 data/assignments/<作业id>/code/
+   *
+   * hasStarter 是**真去磁盘看的**。原来的 selfCode = !a.dir 只是推断：
+   * 直接新建作业时磁盘上根本没有起手代码，却报「有」，
+   * 前端于是既不去读它、也没法判断该显示什么。
+   */
+  codeSource: a.dir ? 'example' : 'starter',
+  hasStarter: a.dir ? false : starter.hasStarter(a.id),
   dirTitle: dirTitleOf(a),
   kind: a.kind || 'work',
   itemKey: a.itemKey || '',
@@ -186,6 +197,24 @@ export default async function assignmentRoutes(app) {
           dueAt: b.dueAt || '',
           allowLate: !!b.allowLate,
         })
+        /*
+         * 课堂作业要有「起手代码」—— 全班共用的那份题目初始状态。
+         *   从作业库建（designId）→ 用设计包里带的 code/
+         *   直接新建              → 落一个空白 index.html 兜底
+         * 以前这条路一行都没有，于是学生打开作业只能看到课程示例。
+         */
+        if (starter.hasStarterKind(kind)) {
+          let files = null
+          if (b.designId && course) {
+            try {
+              files = assignlib.designCode(course.id, String(b.designId))
+            } catch (e) {
+              files = null
+            }
+          }
+          starter.ensureStarter(a.id, files)
+        }
+
         reply.status(201)
         return { assignment: view(a) }
       })
@@ -254,6 +283,9 @@ export default async function assignmentRoutes(app) {
     const classes = repo.listClasses().map((c) => ({ id: c.id, students: repo.rosterOf(c.id) }))
     const folders = store.removeAssignmentEverywhere(a.kind, a.id, classes)
 
+    // 起手代码（data/assignments/<作业id>/code/）也要清，否则会攒一堆没人认领的目录
+    starter.removeStarter(a.id)
+
     // 机试还要清试卷源文件 + 纸质卷目录（不然 data/exams 里会一直堆）
     if (a.kind === 'paper') {
       try {
@@ -304,6 +336,57 @@ export default async function assignmentRoutes(app) {
         gradedCount: scope.filter((s) => typeof s.score === 'number').length,
         missing,
       },
+    }
+  })
+
+  /**
+   * 学生打开作业时，工作台要加载的代码（三层状态的唯一入口）
+   *
+   *   有「我的提交」 → 给提交（继续改交上去的那份）
+   *   没有           → 给起手代码（第一次做作业）
+   *   都没有         → 空，前端提示「老师没给起手代码」
+   *
+   * ?from=starter 强制取起手代码 —— 「恢复最初状态」用它。
+   * 注意它**不会删提交**：分数和计分记录都挂在提交上，删了等于把分撤掉。
+   */
+  app.get('/api/assignments/:id/code', { preHandler: requireAuth() }, async (req) => {
+    const a = repo.getAssignment(req.params.id)
+    if (!a) throw notFound('作业不存在')
+    const t = req.user || {}
+    const isStudent = t.role === 'student'
+
+    if (isStudent) {
+      const cls = repo.getClass(t.classId)
+      if (!cls) throw notFound('班级不存在')
+      if (cls.courseId && a.courseId && cls.courseId !== a.courseId) {
+        throw forbidden('这次作业不属于你的课程')
+      }
+    }
+
+    const sid = isStudent ? t.sid : String(req.query.sid || '')
+    const from = String(req.query.from || '')
+
+    if (from !== 'starter' && sid) {
+      const mine = repo.findSubmission(a.id, sid)
+      const files = mine ? store.readTextFiles(a.kind, mine.classId, mine.sid, a.id, mine.files || []) : []
+      if (files && files.length) {
+        return {
+          dir: '@s:' + mine.id,
+          source: 'submission',
+          files,
+          submittedAt: mine.createdAt || '',
+          hasStarter: starter.hasStarter(a.id),
+        }
+      }
+    }
+
+    const st = starter.readStarter(a.id)
+    return {
+      dir: starter.dirToken(a.id),
+      source: st ? 'starter' : 'empty',
+      files: st ? st.files : [],
+      submittedAt: '',
+      hasStarter: !!st,
     }
   })
 
