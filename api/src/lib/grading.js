@@ -180,6 +180,19 @@ export function submissionView(s, className) {
     raw: s.raw === null || s.raw === undefined ? undefined : Number(s.raw),
     dims: s.dims || undefined,
     score: s.score === null || s.score === undefined ? undefined : Number(s.score),
+    /*
+     * 显式的「打过分了没有」。
+     *
+     * 前端原来靠 `score === null` 判断，但未打分时这里给的是 **undefined**
+     * （`s.score === null || undefined ? undefined : ...`），
+     * 于是：
+     *   · `viewing.score === null` → false，「上传证据」在没打分时也是可点的；
+     *   · `x.score !== null` → true，没打分的提交被算进「已批」。
+     * 与其让每一处去猜 null / undefined 的区别，不如后端给一个布尔量。
+     */
+    graded: typeof s.score === 'number',
+    /* 评分证据（截图等）。它挂在计分 event 上，调用方按需填充 */
+    evidence: s.evidence || [],
     comment: s.comment || '',
     gradedAt: s.gradedAt || '',
     gradedBy: s.gradedBy || '',

@@ -79,8 +79,23 @@ const view = (a) => ({
   allowLate: !!a.allowLate,
 })
 
-/** 提交记录的对外形状：统一用 lib/grading.js 里那一份（别在这里再写一个） */
-const subView = submissionView
+/**
+ * 提交记录的对外形状：统一用 lib/grading.js 里那一份（别在这里再写一个）。
+ *
+ * 但**证据**得在这里补：它存在计分 event 上（`events.evidence`），
+ * submission 行本身只有一个 eventId。
+ * 原先直接把 submissionView 当 subView 用，于是接口从来不带 evidence，
+ * 前端 `viewing.evidence` 永远是 undefined —— 老师传完证据看不到、也删不掉。
+ */
+const subView = (s, className) => {
+  const v = submissionView(s, className)
+  if (!v) return v
+  if (v.eventId && s.classId) {
+    const ev = repo.findEvent(s.classId, v.eventId)
+    v.evidence = (ev && ev.evidence) || []
+  }
+  return v
+}
 
 export default async function assignmentRoutes(app) {
   /* ============================ 教师侧 ============================ */
@@ -525,6 +540,18 @@ export default async function assignmentRoutes(app) {
     return {
       assignment: view(a),
       mySubmission: mine ? subView(mine) : null,
+      /*
+       * 同时给一个数组形态。
+       *
+       * 学生端两个详情页（课堂作业、大作业）都是按「列表」写的：
+       *   mine.length 显示「已交 N 次」、v-for 渲染每一条、mine[mine.length-1] 取最近一次。
+       * 但接口只有 mySubmission（单个对象），于是 `res.mine || []` 永远是空数组 ——
+       * 学生交完作业，页面上「我的提交」整块不显示，附件也下载不回来。
+       *
+       * 现在一次提交是覆盖（同一 assignment+sid 只有一行），所以数组最多一条；
+       * 将来若改成保留历史，这个字段天然还是对的，前端不用动。
+       */
+      mine: mine ? [subView(mine)] : [],
       files: mine && a.kind !== 'project' ? store.readTextFiles(a.kind, mine.classId, mine.sid, a.id, mine.files) : [],
     }
   })

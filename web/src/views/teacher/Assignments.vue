@@ -149,7 +149,7 @@
       <template #cell-className="{ row }"><span class="dim">{{ row.className }}</span></template>
       <template #cell-files="{ row }">{{ row.changedCount }} / {{ row.fileCount }}</template>
       <template #cell-score="{ row }">
-        <span :class="{ ok: row.score !== null }">{{ row.score === null ? '—' : row.score }}</span>
+        <span :class="{ ok: row.graded }">{{ !row.graded ? '—' : row.score }}</span>
       </template>
       <template #cell-comment="{ row }"><span class="cmt dim">{{ row.comment || '—' }}</span></template>
       <template #cell-actions="{ row }">
@@ -250,7 +250,7 @@
     </p>
     <input v-model="grade.comment" class="input" placeholder="评语（可选，学生看得到）" />
     <span class="spacer"></span>
-    <span v-if="viewing.score !== null" class="dim mini">
+    <span v-if="viewing.graded" class="dim mini">
       上次：{{ viewing.score }} 分 {{ viewing.gradedAt ? '· ' + when(viewing.gradedAt) : '' }}
     </span>
     <button class="btn line" :disabled="saving" @click="clearGrade">清掉</button>
@@ -888,7 +888,7 @@ async function saveGrade() {
     // 就地把列表里的那行改掉，不重新拉整页，免得打断「下一条」的节奏
     const i = d.value.submissions.findIndex((x) => x.id === viewing.value.id)
     if (i >= 0) d.value.submissions[i] = res.submission
-    d.value.stats.gradedCount = d.value.submissions.filter((x) => x.score !== null).length
+    d.value.stats.gradedCount = d.value.submissions.filter((x) => x.graded).length
     toast.value = '已保存'
     if (reviewIdx.value < d.value.submissions.length - 1) step(1)
     else closeReview()
@@ -912,7 +912,7 @@ async function redo() {
     const i = d.value.submissions.findIndex((x) => x.id === viewing.value.id)
     if (i >= 0) d.value.submissions[i] = res.submission
     viewing.value = res.submission
-    d.value.stats.gradedCount = d.value.submissions.filter((x) => x.score !== null).length
+    d.value.stats.gradedCount = d.value.submissions.filter((x) => x.graded).length
     toast.value = res.message || '已打回'
     loadProgress()
   } catch (e) {

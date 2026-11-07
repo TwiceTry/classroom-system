@@ -19,7 +19,7 @@
           <span v-else>
             已交，最近一次：{{ when(mine[mine.length - 1].createdAt) }}
             <template v-if="mine[mine.length - 1].late"> · <b class="score">迟交</b></template>
-            <template v-if="mine[mine.length - 1].score !== null">
+            <template v-if="mine[mine.length - 1].graded">
               · 得分 <b class="score">{{ mine[mine.length - 1].score }}</b>
             </template>
             <template v-else>· 等老师批</template>
@@ -77,7 +77,7 @@
             <template #cell-when="{ row }">{{ when(row.createdAt) }}</template>
             <template #cell-files="{ row }">{{ row.changedCount }} / {{ row.fileCount }}</template>
             <template #cell-score="{ row }">
-              <span :class="{ ok: row.score !== null }">{{ row.score === null ? '—' : row.score }}</span>
+              <span :class="{ ok: row.graded }">{{ !row.graded ? '—' : row.score }}</span>
             </template>
             <template #cell-comment="{ row }">{{ row.comment || '—' }}</template>
           </DataTable>

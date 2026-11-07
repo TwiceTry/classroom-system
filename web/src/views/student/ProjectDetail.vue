@@ -102,7 +102,7 @@
           <b>第 {{ mine.length - i }} 次</b>
           <span class="dim mini">{{ when(s.createdAt) }}</span>
           <span class="spacer"></span>
-          <span v-if="s.score !== null" class="tag ok">{{ s.score }} 分</span>
+          <span v-if="s.graded" class="tag ok">{{ s.score }} 分</span>
           <span v-else class="tag mute">待批</span>
         </div>
 
@@ -246,7 +246,8 @@ async function submit() {
 
 /** 下载自己交过的附件（<a href> 带不上令牌，走 fetch + blob） */
 function grab(s, name) {
-  download('/api/files/assignments/' + encodeURIComponent(id) + '/' + encodeURIComponent(s.id) + '/' + encodeURIComponent(name))
+  // 第二段是**学号**（后端按 students 目录找文件），不是提交记录 id —— 原来传 s.id 一律 404
+  download('/api/files/assignments/' + encodeURIComponent(id) + '/' + encodeURIComponent(s.sid) + '/' + encodeURIComponent(name))
 }
 </script>
 

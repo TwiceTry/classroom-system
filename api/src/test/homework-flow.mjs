@@ -98,6 +98,41 @@ try {
   const mine2 = (lHw2.j.items || []).find((x) => x.id === aid)
   ok('交完以后 mySubmission 不为 null', mine2 && mine2.mySubmission && !!mine2.mySubmission.id, mine2 && mine2.mySubmission ? 'id=' + mine2.mySubmission.id : 'null')
 
+  /*
+   * 详情接口：学生端两个详情页都按「列表」写（mine.length / v-for / mine[last]），
+   * 而接口原来只给 mySubmission → 交完作业「我的提交」整块不显示、附件也下不回来。
+   */
+  const det = await j('GET', '/api/student/assignments/' + aid, undefined, tok['2515230114'])
+  ok('学生详情带 mine 数组（长度 1）', Array.isArray(det.j.mine) && det.j.mine.length === 1, 'len=' + ((det.j.mine || []).length))
+  ok(
+    '未打分时 graded=false',
+    det.j.mine && det.j.mine[0] && det.j.mine[0].graded === false,
+    String(det.j.mine && det.j.mine[0] && det.j.mine[0].graded)
+  )
+
+  const PNG =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
+  const ev0 = await j(
+    'POST',
+    '/api/assignments/' + aid + '/submissions/' + STU[0].sid + '/evidence',
+    { name: 'x.png', dataUrl: PNG },
+    T
+  )
+  ok('未打分时传证据 → 400（先给分再传）', ev0.s === 400, 'status=' + ev0.s)
+
+  /* 附件下载第二段必须是**学号**，传提交记录 id 一律 404 */
+  {
+    const bySid = await fetch(B + '/api/files/assignments/' + aid + '/' + STU[0].sid + '/index.html', {
+      headers: { authorization: 'Bearer ' + tok['2515230114'] },
+    })
+    ok('附件按学号下载 → 200', bySid.status === 200, 'status=' + bySid.status)
+    const subId = det.j.mine[0].id
+    const byId = await fetch(B + '/api/files/assignments/' + aid + '/' + subId + '/index.html', {
+      headers: { authorization: 'Bearer ' + tok['2515230114'] },
+    })
+    ok('传提交 id 而非学号 → 404（原来下载按钮打不开就是这个）', byId.status === 404, 'status=' + byId.status)
+  }
+
   /* ---------- 学生看不到别人的 ---------- */
   const other = await j('GET', '/api/student/assignments/' + aid + '/submissions/' + STU[0].sid, undefined, tok['2515270101'])
   ok('学生看别人的提交 → 403', other.s === 403, 'status=' + other.s)
@@ -107,6 +142,20 @@ try {
   const s1 = g1.j && g1.j.submission
   const wantA = grade.letterScoreOf(hwItem, 'A', false)
   ok('判 A 落库 = ' + wantA + '（按本项满分，不是 100）', s1 && s1.score === wantA, s1 ? String(s1.score) : '?')
+
+  /* 证据：submissionView 原来根本不带 evidence 字段，传了也看不到、删不掉 */
+  {
+    const det2 = await j('GET', '/api/student/assignments/' + aid, undefined, tok['2515230114'])
+    ok('打分后 graded=true', det2.j.mine && det2.j.mine[0] && det2.j.mine[0].graded === true, String(det2.j.mine && det2.j.mine[0] && det2.j.mine[0].graded))
+    const ev1 = await j(
+      'POST',
+      '/api/assignments/' + aid + '/submissions/' + STU[0].sid + '/evidence',
+      { name: '评分截图.png', dataUrl: PNG },
+      T
+    )
+    const list = (ev1.j && ev1.j.submission && ev1.j.submission.evidence) || []
+    ok('打分后传证据 → 200 且列表非空', ev1.s === 200 && list.length === 1, 'status=' + ev1.s + ' 条数=' + list.length)
+  }
 
   /* ---------- 批阅：B + 迟交 ---------- */
   const g2 = await j('POST', '/api/assignments/' + aid + '/submissions/' + STU[0].sid + '/grade', { grade: 'B', late: true }, T)

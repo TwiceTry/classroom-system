@@ -138,7 +138,7 @@
       </template>
       <template #cell-note="{ row }">{{ row.note || (row.url ? '（有链接）' : '—') }}</template>
       <template #cell-score="{ row }">
-        <span :class="{ ok: row.score !== null }">{{ row.score === null ? '—' : row.score }}</span>
+        <span :class="{ ok: row.graded }">{{ !row.graded ? '—' : row.score }}</span>
       </template>
       <template #cell-actions="{ row }">
         <button class="btn mini" @click.stop="review(row)">看提交 / 打分</button>
@@ -216,12 +216,12 @@
         </ul>
         <p v-else class="dim">（还没有证据）</p>
         <div class="row" style="margin-top: 6px">
-          <button class="btn mini" :disabled="!viewing || viewing.score === null" @click="evPick.click()">
+          <button class="btn mini" :disabled="!viewing || !viewing.graded" @click="evPick.click()">
             ＋ 上传证据
           </button>
           <input ref="evPick" type="file" multiple style="display: none" @change="uploadEvidence" />
           <span class="dim mini">
-            {{ viewing && viewing.score === null
+            {{ viewing && !viewing.graded
               ? '先给分，再传证据（证据挂在这次评分上）'
               : '截图 / 抽查记录 / 查重结果，单个 ≤6MB；只存老师侧，学生看不到' }}
           </span>
@@ -241,7 +241,7 @@
         </p>
         <span class="spacer"></span>
         <div class="gfoot">
-          <span v-if="viewing.score !== null" class="dim mini">上次：{{ viewing.score }} 分</span>
+          <span v-if="viewing.graded" class="dim mini">上次：{{ viewing.score }} 分</span>
           <button class="btn line" :disabled="saving" @click="clearGrade">清掉分数</button>
           <button class="btn line" :disabled="saving" title="分数与评语清空、计分记录作废，学生可以重新交" @click="redo">
             打回重做
@@ -713,7 +713,7 @@ async function saveGrade() {
     )
     const i = d.value.submissions.findIndex((x) => x.id === viewing.value.id)
     if (i >= 0) d.value.submissions[i] = res.submission
-    d.value.stats.gradedCount = d.value.submissions.filter((x) => x.score !== null).length
+    d.value.stats.gradedCount = d.value.submissions.filter((x) => x.graded).length
     toast.value = '已保存'
     if (reviewIdx.value < d.value.submissions.length - 1) step(1)
     else closeReview()
@@ -737,7 +737,7 @@ async function redo() {
     const i = d.value.submissions.findIndex((x) => x.id === viewing.value.id)
     if (i >= 0) d.value.submissions[i] = res.submission
     viewing.value = res.submission
-    d.value.stats.gradedCount = d.value.submissions.filter((x) => x.score !== null).length
+    d.value.stats.gradedCount = d.value.submissions.filter((x) => x.graded).length
     toast.value = res.message || '已打回'
     loadProgress()
   } catch (e) {
@@ -844,7 +844,8 @@ async function grabAll(s) {
 /** 下载学生附件（带令牌，所以走 fetch + blob） */
 function grab(s, name) {
   download(
-    '/api/files/assignments/' + encodeURIComponent(curId.value) + '/' + encodeURIComponent(s.id) + '/' + encodeURIComponent(name)
+    // 第二段是**学号**（后端按 students 目录找文件），不是提交记录 id —— 原来传 s.id 一律 404
+    '/api/files/assignments/' + encodeURIComponent(curId.value) + '/' + encodeURIComponent(s.sid) + '/' + encodeURIComponent(name)
   )
 }
 </script>
