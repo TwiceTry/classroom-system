@@ -42,6 +42,8 @@ export default async function authRoutes(app) {
           sid: { type: 'string', maxLength: 40 },
           name: { type: 'string', maxLength: 40 },
           password: { type: 'string', maxLength: 128 },
+          /* 学生主动要求「用青果再验一次」（改过密码后本地哈希对不上时用） */
+          verifyRemote: { type: 'boolean' },
         },
       },
     },
@@ -57,13 +59,45 @@ export default async function authRoutes(app) {
         if (!password) throw badRequest('请填写青果密码')
 
         /*
-         * 动态 import：青果那套带着 560KB 的验证码模型，
-         * local 模式下完全不该把它读进内存。
-         * 一次不过就返回，绝不自动重试（青果按天计失败次数，满 5 次锁号）。
+         * 第一步永远是**查名册**：不在本课程名单里的学号，一律不该去问青果。
+         * 原来顺序反了（先验青果再查名册），学生密码输对了却不在名单，
+         * 等于白消耗一次青果登录。
          */
-        const { verifyStudent } = await import('../lib/kg-auth.js')
-        const r = await verifyStudent(sid, password, { bases: sa.kgBases })
-        if (!r.ok) throw unauthorized(r.message)
+        const clsK = repo.findClassBySid(sid)
+        if (!clsK) throw unauthorized('这个学号不在本课程的名单里，找老师确认一下')
+        const stuK = repo.findStudent(clsK.id, sid)
+        if (!stuK) throw unauthorized('这个学号不在本课程的名单里，找老师确认一下')
+
+        /*
+         * 第二步：先看本地记没记住。
+         *   记住且对得上 → 直接放行（不打青果：快，也不消耗它的失败次数）
+         *   没记过       → 必须去问青果（第一次登录）
+         *   对不上       → 默认拒绝；只有学生**主动点「用青果再验一次」**才走远端
+         *
+         * 为什么「对不上」不自动去问青果：青果满 5 次锁号，
+         * 自动回落等于让学生手滑几下就把自己账号打锁。
+         */
+        const creds = await import('../lib/student-creds.js')
+        const local = creds.verify(sid, password)
+        const wantRemote = req.body.verifyRemote === true
+
+        if (local === true) {
+          /* 本地已验证，直接过 */
+        } else if (local === null || wantRemote) {
+          const { verifyStudent } = await import('../lib/kg-auth.js')
+          const r = await verifyStudent(sid, password, { bases: sa.kgBases })
+          if (!r.ok) throw unauthorized(r.message)
+          // 青果认了 → 记下来，下次本地比对
+          try {
+            creds.remember(sid, password)
+          } catch (e) {
+            /* 记不住不影响这次登录 */
+          }
+        } else {
+          throw unauthorized(
+            '密码不对。如果最近在智慧校园改过密码，点「用青果再验一次」重新确认'
+          )
+        }
       } else {
         const name = String(req.body.name || '').trim()
         if (!name) throw badRequest('学号与姓名都要填')
@@ -117,8 +151,36 @@ export default async function authRoutes(app) {
 
   /** 教师看当前学生登录校验方式 */
   app.get('/api/settings/student-auth', { preHandler: requireAuth('teacher') }, async () => {
-    return getStudentAuth()
+    const sa = getStudentAuth()
+    let rememberedCount = 0
+    try {
+      const creds = await import('../lib/student-creds.js')
+      rememberedCount = creds.countRemembered()
+    } catch (e) {
+      rememberedCount = 0
+    }
+    return Object.assign({}, sa, { rememberedCount })
   })
+
+  /**
+   * 教师清空「记住的密码」。
+   *   DELETE /api/settings/student-auth/creds       清全部
+   *   DELETE /api/settings/student-auth/creds/:sid  清一个
+   * 换设备、怀疑泄露、或者有学生改过青果密码却怎么也登不进时用。
+   */
+  app.delete('/api/settings/student-auth/creds', { preHandler: requireAuth('teacher') }, async () => {
+    const creds = await import('../lib/student-creds.js')
+    return { removed: creds.forgetAll() }
+  })
+
+  app.delete(
+    '/api/settings/student-auth/creds/:sid',
+    { preHandler: requireAuth('teacher') },
+    async (req) => {
+      const creds = await import('../lib/student-creds.js')
+      return { removed: creds.forget(req.params.sid) }
+    }
+  )
 
   /** 教师改：切换校验方式 / 改青果入口（改完立即生效，下次登录就用新的） */
   app.patch(

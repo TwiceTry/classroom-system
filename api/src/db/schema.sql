@@ -136,6 +136,25 @@ CREATE TABLE IF NOT EXISTS submissions (
 CREATE INDEX IF NOT EXISTS idx_sub_asg_sid ON submissions (assignment_id, sid);
 CREATE INDEX IF NOT EXISTS idx_sub_class   ON submissions (class_id, sid);
 
+-- 学生登录密码的**派生值**（不是明文，也不可逆）
+--
+-- 只在「学生登录方式 = 青果账号密码」时使用：
+--   第一次用青果验证通过 → 存下 scrypt(password, salt)
+--   之后同一学号再登录   → 本地比对，不再打青果（既快，也不消耗青果的失败次数）
+--
+-- 三个必须记住的点：
+--   · 只存 salt + hash + 算法名，**永远不存明文**
+--   · 学生改过青果密码时本地会对不上 → 提供「用青果再验一次」的显式入口，
+--     通过后覆盖哈希（绝不静默重试，青果满 5 次锁号）
+--   · 教师端可以一键清空（换设备/怀疑泄露时）
+CREATE TABLE IF NOT EXISTS student_credentials (
+  sid        TEXT PRIMARY KEY,
+  algo       TEXT NOT NULL DEFAULT 'scrypt',
+  salt       TEXT NOT NULL DEFAULT '',
+  hash       TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT ''
+);
+
 -- 迁移版本（谁跑过哪些脚本）
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version    TEXT PRIMARY KEY,

@@ -13,7 +13,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const B = process.env.TS_BASE || 'http://127.0.0.1:18730'
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
@@ -50,10 +50,12 @@ const SID = '2515230114'
 const NAME = '马婷婷'
 
 try {
-  /* ---------- 默认必须是 local ---------- */
+  /* ---------- 先把状态复位成 local，别假设上一次跑完是干净的 ---------- */
+  await j('PATCH', '/api/settings/student-auth', { mode: 'local' }, T)
+
   const m0 = await j('GET', '/api/auth/student-mode')
   ok('登录页能拿到当前方式', m0.s === 200 && !!m0.j.mode, String(m0.j && m0.j.mode))
-  ok('默认是 local', m0.j.mode === 'local', String(m0.j.mode))
+  ok('复位后是 local', m0.j.mode === 'local', String(m0.j.mode))
 
   const pub = await j('GET', '/api/settings/student-auth')
   ok('完整配置不对外公开', pub.s === 401, 'status=' + pub.s)
@@ -96,6 +98,62 @@ try {
     ok('kg：不存在的账号被拒', r.s === 401, 'status=' + r.s + '  ' + ms + 'ms')
     ok('kg：失败原因能看懂', !!msg, msg.slice(0, 44))
     ok('kg：确实去问了青果（不是本地糊弄）', ms > 300, ms + 'ms')
+  }
+
+  /* ---------- 规则一：必须在班级名单里 ---------- */
+  {
+    const t0 = Date.now()
+    const r = await j('POST', '/api/auth/login/student', { sid: '9999999999', password: 'whatever' })
+    const ms = Date.now() - t0
+    const msg = (r.j && r.j.error && r.j.error.message) || ''
+    ok('不在名册的学号被拒', r.s === 401, 'status=' + r.s)
+    ok('提示指向「名单」', msg.indexOf('名单') >= 0, msg.slice(0, 26))
+    /*
+     * 顺序很重要：先查名册再问青果。
+     * 反过来的话，一个不在名单的学号也会去问青果 —— 白消耗一次失败次数。
+     */
+    ok('先查名册，没打青果（<500ms）', ms < 500, ms + 'ms')
+  }
+
+  /* ---------- 规则二：记住密码后走本地，不再打青果 ---------- */
+  {
+    const creds = await import(pathToFileURL(path.join(ROOT, 'api/src/lib/student-creds.js')).href)
+    ok('remember 返回 true', creds.remember(SID, 'Test-Pass-123') === true)
+    ok('verify 对得上', creds.verify(SID, 'Test-Pass-123') === true)
+    ok('verify 对不上', creds.verify(SID, 'other') === false)
+    ok('没记过的返回 null', creds.verify('0000000000', 'x') === null)
+
+    const t0 = Date.now()
+    const r = await j('POST', '/api/auth/login/student', { sid: SID, password: 'Test-Pass-123' })
+    const ms = Date.now() - t0
+    ok('本地比对通过即可登录', r.s === 200 && !!r.j.token, 'status=' + r.s)
+    ok('走本地，没打青果（<500ms）', ms < 500, ms + 'ms')
+
+    /* 密码错：默认拒绝，且**不自动**去打青果（否则连输几次就把账号打锁） */
+    const t1 = Date.now()
+    const bad = await j('POST', '/api/auth/login/student', { sid: SID, password: 'wrong-password' })
+    const ms1 = Date.now() - t1
+    const m1 = (bad.j && bad.j.error && bad.j.error.message) || ''
+    ok('本地密码错 → 401', bad.s === 401, 'status=' + bad.s)
+    ok('提示引导「用青果再验一次」', m1.indexOf('青果再验') >= 0, m1.slice(0, 30))
+    ok('不自动打青果（<500ms）', ms1 < 500, ms1 + 'ms')
+
+    /* 表里只有派生值，没有明文列 */
+    const { openDb } = await import(pathToFileURL(path.join(ROOT, 'api/src/db/index.js')).href)
+    const db = openDb()
+    const cols = db.prepare('PRAGMA table_info(student_credentials)').all().map((c) => c.name)
+    db.close()
+    ok('凭据表只有 algo/salt/hash', cols.includes('hash') && !cols.includes('password'), cols.join(','))
+
+    const g = await j('GET', '/api/settings/student-auth', undefined, T)
+    ok('教师能看到已记住的数量', Number(g.j.rememberedCount) >= 1, 'count=' + g.j.rememberedCount)
+
+    const one = await j('DELETE', '/api/settings/student-auth/creds/' + SID, undefined, T)
+    ok('能清掉某个学生', one.j && one.j.removed === true, JSON.stringify(one.j))
+    ok('清掉后本地不再认', creds.verify(SID, 'Test-Pass-123') === null)
+
+    const all = await j('DELETE', '/api/settings/student-auth/creds', undefined, T)
+    ok('能清空全部', all.s === 200, 'removed=' + (all.j && all.j.removed))
   }
 
   /* ---------- 入口配置 ---------- */

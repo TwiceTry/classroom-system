@@ -112,6 +112,18 @@
           <input v-model="auth.kgBases[i]" class="input wide" placeholder="http://ip:port" @blur="saveAuth" />
         </label>
         <p class="dim mini">两个入口内容一样，按请求轮询分流。失败不会换另一个再试（换了也只是多消耗一次失败次数）。</p>
+
+        <div class="creds">
+          <p class="dim mini">
+            已记住 <b>{{ auth.rememberedCount || 0 }}</b> 个学生的密码（存的是不可逆的派生值，不是明文）。
+            第一次登录问青果，通过后就记住 —— 之后本地比对，不再打青果。
+            学生改过智慧校园密码时本地会对不上，这时让他点登录页的「用青果再验一次」，
+            或者在这里清空，下次重新验证。
+          </p>
+          <button class="btn mini" :disabled="!auth.rememberedCount" @click="clearCreds">
+            清空全部记住的密码
+          </button>
+        </div>
       </div>
     </div>
 
@@ -421,15 +433,28 @@ const err = ref('')
 const toast = ref('')
 
 /* 学生登录方式（全局配置，不属于某一门课） */
-const auth = reactive({ mode: 'local', kgBases: [] })
+const auth = reactive({ mode: 'local', kgBases: [], rememberedCount: 0 })
 
 async function loadAuth() {
   try {
     const r = await api.get('/api/settings/student-auth')
     auth.mode = r.mode === 'kg' ? 'kg' : 'local'
     auth.kgBases = Array.isArray(r.kgBases) ? r.kgBases : []
+    auth.rememberedCount = Number(r.rememberedCount || 0)
   } catch (e) {
     toast.value = '读不到学生登录设置：' + e.message
+  }
+}
+
+/** 清空所有「记住的密码」（学生改过青果密码、或怀疑泄露时用） */
+async function clearCreds() {
+  if (!window.confirm('清空所有学生记住的密码？\n\n学生下次登录会重新去青果验证一次，不会影响成绩。')) return
+  try {
+    const r = await api.del('/api/settings/student-auth/creds')
+    auth.rememberedCount = 0
+    toast.value = '已清空 ' + (r.removed || 0) + ' 条记住的密码'
+  } catch (e) {
+    toast.value = '清空失败：' + e.message
   }
 }
 
