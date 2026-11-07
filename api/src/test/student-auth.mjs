@@ -290,7 +290,8 @@ try {
   }
 } finally {
   /* 无论测到哪一步，都要切回默认，别把课上到一半的登录方式改掉 */
-  const back = await j('PATCH', '/api/settings/student-auth', { mode: 'local' }, T)
+  // 复位要彻底：只改 mode 不改 verifyEachTime，下次跑就会留下「每次都核验」的坑
+  const back = await j('PATCH', '/api/settings/student-auth', { mode: 'local', verifyEachTime: false }, T)
   console.log('\n  已切回 local（' + back.s + '）')
 }
 

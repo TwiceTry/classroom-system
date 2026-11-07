@@ -10,9 +10,33 @@
  *   e2e 组打真实服务端与真实数据，只能在开发机上手动跑。
  */
 import { spawnSync } from 'node:child_process'
+import fs from 'node:fs'
 import path from 'node:path'
 
 const HERE = import.meta.dirname
+const ROOT = path.resolve(HERE, '..', '..', '..')
+
+/**
+ * 跑 e2e 之前把「学生登录方式」复位成默认。
+ *
+ * 为什么需要：student-auth.mjs 会全局切换这个开关（切到 kg 才能测）。
+ * 如果它中途崩了、或者上一次跑到一半被 Ctrl+C，模式就留在 kg，
+ * 后面所有要登录学生的测试都会 401 —— 看起来像大规模故障，其实是脏状态。
+ * 每次从干净状态开始，测试结果才可信。
+ */
+function resetStudentAuth() {
+  try {
+    const f = path.join(ROOT, 'data/config.json')
+    const c = JSON.parse(fs.readFileSync(f, 'utf8'))
+    const sa = c.studentAuth || {}
+    if (sa.mode === 'local' && sa.verifyEachTime === false) return
+    c.studentAuth = Object.assign({}, sa, { mode: 'local', verifyEachTime: false })
+    fs.writeFileSync(f, JSON.stringify(c, null, 2), 'utf8')
+    console.log('（已复位学生登录方式 local / 不强制核验）')
+  } catch (e) {
+    /* 读不到就算了，别让总入口挂掉 */
+  }
+}
 
 const SETS = {
   unit: [
@@ -41,6 +65,9 @@ const SETS = {
 
 const want = process.argv.slice(2)
 const groups = want.length ? want : ['unit', 'e2e']
+
+// 要跑 e2e 就先复位学生登录方式，避免上一次崩溃留下的 kg 模式把结果全打成 401
+if (groups.includes('e2e')) resetStudentAuth()
 
 let failed = 0
 for (const g of groups) {
