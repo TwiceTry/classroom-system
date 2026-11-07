@@ -88,6 +88,25 @@ export default async function authRoutes(app) {
       if (mode === 'kg') {
         const account = sid // 青果账号，可能不等于学号
         const password = String(req.body.password || '')
+
+        /*
+         * 第 0 步：本地熔断检查。
+         *
+         * 外部系统是「24 小时错 5 次锁号」，等它数到 5 就已经晚了。
+         * 所以在本地数到 3 次就自己停 —— 被熔断之后**连请求都不发**，
+         * 学生最坏只是进不来课堂系统（老师点一下能解），账号本身不会被锁。
+         */
+        const fails = await import('../lib/login-fails.js')
+        const blocked = fails.check(account)
+        if (blocked.blocked) {
+          const hours = Math.max(1, Math.round(blocked.remainMs / 3600000))
+          throw unauthorized(
+            '这个账号今天输错次数过多，已暂时禁止登录。约 ' +
+              hours +
+              ' 小时后自动恢复，也可以联系老师立即解锁'
+          )
+        }
+
         if (!password) throw badRequest('请填写密码')
 
         /*
@@ -108,12 +127,27 @@ export default async function authRoutes(app) {
           const { verifyStudent } = await import('../lib/kg-auth.js')
           const r = await verifyStudent(account, password, { bases: sa.kgBases })
           if (!r.ok) {
-            /*
-             * 只说该说的：锁定 / 短信二次验证 / 输错次数 —— 这些是学生必须知道的后果，
-             * 不告诉他，他会一直重试直到把账号打锁。
-             * 其余（验证码没认对、青果返回怪东西…）一律收敛成「账号或密码不对」。
-             */
             const m = String(r.message || '')
+
+            /*
+             * 凭据错 → 本地记一次。网络类问题（超时/连不上/服务不可用）不记：
+             * 那是我们的问题，不该算到学生头上。
+             */
+            if (!/超时|连不上|不可用/.test(m)) {
+              const st = fails.bump(account, r.counter)
+              if (st.justBlocked) {
+                throw unauthorized(
+                  '这个账号已连续输错 ' +
+                    fails.BLOCK_AFTER +
+                    ' 次。为保证账号安全，本系统暂时禁止登录，明天会自动恢复，也可以联系老师解锁'
+                )
+              }
+            }
+
+            /*
+             * 只说该说的：锁定 / 短信验证 / 输错次数 —— 这些是学生必须知道的后果。
+             * 其余（验证没通过、服务异常…）一律收敛成「账号或密码不对」。
+             */
             throw unauthorized(/锁定|短信|次数|超时|连不上/.test(m) ? m : '账号或密码不对')
           }
           // 青果认了 → 记下来，下次本地比对
@@ -123,6 +157,9 @@ export default async function authRoutes(app) {
             /* 记不住不影响这次登录 */
           }
         }
+
+        // 登录成功 → 清掉失败记录（下次从 0 开始数）
+        fails.clear(account)
 
         /*
          * 第二步：能登录上了，再认身份。
@@ -198,8 +235,35 @@ export default async function authRoutes(app) {
     } catch (e) {
       rememberedCount = 0
     }
-    return Object.assign({}, sa, { rememberedCount })
+    let blockedCount = 0
+    try {
+      const fails = await import('../lib/login-fails.js')
+      blockedCount = fails.blockedCount()
+    } catch (e) {
+      blockedCount = 0
+    }
+    return Object.assign({}, sa, { rememberedCount, blockedCount })
   })
+
+  /**
+   * 教师解锁「输错太多次被本地禁止」的账号。
+   *   DELETE /api/settings/student-auth/blocks        全解
+   *   DELETE /api/settings/student-auth/blocks/:account  解一个
+   * 学生第二天本来也会自动恢复，但课上等不起 —— 老师点一下立刻能进。
+   */
+  app.delete('/api/settings/student-auth/blocks', { preHandler: requireAuth('teacher') }, async () => {
+    const fails = await import('../lib/login-fails.js')
+    return { removed: fails.unblockAll() }
+  })
+
+  app.delete(
+    '/api/settings/student-auth/blocks/:account',
+    { preHandler: requireAuth('teacher') },
+    async (req) => {
+      const fails = await import('../lib/login-fails.js')
+      return { removed: fails.unblock(req.params.account) }
+    }
+  )
 
   /**
    * 教师清空「记住的密码」。

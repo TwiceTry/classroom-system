@@ -137,6 +137,17 @@
             清空全部记住的密码
           </button>
         </div>
+
+        <div class="creds">
+          <p class="dim mini">
+            学生连错 <b>3</b> 次就会被本系统<b>临时禁止登录</b>（约 24 小时后自动恢复）。
+            这是为了保护账号 —— 智慧校园那边错满 5 次会锁号，等它锁就晚了。
+            当前被禁止：<b>{{ auth.blockedCount || 0 }}</b> 个。
+          </p>
+          <button class="btn mini" :disabled="!auth.blockedCount" @click="unblockAll">
+            解锁全部被禁止的账号
+          </button>
+        </div>
       </div>
     </div>
 
@@ -446,7 +457,13 @@ const err = ref('')
 const toast = ref('')
 
 /* 学生登录方式（全局配置，不属于某一门课） */
-const auth = reactive({ mode: 'local', kgBases: [], rememberedCount: 0, verifyEachTime: false })
+const auth = reactive({
+  mode: 'local',
+  kgBases: [],
+  rememberedCount: 0,
+  blockedCount: 0,
+  verifyEachTime: false,
+})
 
 async function loadAuth() {
   try {
@@ -455,8 +472,21 @@ async function loadAuth() {
     auth.kgBases = Array.isArray(r.kgBases) ? r.kgBases : []
     auth.rememberedCount = Number(r.rememberedCount || 0)
     auth.verifyEachTime = r.verifyEachTime === true
+    auth.blockedCount = Number(r.blockedCount || 0)
   } catch (e) {
     toast.value = '读不到学生登录设置：' + e.message
+  }
+}
+
+/** 解锁所有「输错太多次被本地禁止」的账号（学生第二天本来也会自动恢复，课上等不起） */
+async function unblockAll() {
+  if (!window.confirm('解锁所有被禁止登录的账号？\n\n学生可以立刻重新尝试登录。')) return
+  try {
+    const r = await api.del('/api/settings/student-auth/blocks')
+    auth.blockedCount = 0
+    toast.value = '已解锁 ' + (r.removed || 0) + ' 个账号'
+  } catch (e) {
+    toast.value = '解锁失败：' + e.message
   }
 }
 

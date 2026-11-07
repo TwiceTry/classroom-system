@@ -155,6 +155,23 @@ CREATE TABLE IF NOT EXISTS student_credentials (
   updated_at TEXT NOT NULL DEFAULT ''
 );
 
+-- 学生登录失败计数 / 本地熔断
+--
+-- 为什么要有这张表：
+--   外部系统的规则是「24 小时内输错 5 次锁号」。
+--   等它锁到第 5 次，学生就已经进不去了。
+--   所以在**本系统**里数到 3 次就自己停 —— 之后连请求都不发，
+--   学生只是登不进课堂系统，账号本身没事。
+--
+-- 用 account（登录名）而不是 sid 做主键：账号可能带前缀，失败记录要能对上他输的那个名字。
+CREATE TABLE IF NOT EXISTS student_login_fails (
+  account    TEXT PRIMARY KEY,
+  fail_count INTEGER NOT NULL DEFAULT 0,
+  blocked    INTEGER NOT NULL DEFAULT 0,
+  blocked_at TEXT    NOT NULL DEFAULT '',
+  updated_at TEXT    NOT NULL DEFAULT ''
+);
+
 -- 迁移版本（谁跑过哪些脚本）
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version    TEXT PRIMARY KEY,

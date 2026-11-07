@@ -219,6 +219,58 @@ try {
     creds.forgetAll()
   }
 
+  /* ---------- 规则三：连错 3 次本地熔断，不再发起外部请求 ---------- */
+  {
+    const fails = await import(pathToFileURL(path.join(ROOT, 'api/src/lib/login-fails.js')).href)
+    const ACC = 'ZZPROBE001'
+
+    fails.unblock(ACC)
+    const r1 = fails.bump(ACC)
+    const r2 = fails.bump(ACC)
+    const r3 = fails.bump(ACC)
+    ok('阈值是 3 次', fails.BLOCK_AFTER === 3, String(fails.BLOCK_AFTER))
+    ok('第 1、2 次不熔断', r1.blocked === false && r2.blocked === false, r1.count + '/' + r2.count)
+    ok('第 3 次熔断（justBlocked）', r3.blocked === true && r3.justBlocked === true, 'count=' + r3.count)
+
+    /*
+     * 熔断之后必须**连请求都不发** —— 否则熔断就没意义，
+     * 外部系统的失败次数还是会被推上去。
+     * 用耗时判断：不发请求就是毫秒级。
+     */
+    const t0 = Date.now()
+    const r = await j('POST', '/api/auth/login/student', { sid: ACC, password: 'anything' })
+    const ms = Date.now() - t0
+    const msg = (r.j && r.j.error && r.j.error.message) || ''
+    ok('被熔断的账号登录 → 401', r.s === 401, 'status=' + r.s)
+    ok('提示「暂时禁止登录」', /暂时禁止|禁止登录/.test(msg), msg.slice(0, 26))
+    ok('没有发起外部请求（<300ms）', ms < 300, ms + 'ms')
+
+    const g = await j('GET', '/api/settings/student-auth', undefined, T)
+    ok('教师端能看到被禁数量', Number(g.j.blockedCount) >= 1, 'blocked=' + g.j.blockedCount)
+
+    const un = await j('DELETE', '/api/settings/student-auth/blocks/' + ACC, undefined, T)
+    ok('教师能解锁', un.j && un.j.removed === true, JSON.stringify(un.j))
+    ok('解锁后不再禁止', fails.check(ACC).blocked === false, String(fails.check(ACC).blocked))
+
+    fails.unblockAll()
+    ok('全解后为 0', fails.blockedCount() === 0, String(fails.blockedCount()))
+  }
+
+  /* ---------- 规则四：登录成功要把失败计数清零 ---------- */
+  {
+    const fails = await import(pathToFileURL(path.join(ROOT, 'api/src/lib/login-fails.js')).href)
+    const creds = await import(pathToFileURL(path.join(ROOT, 'api/src/lib/student-creds.js')).href)
+    creds.remember(SID, 'pw-clear')
+    fails.bump(SID)
+    fails.bump(SID)
+    ok('先制造 2 次失败', fails.check(SID).count === 2, 'count=' + fails.check(SID).count)
+
+    const r = await j('POST', '/api/auth/login/student', { sid: SID, password: 'pw-clear' })
+    ok('登录成功', r.s === 200, 'status=' + r.s)
+    ok('成功后失败计数清零', fails.check(SID).count === 0, 'count=' + fails.check(SID).count)
+    creds.forget(SID)
+  }
+
   /* ---------- 入口配置 ---------- */
   {
     const r = await j('PATCH', '/api/settings/student-auth', {

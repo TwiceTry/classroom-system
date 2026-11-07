@@ -98,28 +98,34 @@ export async function verifyStudent(sid, password, opts = {}) {
    * 用 /锁定/ 去匹配会把这句话误判成「账号已锁定」，对学生是误导
    * （明明只是密码打错，却告诉他号废了）。按 counter 分档才准。
    */
+  /*
+   * 失败都带上 counter（外部系统自报的当日累计输错次数），
+   * 上层的本地熔断要用它把两边的计数对齐 ——
+   * 比如外部已经是 2 次了，这边不该还从 0 开始数。
+   */
   if (status === '402') {
     if (counter >= 5) {
-      return { ok: false, message: '今天输错次数已满，账号被锁定了，明天再试或找老师' }
+      return { ok: false, message: '今天输错次数已满，账号被锁定了，明天再试或找老师', counter }
     }
     return {
       ok: false,
       message: counter
         ? '账号或密码不对（今天已错 ' + counter + ' 次，满 5 次会锁定）'
         : '账号或密码不对',
+      counter,
     }
   }
   if (status === '505') {
-    return { ok: false, message: '这个账号需要短信验证，请先完成验证后再登录' }
+    return { ok: false, message: '这个账号需要短信验证，请先完成验证后再登录', counter }
   }
   if (status === '401' || /验证码/.test(msg)) {
-    return { ok: false, message: '这次没验过，请再试一次' }
+    return { ok: false, message: '这次没验过，请再试一次', counter }
   }
   if (/密码|账号/.test(msg)) {
-    return { ok: false, message: '账号或密码不对' }
+    return { ok: false, message: '账号或密码不对', counter }
   }
   if (status === 'ERR') {
-    return { ok: false, message: '登录服务暂时不可用，请稍后再试' }
+    return { ok: false, message: '登录服务暂时不可用，请稍后再试', counter }
   }
-  return { ok: false, message: '账号或密码不对' }
+  return { ok: false, message: '账号或密码不对', counter }
 }
