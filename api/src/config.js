@@ -198,6 +198,55 @@ export const config = {
   courseDir: process.env.TS_COURSE_DIR ? path.resolve(process.env.TS_COURSE_DIR) : stored.courseDir ? path.resolve(ROOT, stored.courseDir) : '',
 }
 
+/*
+ * 学生登录校验方式
+ *
+ *   local —— 学号 + 姓名，和课程名单比对（默认，不联网）
+ *   kg    —— 学号 + 青果密码，能登上青果就放行（见 lib/kg-auth.js）
+ *
+ * 存 data/config.json 的 studentAuth 字段，老师随时可以改，改完立即可用
+ * （每次登录都现读，不做进程内缓存 —— 这跟口令热加载是同一个思路）。
+ */
+
+/** 青果两个入口（内容一样，轮询分流） */
+export const DEFAULT_KG_BASES = ['http://117.159.97.151:8888', 'http://117.159.97.151:9999']
+
+export function getStudentAuth() {
+  let c = {}
+  try {
+    c = readConfigFile()
+  } catch (e) {
+    c = {}
+  }
+  const sa = (c && c.studentAuth) || {}
+  const mode = sa.mode === 'kg' ? 'kg' : 'local'
+  const bases = Array.isArray(sa.kgBases)
+    ? sa.kgBases.map((x) => String(x || '').trim()).filter((x) => /^https?:\/\//i.test(x)).slice(0, 5)
+    : []
+  return { mode, kgBases: bases.length ? bases : DEFAULT_KG_BASES.slice() }
+}
+
+/** 改学生登录方式；只动 studentAuth 这一个键，别的配置原样保留 */
+export function setStudentAuth(patch = {}) {
+  const cur = readConfigFile()
+  const prev = (cur && cur.studentAuth) || {}
+  const mode = patch.mode === 'kg' ? 'kg' : patch.mode === 'local' ? 'local' : prev.mode === 'kg' ? 'kg' : 'local'
+
+  let bases
+  if (Array.isArray(patch.kgBases)) {
+    bases = patch.kgBases.map((x) => String(x || '').trim()).filter((x) => /^https?:\/\//i.test(x)).slice(0, 5)
+  } else if (Array.isArray(prev.kgBases) && prev.kgBases.length) {
+    bases = prev.kgBases
+  } else {
+    bases = DEFAULT_KG_BASES.slice()
+  }
+  if (!bases.length) bases = DEFAULT_KG_BASES.slice()
+
+  const next = Object.assign({}, cur, { studentAuth: { mode, kgBases: bases } })
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2), 'utf8')
+  return getStudentAuth()
+}
+
 /** 把缺的键补进 config.json（不覆盖老师改过的任何值） */
 function persist() {
   try {

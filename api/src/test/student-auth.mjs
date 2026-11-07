@@ -1,0 +1,127 @@
+/**
+ * 学生登录的两种校验方式（e2e，需要服务在 18730 跑着）
+ *
+ *   local —— 学号 + 姓名（默认，不联网）
+ *   kg    —— 学号 + 青果密码（能登上智慧校园才放行）
+ *
+ * 两条底线，这个文件主要就是守住它们：
+ *   1. 切到 kg 之后，local 的姓名比对必须失效（不能两种都放行）
+ *   2. 青果校验失败时**一次就返回**，绝不自动重试（会锁学生账号）
+ *
+ * 注意：kg 那步会真的去问青果（用不存在的学号，不碰真实学生）。
+ * 没有外网时用 TS_SKIP_KG=1 跳过——但那样就只验证了「接口形状」。
+ */
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const B = process.env.TS_BASE || 'http://127.0.0.1:18730'
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
+const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/config.json'), 'utf8'))
+/*
+ * 联网那步**默认跳过**，要显式 TS_KG_LIVE=1 才真去问青果。
+ *
+ * 原因：青果按 24 小时记失败次数，同一个测试账号多跑几次就会被锁，
+ * 之后这组测试会永远红 —— 那不是代码坏了，是测试把账号打废了。
+ * 需要在发版前人工验一次真链路时，再手动开这个开关。
+ */
+const SKIP_KG = String(process.env.TS_KG_LIVE || '') !== '1'
+
+let pass = 0
+let fail = 0
+const ok = (n, c, d) => {
+  if (c) { pass++; console.log('  ✓ ' + n + (d ? '  → ' + d : '')) }
+  else { fail++; console.log('  ✗ ' + n + (d ? '  → ' + d : '')) }
+}
+
+const j = async (m, u, b, tk) => {
+  const o = { method: m, headers: { 'content-type': 'application/json' } }
+  if (tk) o.headers.authorization = 'Bearer ' + tk
+  if (b !== undefined) o.body = JSON.stringify(b)
+  const r = await fetch(B + u, o)
+  const t = await r.text()
+  let x = null
+  try { x = JSON.parse(t) } catch (e) { /* */ }
+  return { s: r.status, j: x }
+}
+
+const T = (await j('POST', '/api/auth/login/teacher', { password: String(cfg.teacherPassword || '').trim() })).j.token
+const SID = '2515230114'
+const NAME = '马婷婷'
+
+try {
+  /* ---------- 默认必须是 local ---------- */
+  const m0 = await j('GET', '/api/auth/student-mode')
+  ok('登录页能拿到当前方式', m0.s === 200 && !!m0.j.mode, String(m0.j && m0.j.mode))
+  ok('默认是 local', m0.j.mode === 'local', String(m0.j.mode))
+
+  const pub = await j('GET', '/api/settings/student-auth')
+  ok('完整配置不对外公开', pub.s === 401, 'status=' + pub.s)
+
+  /* ---------- local 行为 ---------- */
+  {
+    const good = await j('POST', '/api/auth/login/student', { sid: SID, name: NAME })
+    ok('local：学号+姓名 能登录', good.s === 200 && !!good.j.token, 'status=' + good.s)
+
+    const bad = await j('POST', '/api/auth/login/student', { sid: SID, name: '不是这个名字' })
+    ok('local：姓名不对被拒', bad.s === 401, 'status=' + bad.s)
+
+    const noName = await j('POST', '/api/auth/login/student', { sid: SID })
+    ok('local：不填姓名被拒', noName.s === 400, 'status=' + noName.s)
+  }
+
+  /* ---------- 切到 kg ---------- */
+  {
+    const r = await j('PATCH', '/api/settings/student-auth', { mode: 'kg' }, T)
+    ok('能切到 kg', r.s === 200 && r.j.mode === 'kg', String(r.j && r.j.mode))
+    const m = await j('GET', '/api/auth/student-mode')
+    ok('登录页立刻看到 kg', m.j.mode === 'kg', String(m.j.mode))
+
+    /* 关键：kg 模式下姓名不再是通行证 */
+    const byName = await j('POST', '/api/auth/login/student', { sid: SID, name: NAME })
+    ok('kg 模式下「学号+姓名」不再放行', byName.s >= 400, 'status=' + byName.s)
+
+    const noPwd = await j('POST', '/api/auth/login/student', { sid: SID })
+    ok('kg 模式下不填密码 → 400', noPwd.s === 400, 'status=' + noPwd.s)
+  }
+
+  /* ---------- 真的去问一次青果（不存在的学号，不碰真实学生）---------- */
+  if (SKIP_KG) {
+    console.log('  · 跳过真实青果校验（TS_SKIP_KG=1）')
+  } else {
+    const t0 = Date.now()
+    const r = await j('POST', '/api/auth/login/student', { sid: '9999999999', password: 'definitely-not-real' })
+    const ms = Date.now() - t0
+    const msg = (r.j && r.j.error && r.j.error.message) || ''
+    ok('kg：不存在的账号被拒', r.s === 401, 'status=' + r.s + '  ' + ms + 'ms')
+    ok('kg：失败原因能看懂', !!msg, msg.slice(0, 44))
+    ok('kg：确实去问了青果（不是本地糊弄）', ms > 300, ms + 'ms')
+  }
+
+  /* ---------- 入口配置 ---------- */
+  {
+    const r = await j('PATCH', '/api/settings/student-auth', {
+      mode: 'kg',
+      kgBases: ['http://117.159.97.151:9999', 'http://117.159.97.151:8888'],
+    }, T)
+    ok('能改入口顺序', r.s === 200 && r.j.kgBases[0].endsWith(':9999'), JSON.stringify(r.j && r.j.kgBases))
+
+    const bad = await j('PATCH', '/api/settings/student-auth', { kgBases: ['不是网址'] }, T)
+    ok('非法地址被过滤，回落到默认', bad.s === 200 && bad.j.kgBases.length === 2, JSON.stringify(bad.j && bad.j.kgBases))
+
+    const restored = await j('PATCH', '/api/settings/student-auth', {
+      mode: 'kg',
+      kgBases: ['http://117.159.97.151:8888', 'http://117.159.97.151:9999'],
+    }, T)
+    ok('默认入口能恢复', restored.j.kgBases[0].endsWith(':8888'), JSON.stringify(restored.j && restored.j.kgBases))
+  }
+} finally {
+  /* 无论测到哪一步，都要切回默认，别把课上到一半的登录方式改掉 */
+  const back = await j('PATCH', '/api/settings/student-auth', { mode: 'local' }, T)
+  console.log('\n  已切回 local（' + back.s + '）')
+}
+
+console.log('')
+console.log(fail === 0 ? '学生登录方式：全部通过 ✓' : '学生登录方式：有失败 ✗')
+console.log('（通过 ' + pass + ' · 失败 ' + fail + '）')
+process.exit(fail === 0 ? 0 : 1)

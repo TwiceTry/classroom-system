@@ -35,6 +35,7 @@ const SETS = {
     ['课堂作业全链路（提交→批阅→落库对账）', 'homework-flow.mjs'],
     ['机试全链路（设卷→答题→判卷→折算）', 'exam-flow.mjs'],
     ['起手代码（初始态 / 我的提交 / 恢复最初状态）', 'starter-flow.mjs'],
+    ['学生登录方式（学号姓名 / 青果账号密码）', 'student-auth.mjs'],
   ],
 }
 

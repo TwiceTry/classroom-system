@@ -28,11 +28,28 @@
           <span>学号</span>
           <input v-model.trim="form.sid" class="input" placeholder="名单上的学号" autocomplete="off" />
         </label>
-        <label class="field">
+        <!--
+          两种校验方式由老师在「课程管理 → 学生登录方式」里切换：
+          local 用姓名，kg 用青果密码。登录页只按后端给的 mode 显示表单。
+        -->
+        <label v-if="authMode === 'local'" class="field">
           <span>姓名</span>
           <input v-model.trim="form.name" class="input" placeholder="名单上的姓名" autocomplete="off" />
         </label>
-        <p class="note">学号和姓名要和名单一致。登录后只能看到自己的分数。</p>
+        <label v-else class="field">
+          <span>青果密码</span>
+          <input
+            v-model="form.stuPwd"
+            type="password"
+            class="input"
+            placeholder="智慧校园平台的密码"
+            autocomplete="current-password"
+          />
+        </label>
+        <p v-if="authMode === 'local'" class="note">学号和姓名要和名单一致。登录后只能看到自己的分数。</p>
+        <p v-else class="note">
+          用学校智慧校园平台的账号（学号）和密码登录。输错会累计次数，满 5 次平台会锁号，请确认后再输。
+        </p>
         <button class="btn primary" :disabled="busy || !canSubmit">
           {{ busy ? '正在登录…' : '进入课堂' }}
         </button>
@@ -99,9 +116,29 @@ const courseCountText = computed(() => {
   return n ? n + ' 门课' : ''
 })
 
-const form = reactive({ courseId: '', sid: '', name: '', password: '' })
+const form = reactive({ courseId: '', sid: '', name: '', password: '', stuPwd: '' })
 
-const canSubmit = computed(() => !!(form.courseId && form.sid && form.name))
+/**
+ * 学生登录用哪种校验：local（学号+姓名，默认）/ kg（青果账号密码）。
+ * 由老师在课程管理页切换；这里只决定显示哪个输入框。
+ * 取不到就按 local 走 —— 宁可退回老方式，也不要让学生卡在登录页。
+ */
+const authMode = ref('local')
+
+async function loadAuthMode() {
+  try {
+    const res = await api.get('/api/auth/student-mode')
+    authMode.value = res && res.mode === 'kg' ? 'kg' : 'local'
+  } catch (e) {
+    authMode.value = 'local'
+  }
+}
+
+const canSubmit = computed(() =>
+  authMode.value === 'kg'
+    ? !!(form.courseId && form.sid && form.stuPwd)
+    : !!(form.courseId && form.sid && form.name)
+)
 
 onMounted(async () => {
   // 已登录就直接进对应的家
@@ -118,6 +155,8 @@ onMounted(async () => {
    */
   if (!courses.value.length) await loadCourses()
   if (courses.value.length && !form.courseId) form.courseId = courses.value[0].id
+  // 学生该用哪种校验方式，由后端说了算（老师随时可切）
+  await loadAuthMode()
 })
 
 function switchTab(t) {
@@ -130,11 +169,12 @@ async function loginStudent() {
   busy.value = true
   err.value = ''
   try {
-    const res = await api.post('/api/auth/login/student', {
-      courseId: form.courseId,
-      sid: form.sid,
-      name: form.name,
-    })
+    // 按当前模式带上对应凭据：local 要姓名，kg 要密码
+    const payload =
+      authMode.value === 'kg'
+        ? { sid: form.sid, password: form.stuPwd }
+        : { sid: form.sid, name: form.name }
+    const res = await api.post('/api/auth/login/student', payload)
     applyLogin(res)
     await refresh()
     router.replace(route.query.next || '/student/materials')

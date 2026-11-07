@@ -6,7 +6,7 @@
  * 不接受前端再传 sid（这样改 URL 也看不到别人的东西）。
  */
 import { issue, revoke, checkPassword } from '../lib/auth.js'
-import { config, setPassword } from '../config.js'
+import { config, setPassword, getStudentAuth, setStudentAuth } from '../config.js'
 import { requireAuth } from '../plugins/auth.js'
 import { badRequest, unauthorized, forbidden } from '../lib/errors.js'
 import * as repo from '../lib/repo.js'
@@ -24,26 +24,62 @@ export default async function authRoutes(app) {
     },
   })
 
-  /** 学生登录（学号 + 姓名，对应名册；免密） */
+  /**
+   * 学生登录。两种校验方式，由教师在「课程管理 → 学生登录方式」里切换：
+   *
+   *   local（默认）—— 学号 + 姓名，和名册比对；免密、离线、瞬时
+   *   kg            —— 学号 + 青果密码，能登上青果就放行（见 lib/kg-auth.js）
+   *
+   * 不管哪种方式，最后都必须落到「名册里有这个学号」——
+   * 否则没有班级归属，后面的作业、考勤、分数全都挂不上。
+   */
   app.post('/api/auth/login/student', {
     schema: {
       body: {
         type: 'object',
-        required: ['sid', 'name'],
-        properties: { sid: { type: 'string' }, name: { type: 'string' } },
+        required: ['sid'],
+        properties: {
+          sid: { type: 'string', maxLength: 40 },
+          name: { type: 'string', maxLength: 40 },
+          password: { type: 'string', maxLength: 128 },
+        },
       },
     },
     handler: async (req) => {
       const sid = String(req.body.sid || '').trim()
-      const name = String(req.body.name || '').trim()
-      if (!sid || !name) throw badRequest('学号与姓名都要填')
+      if (!sid) throw badRequest('请填写学号')
+
+      const sa = getStudentAuth() // 读一次：mode 和青果入口来自同一份配置
+      const mode = sa.mode
+
+      if (mode === 'kg') {
+        const password = String(req.body.password || '')
+        if (!password) throw badRequest('请填写青果密码')
+
+        /*
+         * 动态 import：青果那套带着 560KB 的验证码模型，
+         * local 模式下完全不该把它读进内存。
+         * 一次不过就返回，绝不自动重试（青果按天计失败次数，满 5 次锁号）。
+         */
+        const { verifyStudent } = await import('../lib/kg-auth.js')
+        const r = await verifyStudent(sid, password, { bases: sa.kgBases })
+        if (!r.ok) throw unauthorized(r.message)
+      } else {
+        const name = String(req.body.name || '').trim()
+        if (!name) throw badRequest('学号与姓名都要填')
+
+        const cls0 = repo.findClassBySid(sid)
+        if (!cls0) throw unauthorized('这个学号不在任何班级名册里，找老师确认一下')
+        const stu0 = repo.findStudent(cls0.id, sid)
+        if (!stu0 || String(stu0.name).trim() !== name) {
+          throw unauthorized('学号与姓名对不上（注意姓名要和名册完全一致）')
+        }
+      }
 
       const cls = repo.findClassBySid(sid)
       if (!cls) throw unauthorized('这个学号不在任何班级名册里，找老师确认一下')
       const stu = repo.findStudent(cls.id, sid)
-      if (!stu || String(stu.name).trim() !== name) {
-        throw unauthorized('学号与姓名对不上（注意姓名要和名册完全一致）')
-      }
+      if (!stu) throw unauthorized('这个学号不在班级名册里，找老师确认一下')
 
       const token = issue({ role: 'student', classId: cls.id, sid, name: stu.name })
       const course = cls.courseId ? repo.getCourse(cls.courseId) : null
@@ -71,6 +107,37 @@ export default async function authRoutes(app) {
    * 取侧栏头部与课程名，所以身份必须挂在 `student` 下面，
    * 而不是平铺在顶层（平铺会让侧栏显示 "undefined undefined"）。
    */
+  /**
+   * 学生登录页要知道该显示哪种表单（学号+姓名 / 学号+密码）。
+   * 公开接口，**只回 mode** —— 不回青果地址，没必要让外面知道入口。
+   */
+  app.get('/api/auth/student-mode', async () => {
+    return { mode: getStudentAuth().mode }
+  })
+
+  /** 教师看当前学生登录校验方式 */
+  app.get('/api/settings/student-auth', { preHandler: requireAuth('teacher') }, async () => {
+    return getStudentAuth()
+  })
+
+  /** 教师改：切换校验方式 / 改青果入口（改完立即生效，下次登录就用新的） */
+  app.patch(
+    '/api/settings/student-auth',
+    {
+      preHandler: requireAuth('teacher'),
+      schema: {
+        body: {
+          type: 'object',
+          properties: {
+            mode: { type: 'string', enum: ['local', 'kg'] },
+            kgBases: { type: 'array', items: { type: 'string', maxLength: 200 }, maxItems: 5 },
+          },
+        },
+      },
+    },
+    async (req) => setStudentAuth(req.body || {})
+  )
+
   app.get('/api/auth/me', { preHandler: requireAuth() }, async (req) => {
     const u = req.user
     if (u.role === 'student') {

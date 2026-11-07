@@ -74,6 +74,47 @@
       </section>
     </div>
 
+    <!--
+      学生登录方式：全局开关（不属于某一门课），改完立即生效。
+      默认「学号+姓名」不联网；切到青果后，学生要能登上智慧校园才能进课堂。
+    -->
+    <div class="card">
+      <CardHead>
+        <template #title>学生登录方式</template>
+        <div class="right dim mini">改完立即生效，学生下次登录就用新的</div>
+      </CardHead>
+      <div class="authrow">
+        <label class="authopt">
+          <input v-model="auth.mode" type="radio" value="local" @change="saveAuth" />
+          <span>
+            <b>学号 + 姓名</b>
+            <em class="dim mini">和班级名单比对，不联网、瞬时；学生只要知道学号就能进</em>
+          </span>
+        </label>
+        <label class="authopt">
+          <input v-model="auth.mode" type="radio" value="kg" @change="saveAuth" />
+          <span>
+            <b>学号 + 智慧校园密码</b>
+            <em class="dim mini">能登上青果智慧校园才放行；学生账号即学号</em>
+          </span>
+        </label>
+      </div>
+
+      <p v-if="auth.mode === 'kg'" class="note warn mini">
+        注意：青果按 24 小时计失败次数，<b>满 5 次锁号</b>。所以课程系统<strong>不会自动重试</strong> ——
+        一次不过就直接告诉学生「学号或密码不对」，绝不拿学生账号去赌验证码识别。
+      </p>
+      <p v-else class="dim mini">学生输错姓名不会有任何惩罚，可以随时重试。</p>
+
+      <div v-if="auth.mode === 'kg'" class="bases">
+        <label v-for="(b, i) in auth.kgBases" :key="i" class="field inline">
+          <span>入口 {{ i + 1 }}</span>
+          <input v-model="auth.kgBases[i]" class="input wide" placeholder="http://ip:port" @blur="saveAuth" />
+        </label>
+        <p class="dim mini">两个入口内容一样，按请求轮询分流。失败不会换另一个再试（换了也只是多消耗一次失败次数）。</p>
+      </div>
+    </div>
+
     <div class="card tips">
       <CardHead>
         <template #title>怎么往里放内容</template>
@@ -378,6 +419,32 @@ const list = ref([])
 const schemes = ref([])
 const err = ref('')
 const toast = ref('')
+
+/* 学生登录方式（全局配置，不属于某一门课） */
+const auth = reactive({ mode: 'local', kgBases: [] })
+
+async function loadAuth() {
+  try {
+    const r = await api.get('/api/settings/student-auth')
+    auth.mode = r.mode === 'kg' ? 'kg' : 'local'
+    auth.kgBases = Array.isArray(r.kgBases) ? r.kgBases : []
+  } catch (e) {
+    toast.value = '读不到学生登录设置：' + e.message
+  }
+}
+
+async function saveAuth() {
+  try {
+    const r = await api.patch('/api/settings/student-auth', { mode: auth.mode, kgBases: auth.kgBases })
+    auth.mode = r.mode === 'kg' ? 'kg' : 'local'
+    auth.kgBases = Array.isArray(r.kgBases) ? r.kgBases : []
+    toast.value =
+      '已保存：学生现在用' + (auth.mode === 'kg' ? '学号 + 智慧校园密码' : '学号 + 姓名') + '登录'
+  } catch (e) {
+    toast.value = '保存失败：' + e.message
+    await loadAuth() // 回到服务端的真实值，别让界面显示假的
+  }
+}
 const loading = ref(false)
 const saving = ref(false)
 
@@ -471,7 +538,10 @@ const schemeLabel = computed(() => {
   return '将覆盖本机 v' + a.localVersion
 })
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadAuth()
+})
 
 async function load() {
   loading.value = true
@@ -906,4 +976,39 @@ async function exportPack(c, parts) {
 }
 
 /* 课程内容浏览器 */
+
+.authrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 6px 0 4px;
+}
+.authopt {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  cursor: pointer;
+  flex: 1 1 260px;
+}
+.authopt span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.authopt em {
+  font-style: normal;
+}
+.bases {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+}
+.input.wide {
+  width: 220px;
+}
 </style>
