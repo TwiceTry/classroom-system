@@ -486,7 +486,7 @@ npm run build
 | `module.enabled` | 这一项有没有对应的模块（`true` 才会出现在导航与入口里） |
 | `module.submit` | 模块里交什么：`code`（代码工作台）或 `files`（说明 + 链接 + 附件） |
 
-**规则库**（`server/lib/rules/`，老师只调参数，不写公式）：
+**规则库**（`api/src/lib/rules.js` 的 `RULES`，老师只调参数，不写公式）：
 
 | type | 参数 | 用途 |
 |---|---|---|
