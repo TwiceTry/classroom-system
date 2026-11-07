@@ -24,9 +24,15 @@
             <option v-for="c in courses" :key="c.id" :value="c.id">{{ c.name }}</option>
           </select>
         </label>
+        <!-- kg 模式下这个框装的是青果账号（可能带前缀），所以标签跟着换 -->
         <label class="field">
-          <span>学号</span>
-          <input v-model.trim="form.sid" class="input" placeholder="名单上的学号" autocomplete="off" />
+          <span>{{ authMode === 'kg' ? '账号' : '学号' }}</span>
+          <input
+            v-model.trim="form.sid"
+            class="input"
+            :placeholder="authMode === 'kg' ? '智慧校园账号（学号）' : '名单上的学号'"
+            autocomplete="off"
+          />
         </label>
         <!--
           两种校验方式由老师在「课程管理 → 学生登录方式」里切换：

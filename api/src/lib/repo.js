@@ -159,6 +159,19 @@ export function rosterOf(classId) {
   ).map((r) => ({ sid: r.sid, name: r.name }))
 }
 
+/**
+ * 全部学号（去重）。
+ *
+ * 用途：青果登录时账号不一定正好等于学号（可能带前缀/后缀），
+ * 需要拿全部学号做一次「包含」匹配。数据量是几百条，一次性取出来足够。
+ */
+export function listAllSids() {
+  return db()
+    .prepare('SELECT DISTINCT sid FROM students')
+    .all()
+    .map((r) => String(r.sid))
+}
+
 export function findStudent(classId, sid) {
   return hydrate(
     db().prepare(`SELECT class_id, sid, name FROM students WHERE class_id = ? AND sid = ?`).get(String(classId), String(sid))

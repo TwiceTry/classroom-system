@@ -11,6 +11,35 @@ import { requireAuth } from '../plugins/auth.js'
 import { badRequest, unauthorized, forbidden } from '../lib/errors.js'
 import * as repo from '../lib/repo.js'
 
+/**
+ * 从青果账号里认出学号。
+ *
+ * 学校的青果账号不一定正好等于学号：可能带工号风格的前缀（WP…）、
+ * 也可能带后缀（邮箱、@域）。所以匹配规则是：
+ *
+ *   1. 完全相等 → 就是它
+ *   2. 否则找「账号里包含」的学号，多个命中取**最长**的
+ *      （短学号容易误配，要求至少 6 位）
+ *   3. 都没有 → 返回空，调用方据此提示「没加入班级」
+ *
+ * 注意匹配失败和密码错误必须分开报：
+ * 前者是「找老师加名单」，后者是「密码打错了」。
+ * 混在一起说，学生会一直重试密码，把账号试到锁定。
+ */
+function matchSid(account, sids) {
+  const a = String(account || '').trim()
+  if (!a) return ''
+  const list = Array.isArray(sids) ? sids : []
+  if (list.includes(a)) return a
+  let hit = ''
+  for (const raw of list) {
+    const s = String(raw || '')
+    if (s.length < 6) continue
+    if (a.indexOf(s) >= 0 && s.length > hit.length) hit = s
+  }
+  return hit
+}
+
 export default async function authRoutes(app) {
   /** 教师登录 */
   app.post('/api/auth/login/teacher', {
@@ -46,58 +75,66 @@ export default async function authRoutes(app) {
       },
     },
     handler: async (req) => {
-      const sid = String(req.body.sid || '').trim()
+      /*
+       * kg 模式下这个字段装的是「青果账号」——它可能等于学号，也可能带前缀/后缀，
+       * 所以先当账号用，验过之后再换成本系统认得的学生学号（见下面的 matchSid）。
+       */
+      let sid = String(req.body.sid || '').trim()
       if (!sid) throw badRequest('请填写学号')
 
       const sa = getStudentAuth() // 读一次：mode 和青果入口来自同一份配置
       const mode = sa.mode
 
       if (mode === 'kg') {
+        const account = sid // 青果账号，可能不等于学号
         const password = String(req.body.password || '')
-        if (!password) throw badRequest('请填写青果密码')
+        if (!password) throw badRequest('请填写密码')
 
         /*
-         * 第一步永远是**查名册**：不在本课程名单里的学号，一律不该去问青果。
-         * 原来顺序反了（先验青果再查名册），学生密码输对了却不在名单，
-         * 等于白消耗一次青果登录。
-         */
-        const clsK = repo.findClassBySid(sid)
-        if (!clsK) throw unauthorized('这个学号不在本课程的名单里，找老师确认一下')
-        const stuK = repo.findStudent(clsK.id, sid)
-        if (!stuK) throw unauthorized('这个学号不在本课程的名单里，找老师确认一下')
-
-        /*
-         * 第二步：青果说了算，只是有缓存。
+         * 第一步：先验证「这个账号能不能登上青果」。
          *
-         *   老师开了「每次登录都核验」→ 每次都问青果（最准，慢，且每次都消耗失败计数）
+         * 注意这里**不能**先查名册 —— 因为账号可能带前缀（如 WP2515230114），
+         * 精确查名册必然查不到，但人是真的、也确实该让他进。
+         * 所以顺序是「先证明他是谁（登录成功），再认他是哪个学生（匹配学号）」。
+         *
+         * 缓存策略：
+         *   老师开了「每次登录都核验」→ 每次都问青果
          *   否则（默认）           → 记住过且对得上就直接放行，省一次远端往返
-         *                            没记过 / 对不上 → 仍然问青果，通过就更新记忆
-         *
-         * 注意：这个区别**学生看不见**。学生永远只输「学号 + 密码」，
-         * 失败就是「学号或密码不对」，不该让他理解「本地缓存 / 远端校验」这些内部机制。
          */
         const creds = await import('../lib/student-creds.js')
-        const local = sa.verifyEachTime ? null : creds.verify(sid, password)
+        const local = sa.verifyEachTime ? null : creds.verify(account, password)
 
         if (local !== true) {
           const { verifyStudent } = await import('../lib/kg-auth.js')
-          const r = await verifyStudent(sid, password, { bases: sa.kgBases })
+          const r = await verifyStudent(account, password, { bases: sa.kgBases })
           if (!r.ok) {
             /*
              * 只说该说的：锁定 / 短信二次验证 / 输错次数 —— 这些是学生必须知道的后果，
              * 不告诉他，他会一直重试直到把账号打锁。
-             * 其余（验证码没认对、青果返回怪东西…）一律收敛成「学号或密码不对」，
-             * 既不误导，也不暴露实现细节。
+             * 其余（验证码没认对、青果返回怪东西…）一律收敛成「账号或密码不对」。
              */
             const m = String(r.message || '')
-            throw unauthorized(/锁定|短信|次数|超时|连不上/.test(m) ? m : '学号或密码不对')
+            throw unauthorized(/锁定|短信|次数|超时|连不上/.test(m) ? m : '账号或密码不对')
           }
           // 青果认了 → 记下来，下次本地比对
           try {
-            creds.remember(sid, password)
+            creds.remember(account, password)
           } catch (e) {
             /* 记不住不影响这次登录 */
           }
+        }
+
+        /*
+         * 第二步：能登录上了，再认身份。
+         * 账号等于某个学号，或者**账号里包含**某个学号（取最长的那个，避免短号误配），
+         * 就按那个学号的身份走。
+         *
+         * 都对不上 → 不是密码问题，是没入班：这种情况必须和「密码错」分开说，
+         * 否则学生会一直以为密码打错了，反复重试（还会把账号打锁）。
+         */
+        sid = matchSid(account, repo.listAllSids())
+        if (!sid) {
+          throw unauthorized('这个账号能登录智慧校园，但还没有加入本课程班级，请联系老师')
         }
       } else {
         const name = String(req.body.name || '').trim()

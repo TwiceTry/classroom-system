@@ -100,19 +100,23 @@ try {
     ok('kg：确实去问了青果（不是本地糊弄）', ms > 300, ms + 'ms')
   }
 
-  /* ---------- 规则一：必须在班级名单里 ---------- */
+  /* ---------- 规则一：账号要能对上某个学号，否则是「未入班」而不是「密码错」---------- */
   {
-    const t0 = Date.now()
-    const r = await j('POST', '/api/auth/login/student', { sid: '9999999999', password: 'whatever' })
-    const ms = Date.now() - t0
-    const msg = (r.j && r.j.error && r.j.error.message) || ''
-    ok('不在名册的学号被拒', r.s === 401, 'status=' + r.s)
-    ok('提示指向「名单」', msg.indexOf('名单') >= 0, msg.slice(0, 26))
+    const creds0 = await import(pathToFileURL(path.join(ROOT, 'api/src/lib/student-creds.js')).href)
+
     /*
-     * 顺序很重要：先查名册再问青果。
-     * 反过来的话，一个不在名单的学号也会去问青果 —— 白消耗一次失败次数。
+     * 能登录（这里用本地已记住的凭据模拟「青果通过了」），但账号里不含任何学号。
+     * 这时必须提示「未加入班级」—— 和「密码不对」分开说。
+     * 混着说会让没入班的学生反复试密码，把自己账号试到锁定。
      */
-    ok('先查名册，没打青果（<500ms）', ms < 500, ms + 'ms')
+    const account = 'ZZNOTASTUDENT'
+    creds0.remember(account, 'pw-x')
+    const r = await j('POST', '/api/auth/login/student', { sid: account, password: 'pw-x' })
+    const msg = (r.j && r.j.error && r.j.error.message) || ''
+    ok('账号对不上任何学号 → 401', r.s === 401, 'status=' + r.s)
+    ok('提示是「未加入班级」', /还没有加入本课程班级|未加入本课程班级/.test(msg), msg.slice(0, 34))
+    ok('没有误报成「账号或密码不对」', msg.indexOf('账号或密码不对') < 0, msg.slice(0, 30))
+    creds0.forget(account)
   }
 
   /* ---------- 规则二：记住密码后走本地，不再打青果 ---------- */
@@ -128,6 +132,24 @@ try {
     const ms = Date.now() - t0
     ok('本地比对通过即可登录', r.s === 200 && !!r.j.token, 'status=' + r.s)
     ok('走本地，没打青果（<500ms）', ms < 500, ms + 'ms')
+
+    /*
+     * 账号不一定正好等于学号：学校可能用工号风格前缀、或邮箱后缀。
+     * 规则是「等于，或者包含某个学号」都认。
+     */
+    for (const [label, account] of [
+      ['带前缀（WP+学号）', 'WP' + SID],
+      ['带后缀（学号@域）', SID + '@school.edu'],
+    ]) {
+      creds.remember(account, 'pw-alias')
+      const ra = await j('POST', '/api/auth/login/student', { sid: account, password: 'pw-alias' })
+      ok(
+        label + ' → 认成 ' + SID,
+        ra.s === 200 && ra.j.student && ra.j.student.sid === SID,
+        ra.s + ' / ' + (ra.j.student && ra.j.student.sid)
+      )
+      creds.forget(account)
+    }
 
     /*
      * 密码错的路径**只在允许联网时才测**。
