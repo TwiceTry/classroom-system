@@ -250,13 +250,55 @@ TTL_HTML = int(float(conf_get('cache.ttl.html', '300')))
 REVALIDATE_SEC = int(float(conf_get('cache.ttl.html.verify', '30')))
 
 
+# ---------------- 防穿透（同一 key 只允许一路去上游） ----------------
+# 等价于 nginx 的 proxy_cache_lock on。
+# 没有它：40 个人同时点开同一节课，几个请求同时「查缓存→没有」，
+# 就各自去公网拉一遍 1.8MB 的 sfc-loader。
+INFLIGHT = {}
+INFLIGHT_LOCK = threading.Lock()
+INFLIGHT_WAIT = 45          # 等别的路最多等这么久，超过就自己去拉（降级）
+
+
+def inflight_begin(key):
+    """返回 (event, is_owner)。
+
+    owner=True  → 这一路负责去上游拉，拉完（无论成败）必须 inflight_end()
+    owner=False → 别人正在拉，等 event，然后直接读缓存
+    """
+    with INFLIGHT_LOCK:
+        ev = INFLIGHT.get(key)
+        if ev is not None:
+            return ev, False
+        ev = threading.Event()
+        INFLIGHT[key] = ev
+        return ev, True
+
+
+def inflight_end(key, ev):
+    """owner 必须调用（放在 finally 里），否则其他请求会白等到超时。"""
+    with INFLIGHT_LOCK:
+        if INFLIGHT.get(key) is ev:
+            del INFLIGHT[key]
+    ev.set()
+
+
 # ---------------- 出口流量计数 ----------------
 # 老师最常问的一句是「一节课用掉多少流量」。这里累加的是
 # **从上游读回来的响应体字节**（不含请求头，量很小）和走上游的请求数。
 # 命中缓存的不计 —— 那些字节没出公网，这正是缓存的价值。
 #
 # 名字别用 UP：那个变量在本文件里是「上游 Target 对象」，会被覆盖。
-TRAFFIC = {'bytes': 0, 'reqs': 0}
+#
+# 四个方向分开记，因为它们的「贵」不一样：
+#   up_*    走公网隧道（移动网络/宽带，要钱、可能限速）
+#   down_*  在局域网内（千兆交换机，几乎无成本）
+TRAFFIC = {
+    'reqs': 0,        # 走上游的请求数
+    'up_req': 0,      # ② 发给上游的字节（请求头 + 请求体）
+    'up_resp': 0,     # ③ 上游回来的字节（响应体）—— 原来那个 'bytes'
+    'down_req': 0,    # ① 学生发上来的请求体
+    'down_resp': 0,   # ④ 发给学生的响应体
+}
 
 
 class CacheStore(object):
@@ -1055,6 +1097,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Age', str(entry['age']))
         self.end_headers()
         if self.command != 'HEAD' and entry['body']:
+            TRAFFIC['down_resp'] += len(entry['body'])  # ④ 局域网出：缓存命中
             self.wfile.write(entry['body'])
 
     # ---------- 主流程 ----------
@@ -1130,6 +1173,7 @@ class Handler(BaseHTTPRequestHandler):
         # 缓存：命中就直接回，不出公网
         ttl, browser_ttl = self.cacheable()
         key = self.cache_key()
+        inflight = None   # 只有 owner 会填 (key, event)
         if ttl > 0:
             entry = CACHE.get(key)
             if entry is not None:
@@ -1146,8 +1190,28 @@ class Handler(BaseHTTPRequestHandler):
                     verbose('回缓存失败：%s' % e)
                 return
 
+            # 没命中：同一个 key 只放一路去上游，其余在这儿等
+            ev, owner = inflight_begin(key)
+            if not owner:
+                if ev.wait(INFLIGHT_WAIT):
+                    entry = CACHE.get(key)
+                    if entry is not None:
+                        verbose('等别路拉完 → 直接回缓存 %s' % self.path)
+                        try:
+                            self.send_cached(entry, True)
+                        except Exception as e:
+                            verbose('回缓存失败：%s' % e)
+                        return
+                # 等超时了 / 对方拉失败 → 自己拉。这条绝不能省：
+                # 宁可多花一次流量，也不能让学生的请求挂在那儿。
+                verbose('没等到别路，自己拉：%s' % self.path)
+            else:
+                inflight = (key, ev)
+
         target, tag = UP, '公网'
         body = self.read_body()
+        if body:
+            TRAFFIC['down_req'] += len(body)  # ① 局域网入：学生提交的内容
         started = time.time()
         reusable = self.command in ('GET', 'HEAD')
         reused = False
@@ -1204,6 +1268,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header('Age', '0')
                 self.end_headers()
                 if self.command != 'HEAD':
+                    TRAFFIC['down_resp'] += len(buf)  # ④ 局域网出：缓存 MISS 直接回
                     self.wfile.write(buf)
             else:
                 self.send_upstream_response(resp, target)
@@ -1238,6 +1303,11 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
+            # 释放防穿透锁：放在 finally 里，成功/失败/异常都要放，
+            # 否则后面等着同一 key 的请求会白等到超时
+            if inflight is not None:
+                inflight_end(inflight[0], inflight[1])
+
     def send_upstream_request(self, conn, target, body):
         """把请求发给上游，返回响应对象。"""
         headers = self.build_upstream_headers(target)
@@ -1251,6 +1321,14 @@ class Handler(BaseHTTPRequestHandler):
             conn.endheaders()
         else:
             conn.endheaders(body)
+        # ② 公网上行：请求行 + 头 + 体（头加起来通常几百字节，但 POST 上传大文件时体才是大头）
+        sent = len(self.command) + len(path) + 12  # "GET /xxx HTTP/1.1\r\n"
+        for k, v in headers.items():
+            sent += len(k) + len(v) + 4            # "K: V\r\n"
+        sent += 2                                  # 结尾空行
+        if body:
+            sent += len(body)
+        TRAFFIC['up_req'] += sent
         return conn.getresponse()
 
     def send_upstream_response(self, resp, target, cache_control=None, extra=None):
@@ -1285,7 +1363,8 @@ class Handler(BaseHTTPRequestHandler):
             chunk = resp.read(65536)
             if not chunk:
                 break
-            TRAFFIC['bytes'] += len(chunk)  # 出口流量：流式转发
+            TRAFFIC['up_resp'] += len(chunk)   # ③ 公网下行（从上游读到的）
+            TRAFFIC['down_resp'] += len(chunk)  # ④ 局域网出（同字节写给学生的）
             self.wfile.write(chunk)
         try:
             self.wfile.flush()
@@ -1298,7 +1377,7 @@ class Handler(BaseHTTPRequestHandler):
             chunk = resp.read(65536)
             if not chunk:
                 break
-            TRAFFIC['bytes'] += len(chunk)  # 出口流量：整包读入
+            TRAFFIC['up_resp'] += len(chunk)  # ③ 公网下行（整包读入）
             buf += chunk
         return buf
 
@@ -2240,8 +2319,11 @@ def main():
         def do_GET(self):
             if self.path == '/__proxy_stats/reset':
                 # 压测用：出口计数清零，方便量「这一轮用了多少公网流量」
-                TRAFFIC['bytes'] = 0
                 TRAFFIC['reqs'] = 0
+                TRAFFIC['up_req'] = 0
+                TRAFFIC['up_resp'] = 0
+                TRAFFIC['down_req'] = 0
+                TRAFFIC['down_resp'] = 0
                 body = b'{"ok": true, "reset": true}'
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
@@ -2260,8 +2342,21 @@ def main():
                     'cache': st,
                     'upstream': {
                         'requests': TRAFFIC['reqs'],
-                        'bytes': TRAFFIC['bytes'],
-                        'mbytes': round(TRAFFIC['bytes'] / 1048576.0, 3),
+                        # 兼容旧字段：bytes = 公网下行
+                        'bytes': TRAFFIC['up_resp'],
+                        'mbytes': round(TRAFFIC['up_resp'] / 1048576.0, 3),
+                        # 四个方向
+                        'reqBytes': TRAFFIC['up_req'],
+                        'respBytes': TRAFFIC['up_resp'],
+                        'totalBytes': TRAFFIC['up_req'] + TRAFFIC['up_resp'],
+                        'totalMB': round((TRAFFIC['up_req'] + TRAFFIC['up_resp']) / 1048576.0, 3),
+                    },
+                    'inflight': len(INFLIGHT),
+                    'client': {
+                        'reqBytes': TRAFFIC['down_req'],
+                        'respBytes': TRAFFIC['down_resp'],
+                        'totalBytes': TRAFFIC['down_req'] + TRAFFIC['down_resp'],
+                        'totalMB': round((TRAFFIC['down_req'] + TRAFFIC['down_resp']) / 1048576.0, 3),
                     },
                     'uptimeSec': int(time.time() - START),
                 }, ensure_ascii=False).encode('utf-8')
