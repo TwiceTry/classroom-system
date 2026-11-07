@@ -1968,6 +1968,7 @@ class CastFanout(object):
         self.lock = threading.RLock()
         self.up_ctl = None       # 上游教师通道（1 条）
         self.up_stu = None       # 上游学生通道（**一条**：投屏帧的管道）
+        self.up_stu_ev = None    # 「正在建这条管道」的占位事件（防并发重复建）
         self.stu_hello = None    # 建这条管道用的 hello（第一个观看者的）
         self.local_ctl = []      # 本地教师端连接
         self.local_stu = []      # 本地学生端连接
@@ -2002,29 +2003,121 @@ class CastFanout(object):
 
     # ---------- 上游学生连接（每个真实观看者一条）----------
 
-    def ensure_up_stu(self, hello_text):
+    def build_edge_hello(self):
+        """构造「一条连接代表全班观看」的 hello，以及带签名的握手路径。
+
+        返回 (hello_json, path)；没人看时返回 (None, None)。
+
+        为什么带签名：服务端要确认这条连接是**教学机代理**开的，才允许它用
+        for 名单代表别人（否则一个学生令牌就能声称「全班都在看」）。
+        签名沿用边缘上报那套：HMAC(edgeKey, source + "\n" + ts + "\n" + role)。
+        """
+        from urllib.parse import quote
+        with self.lock:
+            # 注意：sid 是 self.students 的**键**，不在 value 里 ——
+            # 用 values() 取会拿不到 sid，过滤条件全空，连接就建不起来。
+            casting = [dict(r, sid=sid) for sid, r in EDGE.students.items()
+                       if r.get('casting') and r.get('token')]
+        if not casting:
+            return None, None
+        first = casting[0]
+        payload = {
+            't': 'hello',
+            'token': first['token'],
+            'for': [{'sid': r['sid'], 'name': r.get('name') or '',
+                     'classId': r.get('classId') or ''} for r in casting],
+        }
+        hello = json.dumps(payload, ensure_ascii=False)
+        if not EDGE_KEY:
+            # 没配 edge.key → 退回单身份握手（for 会被服务端拒绝，至少别断）
+            return hello, '/ws?role=student'
+        ts = str(int(time.time()))
+        mac = hmac.new(EDGE_KEY.encode('utf-8'), digestmod=hashlib.sha256)
+        mac.update((EDGE_SOURCE + '\n' + ts + '\n' + 'student').encode('utf-8'))
+        sign = mac.hexdigest()
+        path = '/ws?role=student&edge=%s&ts=%s&sign=%s' % (
+            quote(EDGE_SOURCE, safe=''), ts, sign)
+        return hello, path
+
+    def sync_watchers(self):
+        """名单变了（有人进/出投屏）→ 让上游那条连接更新记账。
+
+        连接已存在就重发 hello（服务端比对 castWhos，变了才更新）；
+        还没建就建一条。
+        """
+        with self.lock:
+            ws = self.up_stu
+        if ws is None or ws.closed:
+            return self.ensure_up_stu(None)
+        hello, _path = self.build_edge_hello()
+        if not hello:
+            return ws
+        self.stu_hello = hello
+        try:
+            ws.send_text(hello)
+            verbose('观看名单已更新（%d 人）' % len(json.loads(hello)['for']))
+        except Exception as e:
+            verbose('更新观看名单失败：%s' % e)
+        return ws
+
+    def ensure_up_stu(self, hello_text=None):
         """上游只有**一条** student 连接（投屏帧的管道）。
 
         公网下行因此只有 1 份（不管本地有多少人在看）。
-        「谁在看投屏」由代理本地记录 + 快照上报如实告诉云端。
+
+        并发安全：建连接要几十到几百毫秒，期间别的学生也会走到这里。
+        以前锁只保护「检查 + 赋值」，10 个学生同时 hello 就会各建一条，
+        最后一条覆盖 self.up_stu，前 9 条变孤儿（线程还在收帧、还在分发）——
+        实测 10 人发 5 帧，代理记 frames=50，每个学生收 50 帧。
+
+        现在用一个 Event 当占位：谁抢到谁建，其他人等它建完直接复用。
+        等的时候不能直接返回 None —— 调用方会当成「通道不可用」把学生踢掉。
         """
+        path = '/ws?role=student'
+        if hello_text is None:
+            # 没给现成的 hello → 自己构造带 for 名单 + 签名的那份
+            hello_text, path = self.build_edge_hello()
+            if not hello_text:
+                return None   # 没人看，不用建
+
         with self.lock:
             if self.up_stu is not None and not self.up_stu.closed:
                 return self.up_stu
             self.stu_hello = hello_text
+            ev = self.up_stu_ev
+            builder = ev is None
+            if builder:
+                ev = threading.Event()
+                self.up_stu_ev = ev
+
+        if not builder:
+            # 别人正在建 → 等它（最多 15 秒，够慢网建一条 TLS 了）
+            ev.wait(15.0)
+            with self.lock:
+                ws = self.up_stu
+                return ws if (ws is not None and not ws.closed) else None
+
+        # 我是 builder
+        ws = None
         try:
-            sock = open_upstream_ws('/ws?role=student')
+            sock = open_upstream_ws(path)
+            ws = WsConn(sock, mask_out=True, on_bin=self.on_up_stu_bin,
+                        on_close=self.on_up_stu_closed)
+            with self.lock:
+                self.up_stu = ws
+            ws.start()
+            verbose('上游学生通道已建立（投屏帧的管道，公网下行 1 份）')
+            # 必须打招呼：服务器要认了这条连接才会把投屏帧广播过来
+            ws.send_text(hello_text)
+            return ws
         except Exception as e:
             verbose('上游学生通道建不起来：%s' % e)
             return None
-        ws = WsConn(sock, mask_out=True, on_bin=self.on_up_stu_bin, on_close=self.on_up_stu_closed)
-        with self.lock:
-            self.up_stu = ws
-        ws.start()
-        verbose('上游学生通道已建立（投屏帧的管道，公网下行 1 份）')
-        # 必须打招呼：服务器要认了这条连接才会把投屏帧广播过来
-        ws.send_text(hello_text)
-        return ws
+        finally:
+            # 无论成败都要放行等着的线程，并把占位清掉
+            with self.lock:
+                self.up_stu_ev = None
+            ev.set()
 
     def drop_up_stu(self, sid):
         """没人看了 → 关掉管道（省得云端以为还有人）。"""
@@ -2072,7 +2165,9 @@ class CastFanout(object):
             # 投屏帧只走**一条**上游连接（管道）→ 公网下行 1 份；
             # 「谁在看」由本地状态 + 快照上报如实告诉云端。
             EDGE.mark(ident, casting=True)
-            up = self.ensure_up_stu(text)
+            # 不再透传这个学生的原始 hello（那只能代表他自己），
+            # 而是让通道按「当前全部在看的人」重发一次名单
+            up = self.sync_watchers()
             self.notify_peers()
             if up is None:
                 ws.send_text(json.dumps({'t': 'error', 'message': '投屏通道暂时不可用，请稍后重试'}, ensure_ascii=False))

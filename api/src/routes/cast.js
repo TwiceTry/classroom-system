@@ -16,8 +16,46 @@
  *   差量帧画在整屏帧上，整屏帧要是被后来的小帧顶掉、永远发不出去，
  *   学生端就没有基准画面 → 黑屏、只有鼠标动过的地方显示。
  */
+import crypto from 'node:crypto'
 import { verify } from '../lib/auth.js'
 import * as presence from '../lib/presence.js'
+import { config } from '../config.js'
+
+/**
+ * 验「这条 WS 是教学机代理开的」。
+ *
+ * 为什么需要：代理现在用**一条**连接代表全班观看（公网下行只 1 份），
+ * 名单在 hello 的 `for` 数组里。但 `for` 里的 sid 是明文的 ——
+ * 如果不加这道验签，任意一个拿到学生令牌的人都能声称「全班都在看投屏」。
+ *
+ * 签名沿用边缘上报那套（realtime.js 的 presence/snapshot）：
+ *   HMAC(edgeKey, source + "\n" + ts + "\n" + role)
+ * 区别只是 WS 握手是 GET、没有 body，所以把 role 拼在最后充当「内容」。
+ *
+ * 参数走 query（不是 header）：代理的 open_upstream_ws 直接拼 path，最省事；
+ * 而且浏览器无法伪造 —— edgeKey 只在服务端和 proxy.conf 里。
+ *
+ * 验不过返回 null（当普通学生连接处理，不信任 for）。
+ */
+function verifyEdge(url) {
+  const source = String(url.searchParams.get('edge') || '').slice(0, 40)
+  if (!source) return null
+  const tsText = String(url.searchParams.get('ts') || '')
+  const sign = String(url.searchParams.get('sign') || '')
+  const role = String(url.searchParams.get('role') || '')
+  const ts = Number(tsText)
+  if (!isFinite(ts) || Math.abs(Math.floor(Date.now() / 1000) - ts) > 300) return null
+  try {
+    const mac = crypto.createHmac('sha256', config.edgeKey)
+    mac.update(source + '\n' + tsText + '\n' + role)
+    const expect = Buffer.from(mac.digest('hex'), 'utf8')
+    const got = Buffer.from(sign, 'utf8')
+    if (got.length !== expect.length || !crypto.timingSafeEqual(got, expect)) return null
+    return source
+  } catch (e) {
+    return null
+  }
+}
 
 const state = {
   mode: 'idle',
@@ -180,7 +218,12 @@ export default async function castRoutes(app) {
     const url = new URL(req.url, 'http://x')
     const role = url.searchParams.get('role')
     const sender = attachSender(socket)
-    const conn = { role, sender, ctlOk: false, authed: false, presenceIdent: null, castWhos: null, cid: '' }
+    /*
+     * edgeSource 非空 = 这条连接是教学机代理开的，允许用 hello 的 for 名单代表多人。
+     * 普通学生连接永远是 null，只能代表自己。
+     */
+    const edgeSource = verifyEdge(url)
+    const conn = { role, sender, edge: !!edgeSource, edgeSource, ctlOk: false, authed: false, presenceIdent: null, castWhos: null, cid: '' }
 
     if (!['ctl', 'student', 'presence'].includes(role)) {
       sender.close(1008)
@@ -249,6 +292,16 @@ export default async function castRoutes(app) {
 
         // 身份：普通学生是本人；局域网代理送来一份名单（for）表示「这条连接代表这些人」
         const list = []
+        if (Array.isArray(msg.for) && !conn.edge) {
+          /*
+           * 普通学生连接不许用 for 代表别人 —— 否则拿到一个学生令牌就能
+           * 声称「全班都在看投屏」，教师端的人数就成假的了。
+           * 只有验过 edgeKey 签名的代理连接才有这个权限。
+           */
+          sender.json({ t: 'error', message: '这条连接不能代表其他人观看' })
+          sender.close(1008)
+          return
+        }
         if (Array.isArray(msg.for)) {
           // 空名单 = 现在没人看了（不能回退成令牌本人，否则留下幽灵观众）
           for (const it of msg.for) {
