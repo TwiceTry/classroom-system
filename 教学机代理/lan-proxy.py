@@ -820,6 +820,10 @@ def edge_report():
             conn = HTTPConnection(UP.host, UP.port, timeout=10)
             conn.sock = raw_sock
         conn.auto_open = False
+        # 上报也是走公网的，要计进流量 —— 否则 stats 里看不见这块
+        # （40 人快照约 9KB，5 秒一次，一节课 4.6MB，不是小数目）
+        TRAFFIC['reqs'] += 1
+        TRAFFIC['up_req'] += len(body) + 400  # 请求头约 400 字节
         conn.request('POST', (UP.base_path or '') + '/api/presence/snapshot', body=body,
                      headers={'Content-Type': 'application/json',
                               'Content-Length': str(len(body)),
