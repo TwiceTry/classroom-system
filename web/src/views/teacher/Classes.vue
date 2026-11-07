@@ -218,9 +218,43 @@
       </div>
 
       <p v-if="login.mode === 'kg'" class="dim mini">
-        连错 <b>3</b> 次本系统就暂停该账号登录（不会让它数到外部的 5 次上限）。
-        已记住 <b>{{ login.rememberedCount }}</b> 个学生的密码。
+        连错 <b>3</b> 次本系统就暂停该账号登录（不会让它数到外部的 5 次上限）——
+        这样最坏只是「进不了课堂系统」，而不是「学校账号被锁」。
       </p>
+
+      <template v-if="login.mode === 'kg'">
+        <label class="chkrow">
+          <input v-model="login.verifyEachTime" type="checkbox" @change="saveVerifyEach" />
+          <span>
+            <b>每次登录都向平台核验</b>
+            <em class="dim mini">
+              关闭（默认）：第一次通过后记住密码，之后本地比对 ——
+              学生登录快（50 毫秒级），也少消耗平台的失败次数。
+              打开：每次都问平台（1 秒多），最准，但每次都在消耗它的失败计数。
+              这个区别学生看不到，他只需要输账号 + 密码。
+            </em>
+          </span>
+        </label>
+
+        <div class="lgbases">
+          <label v-for="(b, i) in login.kgBases" :key="i" class="lgbase">
+            <span class="dim mini">入口 {{ i + 1 }}</span>
+            <input v-model="login.kgBases[i]" class="input" placeholder="http://ip:port" @blur="saveBases" />
+          </label>
+        </div>
+        <p class="dim mini">
+          两个入口内容一样，按请求轮询分流。失败不会换另一个重试（换了也只是多消耗一次失败次数）。
+        </p>
+
+        <div class="lgcreds">
+          <span class="dim mini">
+            已记住 <b>{{ login.rememberedCount }}</b> 个学生的密码（存的是不可逆的派生值，不是明文）。
+          </span>
+          <button class="btn mini" :disabled="!login.rememberedCount" @click="clearCreds">
+            清空全部记住的密码
+          </button>
+        </div>
+      </template>
 
       <table class="lgtbl">
         <thead>
@@ -527,10 +561,48 @@ const tab = ref(['board', 'log', 'login'].indexOf(route.query.tab) >= 0 ? route.
 const login = reactive({
   mode: 'local',
   verifyEachTime: false,
+  kgBases: [],
   rememberedCount: 0,
   blockedCount: 0,
   students: [],
 })
+
+/** 改「每次登录都核验」 */
+async function saveVerifyEach() {
+  try {
+    await api.patch('/api/settings/student-auth', { verifyEachTime: login.verifyEachTime })
+    toast.value = login.verifyEachTime
+      ? '已开启：每次登录都向平台核验'
+      : '已关闭：记住密码后本地比对'
+  } catch (e) {
+    toast.value = '保存失败：' + e.message
+    await loadLogin()
+  }
+}
+
+/** 改平台入口（两个内容一样，轮询分流） */
+async function saveBases() {
+  try {
+    await api.patch('/api/settings/student-auth', { kgBases: login.kgBases })
+    toast.value = '入口已保存'
+  } catch (e) {
+    toast.value = '保存失败：' + e.message
+    await loadLogin()
+  }
+}
+
+/** 清空所有记住的密码（学生改过密码、或怀疑泄露时用） */
+async function clearCreds() {
+  if (!window.confirm('清空所有学生记住的密码？\n\n学生下次登录会重新核验一次，不影响成绩。')) return
+  try {
+    const r = await api.del('/api/settings/student-auth/creds')
+    login.rememberedCount = 0
+    toast.value = '已清空 ' + (r.removed || 0) + ' 条记住的密码'
+    await loadLogin()
+  } catch (e) {
+    toast.value = '清空失败：' + e.message
+  }
+}
 
 /** 有问题的排前面：老师打开这一页就是要看谁出事了 */
 const loginRows = computed(() => {
@@ -559,6 +631,7 @@ async function loadLogin() {
     const r = await api.get('/api/classes/' + activeId.value + '/login-admin')
     login.mode = r.mode === 'kg' ? 'kg' : 'local'
     login.verifyEachTime = r.verifyEachTime === true
+    login.kgBases = Array.isArray(r.kgBases) ? r.kgBases : []
     login.rememberedCount = Number(r.rememberedCount || 0)
     login.blockedCount = Number(r.blockedCount || 0)
     login.students = Array.isArray(r.students) ? r.students : []
@@ -1531,5 +1604,43 @@ th.on .sortmark {
 }
 .lgtbl .ops .btn {
   margin-left: 4px;
+}
+.chkrow {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 10px 0 6px;
+  cursor: pointer;
+}
+.chkrow span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.chkrow em {
+  font-style: normal;
+}
+.lgbases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 8px 0 4px;
+}
+.lgbase {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.lgbase .input {
+  width: 220px;
+}
+.lgcreds {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
 }
 </style>

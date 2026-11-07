@@ -74,82 +74,6 @@
       </section>
     </div>
 
-    <!--
-      学生登录方式：全局开关（不属于某一门课），改完立即生效。
-      默认「学号+姓名」不联网；切到青果后，学生要能登上智慧校园才能进课堂。
-    -->
-    <div class="card">
-      <CardHead>
-        <template #title>学生登录方式</template>
-        <div class="right dim mini">改完立即生效，学生下次登录就用新的</div>
-      </CardHead>
-      <div class="authrow">
-        <label class="authopt">
-          <input v-model="auth.mode" type="radio" value="local" @change="saveAuth" />
-          <span>
-            <b>学号 + 姓名</b>
-            <em class="dim mini">和班级名单比对，不联网、瞬时；学生只要知道学号就能进</em>
-          </span>
-        </label>
-        <label class="authopt">
-          <input v-model="auth.mode" type="radio" value="kg" @change="saveAuth" />
-          <span>
-            <b>学号 + 智慧校园密码</b>
-            <em class="dim mini">能登上青果智慧校园才放行；学生账号即学号</em>
-          </span>
-        </label>
-      </div>
-
-      <p v-if="auth.mode === 'kg'" class="note warn mini">
-        注意：青果按 24 小时计失败次数，<b>满 5 次锁号</b>。所以课程系统<strong>不会自动重试</strong> ——
-        一次不过就直接告诉学生「学号或密码不对」，绝不拿学生账号去赌验证码识别。
-      </p>
-      <p v-else class="dim mini">学生输错姓名不会有任何惩罚，可以随时重试。</p>
-
-      <div v-if="auth.mode === 'kg'" class="bases">
-        <label v-for="(b, i) in auth.kgBases" :key="i" class="field inline">
-          <span>入口 {{ i + 1 }}</span>
-          <input v-model="auth.kgBases[i]" class="input wide" placeholder="http://ip:port" @blur="saveAuth" />
-        </label>
-        <p class="dim mini">两个入口内容一样，按请求轮询分流。失败不会换另一个再试（换了也只是多消耗一次失败次数）。</p>
-
-        <label class="chkrow">
-          <input v-model="auth.verifyEachTime" type="checkbox" @change="saveAuth" />
-          <span>
-            <b>每次登录都向智慧校园核验</b>
-            <em class="dim mini">
-              关闭（默认）：第一次核验通过后记住密码，之后本地比对 ——
-              学生登录快（50 毫秒级），也少消耗智慧校园的失败次数。
-              打开：每次都问智慧校园（1 秒多），最准，但每次都在消耗它的失败计数。
-              这个区别学生看不到，他只需要输学号 + 密码。
-            </em>
-          </span>
-        </label>
-
-        <div class="creds">
-          <p class="dim mini">
-            已记住 <b>{{ auth.rememberedCount || 0 }}</b> 个学生的密码（存的是不可逆的派生值，不是明文）。
-            第一次登录问青果，通过后就记住 —— 之后本地比对，不再打青果。
-            学生改过智慧校园密码时本地会对不上，这时让他点登录页的「用青果再验一次」，
-            或者在这里清空，下次重新验证。
-          </p>
-          <button class="btn mini" :disabled="!auth.rememberedCount" @click="clearCreds">
-            清空全部记住的密码
-          </button>
-        </div>
-
-        <div class="creds">
-          <p class="dim mini">
-            学生连错 <b>3</b> 次就会被本系统<b>临时禁止登录</b>（约 24 小时后自动恢复）。
-            这是为了保护账号 —— 智慧校园那边错满 5 次会锁号，等它锁就晚了。
-            当前被禁止：<b>{{ auth.blockedCount || 0 }}</b> 个。
-          </p>
-          <button class="btn mini" :disabled="!auth.blockedCount" @click="unblockAll">
-            解锁全部被禁止的账号
-          </button>
-        </div>
-      </div>
-    </div>
 
     <div class="card tips">
       <CardHead>
@@ -456,69 +380,6 @@ const schemes = ref([])
 const err = ref('')
 const toast = ref('')
 
-/* 学生登录方式（全局配置，不属于某一门课） */
-const auth = reactive({
-  mode: 'local',
-  kgBases: [],
-  rememberedCount: 0,
-  blockedCount: 0,
-  verifyEachTime: false,
-})
-
-async function loadAuth() {
-  try {
-    const r = await api.get('/api/settings/student-auth')
-    auth.mode = r.mode === 'kg' ? 'kg' : 'local'
-    auth.kgBases = Array.isArray(r.kgBases) ? r.kgBases : []
-    auth.rememberedCount = Number(r.rememberedCount || 0)
-    auth.verifyEachTime = r.verifyEachTime === true
-    auth.blockedCount = Number(r.blockedCount || 0)
-  } catch (e) {
-    toast.value = '读不到学生登录设置：' + e.message
-  }
-}
-
-/** 解锁所有「输错太多次被本地禁止」的账号（学生第二天本来也会自动恢复，课上等不起） */
-async function unblockAll() {
-  if (!window.confirm('解锁所有被禁止登录的账号？\n\n学生可以立刻重新尝试登录。')) return
-  try {
-    const r = await api.del('/api/settings/student-auth/blocks')
-    auth.blockedCount = 0
-    toast.value = '已解锁 ' + (r.removed || 0) + ' 个账号'
-  } catch (e) {
-    toast.value = '解锁失败：' + e.message
-  }
-}
-
-/** 清空所有「记住的密码」（学生改过青果密码、或怀疑泄露时用） */
-async function clearCreds() {
-  if (!window.confirm('清空所有学生记住的密码？\n\n学生下次登录会重新去青果验证一次，不会影响成绩。')) return
-  try {
-    const r = await api.del('/api/settings/student-auth/creds')
-    auth.rememberedCount = 0
-    toast.value = '已清空 ' + (r.removed || 0) + ' 条记住的密码'
-  } catch (e) {
-    toast.value = '清空失败：' + e.message
-  }
-}
-
-async function saveAuth() {
-  try {
-    const r = await api.patch('/api/settings/student-auth', {
-      mode: auth.mode,
-      kgBases: auth.kgBases,
-      verifyEachTime: auth.verifyEachTime,
-    })
-    auth.mode = r.mode === 'kg' ? 'kg' : 'local'
-    auth.kgBases = Array.isArray(r.kgBases) ? r.kgBases : []
-    auth.verifyEachTime = r.verifyEachTime === true
-    toast.value =
-      '已保存：学生现在用' + (auth.mode === 'kg' ? '学号 + 智慧校园密码' : '学号 + 姓名') + '登录'
-  } catch (e) {
-    toast.value = '保存失败：' + e.message
-    await loadAuth() // 回到服务端的真实值，别让界面显示假的
-  }
-}
 const loading = ref(false)
 const saving = ref(false)
 
@@ -614,7 +475,6 @@ const schemeLabel = computed(() => {
 
 onMounted(() => {
   load()
-  loadAuth()
 })
 
 async function load() {
@@ -1049,56 +909,4 @@ async function exportPack(c, parts) {
   transition: width 0.15s linear;
 }
 
-/* 课程内容浏览器 */
-
-.authrow {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  margin: 6px 0 4px;
-}
-.authopt {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  padding: 10px 12px;
-  border: 1px solid var(--line-soft);
-  border-radius: 8px;
-  cursor: pointer;
-  flex: 1 1 260px;
-}
-.authopt span {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.authopt em {
-  font-style: normal;
-}
-.bases {
-  margin-top: 8px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: flex-end;
-}
-.input.wide {
-  width: 220px;
-}
-
-.chkrow {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  margin: 8px 0;
-  cursor: pointer;
-}
-.chkrow span {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.chkrow em {
-  font-style: normal;
-}
 </style>
