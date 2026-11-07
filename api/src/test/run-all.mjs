@@ -18,6 +18,7 @@ const SETS = {
   unit: [
     ['后端自检', 'selftest.js'],
     ['计分固定用例', 'score-cases.mjs'],
+    ['打分折算口径（前后端同一份）', 'grade-calc.mjs'],
   ],
   e2e: [
     ['课程包格式规范', 'coursepack-spec.mjs'],
@@ -31,6 +32,8 @@ const SETS = {
     ['教师口令（修改 / 生效 / 落盘 / 还原）', 'teacher-password.mjs'],
     ['空库自建表（容器首次启动）', 'db-init.mjs'],
     ['口令优先级（config 为准 / 环境变量只初始化）', 'password-priority.mjs'],
+    ['课堂作业全链路（提交→批阅→落库对账）', 'homework-flow.mjs'],
+    ['机试全链路（设卷→答题→判卷→折算）', 'exam-flow.mjs'],
   ],
 }
 

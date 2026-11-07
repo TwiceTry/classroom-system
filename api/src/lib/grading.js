@@ -47,13 +47,20 @@ export function gradeSubmission(a, sub, who, body) {
     const isRubric = mode === 'rubric'
     const isRaw = mode === 'raw'
 
-    // 1) 撤掉上一条账
+    /*
+     * 注意顺序：**先算、先校验，全部通过了才动旧账**。
+     *
+     * 原来这里是「先把上一条 event 作废，再解析并校验新的」。
+     * 于是老师手滑输个超范围的卷面分（比如卷面 100 却打了 500），
+     * 接口返回 400 弹个错，看起来「没保存成功、原来那条还在」——
+     * 实际上旧成绩**已经被作废了**，学生这一项直接变成 0 分。
+     *
+     * 这个 bug 是 e2e 抓出来的：判 80 得 24 分之后，再发一个 raw=500，
+     * 虽然 400 被拒，学生那一项就归零了。
+     *
+     * 所以撤旧账的动作挪到 insertEvent 之前（下面），这里只声明变量。
+     */
     let eventId = sub.eventId || ''
-    if (eventId && cls) {
-      const old = repo.findEvent(cls.id, eventId)
-      if (old && !old.voided) repo.voidEvent(cls.id, eventId, '重新批阅')
-      eventId = ''
-    }
 
     const clear = isRubric
       ? body.dims === '' || body.dims === null || body.dims === undefined
@@ -117,8 +124,19 @@ export function gradeSubmission(a, sub, who, body) {
           scoring.clamp(full * g.factor * (ev.late ? lateFactor : 1), 0, full)
         )
       }
+      // 到这里已经算完、校验通过 —— 现在才动旧账，失败也不会把旧成绩弄丢
+      if (sub.eventId && cls) {
+        const old = repo.findEvent(cls.id, sub.eventId)
+        if (old && !old.voided) repo.voidEvent(cls.id, sub.eventId, '重新批阅')
+      }
+
       repo.insertEvent(ev)
       eventId = ev.id
+    } else if (sub.eventId && cls) {
+      // 清分（老师把评分清空）：这时候确实要作废旧账
+      const old = repo.findEvent(cls.id, sub.eventId)
+      if (old && !old.voided) repo.voidEvent(cls.id, sub.eventId, '清空评分')
+      eventId = ''
     }
 
     return submissionView(

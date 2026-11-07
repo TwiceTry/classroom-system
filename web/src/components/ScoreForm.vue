@@ -131,6 +131,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { api } from '../api'
+import { rawScoreOf, dimsTotalOf } from '../utils/grade.js'
 
 const props = defineProps({
   classId: { type: String, required: true },
@@ -171,16 +172,13 @@ const presetHit = computed(() => {
   return hit ? hit.label : ''
 })
 
+/* 折算走 utils/grade.js：原来 `item.factor || 0`，方案没写系数时会乘 0 → 永远 0 分 */
 const rawScore = computed(() => {
-  const v = Number(raw.value) || 0
-  return Math.round(v * (props.item.factor || 0) * 10) / 10
+  const v2 = rawScoreOf(props.item, raw.value)
+  return v2 === null ? 0 : v2
 })
 
-const rubricTotal = computed(() => {
-  let s = 0
-  for (const d of props.item.dims || []) s += Math.min(Number(dims.value[d.key]) || 0, d.full)
-  return Math.round(s * 10) / 10
-})
+const rubricTotal = computed(() => dimsTotalOf(props.item, dims.value))
 
 const placeholder = computed(() => {
   if (props.item.key === 'attend') return '如：第 5 周周一第 3 节，迟到 10 分钟'

@@ -55,6 +55,7 @@
  * 所以「加一项新考核」不用再写一套批阅界面。
  */
 import { computed } from 'vue'
+import { letterScoreOf, rawScoreOf, dimsTotalOf } from '../utils/grade.js'
 
 const props = defineProps({
   item: { type: Object, required: true },
@@ -65,36 +66,18 @@ const v = props.modelValue
 
 const mode = computed(() => (props.item.rule ? props.item.rule.type : 'avg'))
 
-/*
- * 等级折算：按**本项满分**算，不是固定 100。
- *
- * 这里原来写的是 100 × 系数：作业项满分 20 时，选 A 会显示「= 100 分」，
- * 而保存下去实际是 20 分（后端 grading.js 也有过同一个错，已修）。
- * 老师看到 100、结果是 20，等于在骗人。
- *
- * 现在与后端同口径：item.full × 等级系数 × 迟交系数，夹到 [0, full]。
- */
+/* 折算一律走 utils/grade.js —— 与后端 grading.js 同一口径，别再在这里写第二份 */
 const letterScore = computed(() => {
-  const g = (props.item.grades || []).find((x) => x.key === v.grade)
-  if (!g) return '—'
-  const late = props.item.lateFactor === undefined ? 0.5 : Number(props.item.lateFactor)
-  const full = Number(props.item.full) || 100
-  const raw = full * g.factor * (v.late ? late : 1)
-  return Math.round(Math.min(full, Math.max(0, raw)) * 10) / 10
+  const s = letterScoreOf(props.item, v.grade, v.late)
+  return s === null ? '—' : s
 })
 
 const rawScore = computed(() => {
-  const raw = Number(v.raw)
-  if (!isFinite(raw) || raw < 0) return '—'
-  const f = props.item.factor === undefined ? 1 : Number(props.item.factor)
-  return Math.round(raw * f * 10) / 10
+  const s = rawScoreOf(props.item, v.raw)
+  return s === null ? '—' : s
 })
 
-const dimsTotal = computed(() => {
-  let s = 0
-  for (const d of props.item.dims || []) s += Number(v.dims[d.key]) || 0
-  return Math.round(s * 10) / 10
-})
+const dimsTotal = computed(() => dimsTotalOf(props.item, v.dims))
 
 </script>
 
