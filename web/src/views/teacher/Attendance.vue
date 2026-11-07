@@ -16,7 +16,7 @@
     <div class="card bar">
       <div class="classes">
         <button v-for="c in classes" :key="c.id" class="pill" :class="{ on: c.id === activeId }" @click="pick(c.id)">
-          {{ c.name }}<span class="dim"> {{ c.count }} 人</span>
+          {{ c.name }}<span class="dim"> {{ c.studentCount ?? c.count ?? '' }} 人</span>
         </button>
         <span v-if="!classes.length" class="dim">还没有班级，先去「班级管理」建一个。</span>
       </div>
@@ -440,7 +440,8 @@ async function mark(sid, kind) {
       slot: slot.value,
     })
     picked[sid] = res.kind || next
-    scoreMap[sid] = res.score
+    // 服务端会回这一项的新分值；万一没回，保留原值，绝不清零
+    if (res && res.score !== undefined) scoreMap[sid] = res.score
     // 本地同步这一节的记录清单（顶部的「1-2节 · n」跟着变）
     const others = marks.value.filter((m) => m.sid !== sid)
     if (next !== '出勤') others.push({ sid, kind: next, delta: res.delta, slot: slot.value, eventId: res.eventId })

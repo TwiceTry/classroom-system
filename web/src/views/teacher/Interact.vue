@@ -30,7 +30,7 @@
     <div class="card bar">
       <div class="classes">
         <button v-for="c in classes" :key="c.id" class="pill" :class="{ on: c.id === activeId }" @click="pick(c.id)">
-          {{ c.name }}<span class="dim"> {{ c.count }} 人</span>
+          {{ c.name }}<span class="dim"> {{ c.studentCount ?? c.count ?? '' }} 人</span>
         </button>
         <span v-if="!classes.length" class="dim">还没有班级，先去「班级管理」建一个。</span>
       </div>

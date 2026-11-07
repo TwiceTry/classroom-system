@@ -207,6 +207,7 @@ export default async function attendanceRoutes(app) {
         const voided = voidSlot({ classId: cls.id, itemKey: item.key, day, slot, sid, by: who })
 
         let eventId = ''
+        const dv = attendanceDelta(item, kind)
         if (kind !== '出勤') {
           const ev = repo.insertEvent({
             id: uid('e'),
@@ -215,7 +216,7 @@ export default async function attendanceRoutes(app) {
             item: item.key,
             kind,
             slot,
-            delta: attendanceDelta(item, kind),
+            delta: dv,
             reason: (slot ? day + ' ' + slot : day) + ' 考勤',
             operator: who,
             createdAt: day + new Date().toISOString().slice(10),
@@ -225,7 +226,32 @@ export default async function attendanceRoutes(app) {
           })
           eventId = ev.id
         }
-        return { ok: true, sid, kind, day, slot, voided, eventId }
+        /*
+         * 回一个这台学生**记完之后**的考勤分。
+         *
+         * 前端点一下格子就把这个值写进 scoreMap 就地刷新（`scoreMap[sid] = res.score`）。
+         * 原来这里不返回 score，前端拿到 undefined → scoreOf() 兜底成 0，
+         * 于是「点一下迟到」分数立刻从 5 变 0（其实应该还是 5，perLate=0 不扣分），
+         * 非要刷新页面才恢复。老师会以为这一下把学生的考勤分扣光了。
+         */
+        const roster = repo.rosterOf(cls.id)
+        const events = repo.eventsOf(cls.id, { limit: 1000 }).items
+        const board = scoring.computeClass(roster, events)
+        const row = board.list.find((r) => r.student.sid === sid)
+        const rowOf = row && (row.rows || []).find((r) => r.item && r.item.key === item.key)
+
+        return {
+          ok: true,
+          sid,
+          kind,
+          day,
+          slot,
+          voided,
+          eventId,
+          // 前端把 delta 写进本地 marks 清单（顶部「1-2节 · n」旁边的小字）
+          delta: dv,
+          score: rowOf ? rowOf.score : 0,
+        }
       })
     },
   })
