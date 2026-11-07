@@ -602,19 +602,47 @@ def login(base, password, sid, name, course):
     return teacher, students
 
 
+def default_password():
+    """从课堂系统的 data/config.json 读教师口令。
+
+    为什么要自动读：--password 的默认值是 'teacher'，
+    但老师在设置页改过口令之后就不是这个了。
+    直接跑自检会「教师登录失败」，然后投屏/在场两项连带跳过 ——
+    报错信息只说口令不对，不说该传什么，很容易被当成代理坏了。
+
+    读不到就退回 'teacher'（保持原来的行为，不让自检直接炸）。
+    """
+    import json as _json
+    # selftest.py 在 课堂系统/教学机代理/ 下，配置在 课堂系统/data/config.json
+    cand = os.path.join(HERE, '..', 'data', 'config.json')
+    try:
+        with open(cand, 'r', encoding='utf-8') as f:
+            c = _json.loads(f.read())
+        v = str(c.get('teacherPassword') or '').strip()
+        if v:
+            return v
+    except Exception:
+        pass
+    return 'teacher'
+
+
 def main():
     ap = argparse.ArgumentParser(description='教学机代理自检（只用标准库）')
     ap.add_argument('--port', type=int, default=None, help='代理端口（默认读 proxy.conf）')
     ap.add_argument('--host', default='127.0.0.1', help='代理所在机器（默认本机）')
     ap.add_argument('--target', default='', help='公网上游地址（默认读 proxy.conf 的 target）')
     ap.add_argument('--n', type=int, default=10, help='并发学生数（默认 10）')
-    ap.add_argument('--password', default='teacher', help='教师口令（默认 teacher）')
+    ap.add_argument('--password', default=None,
+                    help='教师口令（默认自动读 ../data/config.json，读不到用 teacher）')
     ap.add_argument('--sid', default='2515230114', help='学生学号（默认取名单里第一个）')
     ap.add_argument('--name', default='马婷婷', help='学生姓名')
     ap.add_argument('--course', default='web-front-dev', help='课程 id')
     ap.add_argument('--only', default='', help='只跑某几项，逗号分隔')
     ap.add_argument('--list', action='store_true', help='列出所有检查项')
     args = ap.parse_args()
+
+    if not args.password:
+        args.password = default_password()
 
     if args.list:
         print('可用检查项：')
