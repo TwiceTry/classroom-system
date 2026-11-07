@@ -298,7 +298,7 @@
         <div class="row">
           <select v-model="previewClass" class="select" @change="runPreview">
             <option value="">选一个班级</option>
-            <option v-for="c in classes" :key="c.id" :value="c.id">{{ c.name }}（{{ c.count }} 人）</option>
+            <option v-for="c in classes" :key="c.id" :value="c.id">{{ c.name }}（{{ c.studentCount ?? c.count ?? '' }} 人）</option>
           </select>
           <span v-if="previewData" class="dim mini">{{ previewData.className }} · {{ previewData.count }} 人</span>
         </div>

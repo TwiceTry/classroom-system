@@ -46,7 +46,7 @@
         :class="{ on: c.id === activeId }"
         @click="switchClass(c.id)"
         >
-        {{ c.name }}<em>{{ c.count }}</em>
+        {{ c.name }}<em>{{ c.studentCount ?? c.count ?? '' }}</em>
       </button>
       <span class="spacer"></span>
       <button v-if="active" class="btn mini" @click="renameClass">重命名</button>

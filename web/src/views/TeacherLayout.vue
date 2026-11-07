@@ -69,7 +69,7 @@
           <div class="course sub">
             <span class="course-l">班级</span>
             <select class="course-sel" :value="classId" @change="onClass">
-              <option v-for="c in classes" :key="c.id" :value="c.id">{{ c.name }}（{{ c.count }} 人）</option>
+              <option v-for="c in classes" :key="c.id" :value="c.id">{{ c.name }}（{{ c.studentCount ?? c.count ?? '' }} 人）</option>
               <option v-if="!classes.length" value="">（这门课还没建班级）</option>
             </select>
           </div>
