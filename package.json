@@ -1,7 +1,7 @@
 {
   "name": "teach-system",
   "private": true,
-  "version": "2.2.3",
+  "version": "2.2.4",
   "description": "课堂系统（教师端 / 学生端 / 投屏 / 计分 / 点名 / 代码练习 / 作业批阅）",
   "scripts": {
     "start": "node api/src/server.js",

@@ -1,7 +1,7 @@
 {
   "name": "teach-system-api",
   "private": true,
-  "version": "2.2.3",
+  "version": "2.2.4",
   "description": "课堂系统后端（Fastify + SQLite）",
   "type": "module",
   "engines": {
