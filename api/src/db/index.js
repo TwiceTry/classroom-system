@@ -62,10 +62,41 @@ export function openDb(file) {
   return db
 }
 
+/**
+ * 给**已经存在**的表补新列。
+ *
+ * schema.sql 全是 `CREATE TABLE IF NOT EXISTS` —— 表已经在了，它就不会加新列。
+ * 所以新增字段除了写进 schema.sql（新库直接建对），还得在这里 ALTER 一次。
+ * SQLite 没有 `ADD COLUMN IF NOT EXISTS`，用 PRAGMA 查过再改。
+ */
+function ensureColumns(db) {
+  const add = (table, col, ddl) => {
+    let cols = []
+    try {
+      cols = db.prepare(`PRAGMA table_info("${table}")`).all().map((c) => c.name)
+    } catch (e) {
+      return false
+    }
+    if (!cols.length || cols.includes(col)) return false
+    try {
+      db.exec(`ALTER TABLE "${table}" ADD COLUMN ${ddl}`)
+      return true
+    } catch (e) {
+      return false
+    }
+  }
+  const added = []
+  // 大作业：必交附件 / 收哪些扩展名（前端早就在读这两个字段，后端一直没给）
+  if (add('assignments', 'require_file', 'require_file INTEGER NOT NULL DEFAULT 1')) added.push('assignments.require_file')
+  if (add('assignments', 'attachments', "attachments TEXT NOT NULL DEFAULT ''")) added.push('assignments.attachments')
+  return added
+}
+
 /** 应用 schema.sql（幂等：全是 CREATE ... IF NOT EXISTS） */
 export function applySchema(db) {
   const sql = fs.readFileSync(SCHEMA_FILE, 'utf8')
   db.exec(sql)
+  ensureColumns(db)
   const version = crypto.createHash('sha1').update(sql).digest('hex').slice(0, 12)
   db.prepare(
     `INSERT OR IGNORE INTO schema_migrations (version, applied_at, note) VALUES (?, ?, ?)`

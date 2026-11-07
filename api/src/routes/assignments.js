@@ -88,6 +88,14 @@ const view = (a) => ({
   designId: a.designId || '',
   dueAt: a.dueAt || '',
   allowLate: !!a.allowLate,
+  /*
+   * 大作业：要不要交附件、收哪些扩展名。
+   * 前端 ProjectDetail 一直在读这两个字段（`a.requireFile === false ? '可选' : '必须交一个'`
+   * 以及「收 .zip .pdf …」的提示），但后端从来没给过 —— 于是它永远走硬编码兜底，
+   * 服务端也无从校验（交 .exe 也收）。
+   */
+  requireFile: a.requireFile !== false,
+  attachments: Array.isArray(a.attachments) ? a.attachments : [],
 })
 
 /**
@@ -167,6 +175,8 @@ export default async function assignmentRoutes(app) {
           designId: { type: 'string' },
           dueAt: { type: 'string' },
           allowLate: { type: 'boolean' },
+      requireFile: { type: 'boolean' },
+      attachments: { type: 'array', items: { type: 'string', maxLength: 16 }, maxItems: 30 },
           courseId: { type: 'string' },
         },
       },
@@ -196,6 +206,10 @@ export default async function assignmentRoutes(app) {
           designId: b.designId || '',
           dueAt: b.dueAt || '',
           allowLate: !!b.allowLate,
+        requireFile: b.requireFile === false ? false : true,
+        attachments: Array.isArray(b.attachments)
+          ? b.attachments.map(String).slice(0, 30)
+          : [],
         })
         /*
          * 课堂作业要有「起手代码」—— 全班共用的那份题目初始状态。
@@ -233,6 +247,8 @@ export default async function assignmentRoutes(app) {
           weight: { type: 'number' },
           dueAt: { type: 'string' },
           allowLate: { type: 'boolean' },
+      requireFile: { type: 'boolean' },
+      attachments: { type: 'array', items: { type: 'string', maxLength: 16 }, maxItems: 30 },
           dir: { type: 'string' },
         },
       },
@@ -241,7 +257,7 @@ export default async function assignmentRoutes(app) {
       const a = repo.getAssignment(req.params.id)
       if (!a) throw notFound('作业不存在')
       const next = Object.assign({}, a)
-      for (const k of ['title', 'note', 'weight', 'dueAt', 'allowLate', 'dir']) {
+      for (const k of ['title', 'note', 'weight', 'dueAt', 'allowLate', 'dir', 'requireFile', 'attachments']) {
         if (req.body[k] !== undefined) next[k] = req.body[k]
       }
       return { assignment: view(repo.updateAssignment(a.id, next)) }
@@ -706,6 +722,23 @@ export default async function assignmentRoutes(app) {
         const url = String(req.body.url || '').trim()
         if (!entries.length && !note && !url) {
           throw badRequest('这次大作业至少要交一项：附件、说明或链接')
+        }
+        // 作业规则要求「必须交附件」时，光有说明/链接不算
+        if (!entries.length && a.requireFile !== false) {
+          throw badRequest('这次大作业必须交附件（说明和链接不能代替）')
+        }
+        // 附件类型白名单（建单时从设计包继承）；没配就不限
+        const allow = Array.isArray(a.attachments)
+          ? a.attachments.map((x) => String(x).toLowerCase().replace(/^\./, ''))
+          : []
+        if (allow.length && entries.length) {
+          for (const f of entries) {
+            const nm = String(f.name || f.path || '')
+            const ext = nm.indexOf('.') >= 0 ? nm.split('.').pop().toLowerCase() : ''
+            if (!ext || !allow.includes(ext)) {
+              throw badRequest('不收「' + nm + '」这类文件，可交：' + allow.map((x) => '.' + x).join(' '))
+            }
+          }
         }
       } else if (!entries.length) {
         throw badRequest('没有要提交的文件')

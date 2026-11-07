@@ -251,6 +251,23 @@ export default async function courseRoutes(app) {
       /* 清不掉不该让删课失败 */
     }
 
+    /*
+     * 内容目录（讲义 / 材料 / 示例 / 试卷 / assets）**移进回收站，不直接删**。
+     * 老师删一门课，很可能只是换一版；讲义和材料是他自己写的，删了就找不回来。
+     * 走同盘 rename，不复制、不额外占空间。
+     */
+    try {
+      const root = courseRoot(c.id)
+      if (fs.existsSync(root)) {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+        const dest = path.join(config.dataDir, '.trash', stamp, c.id)
+        fs.mkdirSync(path.dirname(dest), { recursive: true })
+        fs.renameSync(root, dest)
+      }
+    } catch (e) {
+      /* 移不动就留着，总比误删强 */
+    }
+
     reply.status(204).send()
   })
 }

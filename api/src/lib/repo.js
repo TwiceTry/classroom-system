@@ -30,9 +30,9 @@ export { dbPath, tableCounts }
 const camel = (s) => s.replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase())
 
 /** 这些列在库里是 JSON 文本 */
-const JSON_COLS = new Set(['dims', 'evidence', 'files', 'changed'])
+const JSON_COLS = new Set(['dims', 'evidence', 'files', 'changed', 'attachments'])
 /** 这些列在库里是 0/1 */
-const BOOL_COLS = new Set(['archived', 'late', 'voided', 'allow_late'])
+const BOOL_COLS = new Set(['archived', 'late', 'voided', 'allow_late', 'require_file'])
 
 /** 一行 DB 记录 → 业务对象（camelCase + JSON 解析 + 布尔还原） */
 export function hydrate(row) {
@@ -365,9 +365,11 @@ export function insertAssignment(a) {
   db()
     .prepare(
       `INSERT INTO assignments (id, kind, item_key, course_id, title, dir, note, status, created_at,
-                                opened_at, closed_at, updated_at, weight, design_id, due_at, allow_late)
+                                opened_at, closed_at, updated_at, weight, design_id, due_at, allow_late,
+                                require_file, attachments)
        VALUES (@id, @kind, @itemKey, @courseId, @title, @dir, @note, @status, @createdAt,
-               @openedAt, @closedAt, @updatedAt, @weight, @designId, @dueAt, @allowLate)`
+               @openedAt, @closedAt, @updatedAt, @weight, @designId, @dueAt, @allowLate,
+               @requireFile, @attachments)`
     )
     .run({
       id: a.id,
@@ -386,6 +388,9 @@ export function insertAssignment(a) {
       designId: a.designId || '',
       dueAt: a.dueAt || '',
       allowLate: a.allowLate ? 1 : 0,
+      // 大作业：必交附件 / 收哪些扩展名。数组存成 JSON 字符串，读出时再 parse
+      requireFile: a.requireFile === false ? 0 : 1,
+      attachments: Array.isArray(a.attachments) ? JSON.stringify(a.attachments) : String(a.attachments || ''),
     })
   return getAssignment(a.id)
 }
@@ -397,7 +402,8 @@ export function updateAssignment(id, patch) {
   db()
     .prepare(
       `UPDATE assignments SET kind = ?, item_key = ?, course_id = ?, title = ?, dir = ?, note = ?, status = ?,
-              opened_at = ?, closed_at = ?, updated_at = ?, weight = ?, design_id = ?, due_at = ?, allow_late = ?
+              opened_at = ?, closed_at = ?, updated_at = ?, weight = ?, design_id = ?, due_at = ?,
+              allow_late = ?, require_file = ?, attachments = ?
        WHERE id = ?`
     )
     .run(
@@ -415,6 +421,8 @@ export function updateAssignment(id, patch) {
       next.designId || '',
       next.dueAt || '',
       next.allowLate ? 1 : 0,
+      next.requireFile === false ? 0 : 1,
+      Array.isArray(next.attachments) ? JSON.stringify(next.attachments) : String(next.attachments || ''),
       String(id)
     )
   return getAssignment(id)

@@ -102,7 +102,10 @@ CREATE TABLE IF NOT EXISTS assignments (
   weight     REAL    NOT NULL DEFAULT 1,
   design_id  TEXT    NOT NULL DEFAULT '',
   due_at     TEXT    NOT NULL DEFAULT '',
-  allow_late INTEGER NOT NULL DEFAULT 0
+  allow_late INTEGER NOT NULL DEFAULT 0,
+  -- 大作业：要不要交附件（1 必须 / 0 可选）、收哪些扩展名（JSON 数组字符串）
+  require_file INTEGER NOT NULL DEFAULT 1,
+  attachments  TEXT    NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_assignments_course ON assignments (course_id);
 CREATE INDEX IF NOT EXISTS idx_assignments_item   ON assignments (item_key);
