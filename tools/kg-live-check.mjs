@@ -1,5 +1,5 @@
 /*
- * 用 kg-login/credentials.json 里的账号，真机验证「密码对不对」这条路径。
+ * 用 data/kg-credentials.json 里的账号（原 kg-login/ 已清理，凭据挪到 data/），真机验证「密码对不对」这条路径。
  *
  * 安全约定（这份脚本绝不外泄凭据）：
  *   · 密码只在内存里从 文件 → fetch body 走一遍，不打印、不落盘、不写日志
@@ -14,7 +14,8 @@
 import fs from 'node:fs'
 
 const B = 'http://127.0.0.1:18730'
-const CRED = 'kg-login/credentials.json'
+// 凭据放在 data/（.gitignore 已排除，出包也只带 README），不再依赖根目录的 kg-login/
+const CRED = 'data/kg-credentials.json'
 
 let pass = 0
 let fail = 0
