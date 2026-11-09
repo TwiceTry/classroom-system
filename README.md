@@ -980,11 +980,10 @@ cd web && node tools/test-identity.mjs      # 12 项：游客 / 已登录 / 已�
     机试试卷格式规范.md    老师出卷的格式说明（模板见 data/exams/_template.json）
     课堂作业规范与提交约定.md  
     大作业规范与提交约定.md    
-  tools/                   体检与打包脚本
+  tools/                   体检与示例检查
     check-compat.mjs       Chrome 109 / Node 20 两条基线体检 + .bat 体检
     check-bat.mjs          批处理行尾 / 括号 / chcp 体检
-    coursepack/build-pack.mjs   打课程包（源目录 → zip，生成 pack.json 带每个文件的 sha256）
-    coursepack/check-pack.mjs   按《课程包格式规范》检查一个课程目录，报「通过/提示/报错」
+    audit-examples.mjs     课程示例能不能跑（用了 Vue API 却没 import）
     kg-live-check.mjs      青果账号密码真机验证（核对上游接口行为）
   downloads/               绿色版 Chrome 安装包（学生端点「下载浏览器」时直接出，不走公网）
   教学机代理/              教学机上的「局域网→公网」代理（Python）

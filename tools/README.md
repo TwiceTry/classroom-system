@@ -1,6 +1,6 @@
-# tools —— 体检、打包、真机核对
+# tools —— 体检、示例检查、真机核对
 
-四个脚本，都不是服务运行时要的东西，跑一次给人看的。
+三个脚本，都不是服务运行时要的东西，跑一次给人看的。
 
 ## `check-compat.mjs` —— 改前端前后各跑一次
 
@@ -23,31 +23,30 @@ node tools/check-bat.mjs
 
 查 `.bat` 的行尾（CRLF）、括号配对、`chcp 65001`。现在只有 `教学机代理/` 下那几个 bat 还是批处理。
 
-## `coursepack/build-pack.mjs` —— 打课程包
+## `audit-examples.mjs` —— 课程示例能不能跑
 
 ```powershell
-node tools/coursepack/build-pack.mjs <课程源目录> [输出目录]
+# 在 课堂系统/ 下执行
+node tools/audit-examples.mjs
 ```
 
-做四件事：
+默认查两处：`../web前端框架开发/代码示例`（真源）和 `data/courses/<课>/content/代码示例`（导入副本）。
 
-1. 只取白名单内的顶层目录（`lecture` / `materials` / `代码示例` / `exams` / `assets`）
-2. 复制 `course.json` / `scheme.json` / `classes/`
-3. 生成 `pack.json`（每个文件的 sha256 + size）
-4. 用系统自己的 `api/src/lib/zip.js` 压成 zip（同一个实现，压缩方式和中文文件名才对得上）
+按文件类型分三套规则：
 
-源目录**只读**，不会被改动。输出目录不存在会自动建。
+| 文件 | 规则 |
+|---|---|
+| `.mjs` | 必须 import（它是模块） |
+| `.vue` 的 `<script setup>` | 必须 import（`defineProps` / `defineEmits` 等编译器宏除外） |
+| `.html` | 允许裸写，但必须先 `const { createApp, ref } = Vue` 解构 |
 
-## `coursepack/check-pack.mjs` —— 按规范检查课程目录
+**为什么要有这个**：2026-11 发现 7 个 `main.mjs` 缺 `import { createApp } from 'vue'`，
+代码练习打开整个白屏。文件长得就是标准 Vue 入口的样子，肉眼几乎看不出来：
 
-```powershell
-node tools/coursepack/check-pack.mjs [课程目录]
+```js
+import App from './App.vue'
+createApp(App).mount('#app')      ← createApp 没导入
 ```
-
-检查项：`pack.json` 格式与 `files[]` 登记、`course.json` 的 `id`/`name`、`scheme.json` 各段合计与 `totalFull`、
-`content/` 白名单、`classes/index.json` 名单人数、体积上限（整包 ≤500MB、单文件 ≤100MB）、路径穿越。
-
-**改完课程内容先跑这个**，比打完包再发现问题快。
 
 ## `kg-live-check.mjs` —— 青果账号密码真机验证
 
@@ -60,6 +59,9 @@ node tools/kg-live-check.mjs
 
 ---
 
-> 原来还有四个 `audit-*.mjs`（Chrome 78 可行性、flex gap 分布、mermaid、vendor 运行时），
-> 都是一次性审计，结论已经落进 `vite.config.js` 的注释和 `docs/` 里，2026-11 删了。
+> 曾经还有：
+> - 四个 `audit-*.mjs`（Chrome 78 可行性、flex gap 分布、mermaid、vendor 运行时）—— 一次性审计，
+>   结论已落进 `vite.config.js` 的注释和 `docs/`，2026-11 删了
+> - `coursepack/`（`build-pack.mjs` 打课程包、`check-pack.mjs` 按规范检查）—— 2026-11 删了，
+>   课程包改由课堂系统页面里导入导出
 > 需要时从 git 历史取回。
