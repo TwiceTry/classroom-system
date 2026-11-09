@@ -1016,7 +1016,11 @@ def warmup_cache():
     except Exception as e:
         verbose('预热：首页没拉到（%s）' % e)
 
-    for p in ('/lib/vue.global.js', '/lib/vue3-sfc-loader.js', '/lib/sfc-boot.js'):
+    for p in ('/lib/vue.global.js', '/lib/vue3-sfc-loader.js', '/lib/sfc-boot.js',
+              '/favicon.svg',
+              # 材料页的渲染库：marked 解析 md、mermaid 画图、srcdoc 处理示例
+              # 从 HTML 里抠不到（是按需动态 import 的），只能写死
+              '/vendor/marked.min.js', '/vendor/mermaid.min.js', '/vendor/srcdoc.js'):
         if p not in paths:
             paths.append(p)
 
@@ -1076,7 +1080,8 @@ def warmup_cache():
     except Exception:
         pass
 
-    # 材料目录 + 每篇正文
+    # 材料目录 + 每篇正文 + 正文里的图片
+    asset_seen = set()
     if course_id:
         try:
             st, _ = req('GET', '/api/courses/%s/content/list?type=materials&path=materials' % quote(course_id), H)
@@ -1085,10 +1090,49 @@ def warmup_cache():
         except Exception:
             pass
 
+        # 正文的 id 是**数字课次**（1、4、7…），不是文件名。
+        # 踩过坑：一直用 "第07课-模板语法下.md" 当 id，全是 404。
+        # 这里从 1 试到 30，连续 3 次 404 就认为到头了。
+        miss_streak = 0
+        for lid in range(1, 31):
+            if miss_streak >= 3:
+                break
+            try:
+                p = '/api/content/doc?type=materials&id=%d&courseId=%s' % (lid, quote(course_id))
+                st, body = req('GET', p, H, timeout=30)
+                if st != 200:
+                    miss_streak += 1
+                    continue
+                miss_streak = 0
+                got += 1
+                # 正文里引用的图片（每篇 5~8 个品牌 logo 之类）
+                text = body.decode('utf-8', 'ignore')
+                for m in re.finditer(r'/api/content/asset\?[A-Za-z0-9%&=_.:/\-]+', text):
+                    u = m.group(0)
+                    if u in asset_seen:
+                        continue
+                    asset_seen.add(u)
+                    try:
+                        st2, _ = req('GET', u, H, timeout=30)
+                        if st2 == 200:
+                            got += 1
+                    except Exception:
+                        pass
+            except Exception:
+                miss_streak += 1
+
     # 代码示例：清单 + 每节课的文件
+    #
+    # 注意带上 courseId！缓存 key 是 method + self.path（**含查询串**），
+    # 而前端请求的是 /api/examples?courseId=web-front-dev ——
+    # 预热时只拉 /api/examples 的话 key 对不上，等于白预热。
+    # （每节课的 /api/examples/<dir> 前端不带参数，所以那边不用加。）
     lessons = []
     try:
-        st, body = req('GET', '/api/examples', H)
+        ex_path = '/api/examples'
+        if course_id:
+            ex_path += '?courseId=' + quote(course_id)
+        st, body = req('GET', ex_path, H)
         if st == 200:
             got += 1
             lessons = (json.loads(body.decode('utf-8')) or {}).get('lessons') or []
