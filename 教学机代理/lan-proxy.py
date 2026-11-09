@@ -462,9 +462,14 @@ except ValueError as e:
     sys.exit(1)
 
 def src_addr():
-    """上游连接要绑定的源地址（bind.source），没配就返回 None（交给系统路由）。"""
+    """上游连接要绑定的源地址（bind.source），没配就返回 None（交给系统路由）。
+
+    IPv6 必须用 4 元组，否则 bind 会报地址族不匹配。
+    """
     if not BIND_SOURCE:
         return None
+    if _is_ipv6(BIND_SOURCE):
+        return (BIND_SOURCE, 0, 0, 0)
     return (BIND_SOURCE, 0)
 
 
@@ -556,25 +561,84 @@ class UpstreamPool(object):
 POOL = UpstreamPool()
 
 
+def _is_ipv6(host):
+    """是不是 IPv6 字面量（不是域名、不是 IPv4）。"""
+    try:
+        socket.inet_pton(socket.AF_INET6, host)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _bind_tuple(family, port=0):
+    """按地址族拼 bind 的地址元组：IPv4 是 2 元组，IPv6 要 4 元组。"""
+    if not BIND_SOURCE:
+        return None
+    if family == socket.AF_INET6:
+        return (BIND_SOURCE, port, 0, 0)
+    return (BIND_SOURCE, port)
+
+
 def connect_out(host, port, timeout):
     """连上游；配了 bind.source 就从那块网卡出去。
 
     自己 socket + bind + connect，不用 create_connection 的 source_address 参数 ——
     那个在 Windows 上并发时会报 WinError 10049（地址在其上下文中无效）。
+
+    **支持 IPv4 / IPv6 / 双栈**：
+      · host 是 IPv6 字面量（2408:... 或 [2408:...]）→ AF_INET6
+      · host 是 IPv4 字面量                        → AF_INET
+      · host 是域名                                → getaddrinfo 按系统顺序逐个试
+        （原来写死 AF_INET，域名就算有 AAAA 记录也永远走 IPv4）
+
+    注意 IPv6 的地址元组是 4 元组 (host, port, flowinfo, scope_id)，
+    bind 也一样 —— 传 2 元组会直接报错。
     """
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        s.settimeout(timeout)
-        if BIND_SOURCE:
-            s.bind((BIND_SOURCE, 0))
-        s.connect((host, port))
-        return s
-    except Exception:
+    # 字面量：直接定地址族，不做 DNS
+    if _is_ipv6(host):
+        candidates = [(socket.AF_INET6, host, port)]
+    else:
         try:
-            s.close()
-        except Exception:
-            pass
-        raise
+            socket.inet_pton(socket.AF_INET, host)
+            candidates = [(socket.AF_INET, host, port)]
+        except (OSError, ValueError):
+            # 域名：拿到全部地址（含 IPv6），按系统给的顺序试
+            candidates = []
+            try:
+                for fam, _t, _p, _c, sa in socket.getaddrinfo(
+                        host, port, socket.AF_UNSPEC, socket.SOCK_STREAM):
+                    if fam in (socket.AF_INET, socket.AF_INET6):
+                        candidates.append((fam, sa[0], port))
+            except Exception:
+                # getaddrinfo 失败就退回老办法，让 connect 自己报错
+                candidates = [(socket.AF_INET, host, port)]
+            # IPv4 优先：校园网 IPv4 是主路径，很多环境的 AAAA 记录存在但不通。
+            # 先试 IPv6 会白等一个 connect 超时（实测 localhost 多花 2 秒），
+            # 隧道场景下这个代价不能接受。
+            candidates.sort(key=lambda c: 0 if c[0] == socket.AF_INET else 1)
+
+    last_err = None
+    for fam, addr_host, addr_port in candidates:
+        s = socket.socket(fam, socket.SOCK_STREAM)
+        try:
+            s.settimeout(timeout)
+            bt = _bind_tuple(fam)
+            if bt:
+                s.bind(bt)
+            if fam == socket.AF_INET6:
+                s.connect((addr_host, addr_port, 0, 0))
+            else:
+                s.connect((addr_host, addr_port))
+            return s
+        except Exception as e:
+            last_err = e
+            try:
+                s.close()
+            except Exception:
+                pass
+    if last_err is None:
+        last_err = OSError('没有可用的地址（%s）' % host)
+    raise last_err
 
 
 def tls_hint(e):
