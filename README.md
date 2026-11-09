@@ -640,35 +640,47 @@ npm run build
 
 ---
 
-## 3. 数据：六张 CSV + 学生目录，进 git
+## 3. 数据：一个 SQLite 库 + 学生目录
 
-数据全部存成 CSV，就是为了让 `git diff` 能直接读出「谁的分变了」。
+数据在 `data/teach.db`（SQLite）。
 
-| 文件 | 一行是什么 | 列 |
-|---|---|---|
-| `data/classes.csv` | 一个班 | `id,name,createdAt,rollcallRound` |
-| `data/students.csv` | 一名学生 | `classId,sid,name` |
-| `data/events.csv` | 一条记分记录（只追加） | `id,classId,sid,item,delta,kind,grade,late,raw,dims,reason,operator,createdAt,voided,voidedAt,voidedBy,evidence` |
-| `data/rollcall.csv` | 本轮抽到的人 | `classId,sid,pickedAt` |
-| `data/assignments.csv` | 一次作业 / 大作业 | `id,kind,title,dir,note,status,createdAt,openedAt,closedAt,updatedAt`（`kind` = work / project） |
-| `data/exams/<作业id>.json` | 一场机试的试卷 / 题库（老师导入的原件；模板 `_template.json`） | 见「机试」一节 |
-| `data/schemes/*.json` | 一份考核方案（课程级） | 见上一节「考核方案与计分规则」；`items[]` 决定评分表列、满分、规则与模块开关 |
-| `data/submissions.csv` | 一次提交（只追加） | `id,assignmentId,classId,sid,name,dir,createdAt,files,changed,note,url,score,comment,gradedAt,gradedBy` |
+> **为什么从 CSV 换过来**：CSV 的时代是「让 `git diff` 直接读出谁的分变了」。
+> 但 60 人 × 8 项 × 20 次课之后，一个单元格里塞 `dims=code=9;doc=3` 这种编码字段，
+> diff 出来也没法看；并发写还要自己实现原子写。
+> 换成 SQLite 之后：**记分记录是真源**，导出的 xlsx 是派生（删了会自动重建）。
 
-> 课堂作业的**代码正文不进 CSV**：正文落在 `data/students/<班级id>/<学号>/作业/<作业id>/<提交id>/<原文件名>`，目录名即索引 id。
-> `files` = 这次交上来的**整份**文件（老师那边要能跑起来看渲染），`changed` = 其中学生真改过的那些。
-> 都是纯文本，跟 CSV 一样能 `git diff` 出「这节课谁改了什么」。
-> `score` 空着 = 还没批（页面显示「待批」），跟「给了 0 分」是两回事。
+### 表结构（`api/src/db/schema.sql`，11 张）
 
-复杂列的写法（保证单元格里没有逗号、能一眼看懂）：
+| 表 | 一行是什么 |
+|---|---|
+| `courses` | 一门课 |
+| `classes` | 一个班 |
+| `students` | 一名学生 |
+| `events` | 一条记分记录（只追加） |
+| `rollcall` | 本轮抽到的人 |
+| `state` | 运行时状态（投屏模式等） |
+| `assignments` | 一次作业 / 大作业 |
+| `submissions` | 一次提交（只追加） |
+| `student_credentials` | 学生记住的密码（本地校验用） |
+| `student_login_fails` | 登录失败计数（熔断用） |
+| `schema_migrations` | 迁移版本 |
 
-| 列 | 写法 | 例子 |
-|---|---|---|
-| `dims`（大作业量规） | `键=分;键=分`，键排序 | `code=9;doc=3;func=12;ui=6` |
-| `evidence`（证据文件） | `文件名\|URL`，多条用 `;` | `试卷 扫描.pdf\|/uploads/abc-试卷%20扫描.pdf` |
-| `files`（提交的文件） | `相对路径`，多条用 `;` | `index.html;app.js` |
-| `late` / `voided` | `1` / `0` | `0` |
-| 空单元格 | 该字段没有值 | 机试记录没有 `delta` |
+迁移在 `api/src/db/migrate.js`：新增字段除了写进 `schema.sql`，还要写一条迁移，
+否则老库不会自动加列（`CREATE TABLE IF NOT EXISTS` 只对空库有效）。
+
+### 其它数据目录
+
+| 路径 | 内容 |
+|---|---|
+| `data/courses/` | 导入后的课程内容（课程包的落盘位置） |
+| `data/schemes/*.json` | 考核方案（课程级，可编辑、能自动算分） |
+| `data/exams/` | 机试试卷 / 题库源文件（老师导入的那份 JSON + `_template.json`） |
+| `data/assignments/` | 作业的定义文件 |
+| `data/designs/` | 作业设计稿库（从库里挑一套生成作业） |
+| `data/students/<班级>/<学号>/` | 每人一套档案（见下一节） |
+| `data/uploads/` | 二进制证据（不入库） |
+| `data/config.json` | 口令与 `courseDir`（不入库） |
+| `data/teach.db` | SQLite 主库（不入库，`-wal` `-shm` 也不入） |
 
 ### 学生目录：每人一套档案
 
@@ -751,22 +763,25 @@ git commit -m "第05课：考勤 + 作业A/B/C"
 
 ## 5. 自检
 
-```bash
-# 先启动服务，另开一个窗口
-node server/selftest.js
+```powershell
+# 服务不用先启动，测试会自己起一个临时实例
+cd 课堂系统/api
+node src/test/run-all.mjs
 ```
 
-覆盖 137 项，重点是几类容易悄悄坏的东西：
+19 组测试，覆盖几类容易悄悄坏的东西：
 
-- **接口与算分**：登录鉴权、建班、名单导入、六种记分（考勤 / 互动 / 作业 / 机试 / 大作业 / 加分）、撤销后总分回退、学生只能读自己、学生不能读讲义、点名不重复、CSV 导出。
-- **课堂作业**：新建默认未开始、没开始就提交被拒、开始后才能交、整份提交（`files` 全量 + `changed` 只留真实路径）、
-  老师能读回每一个文件、提交按时间排序、学生看不到别人的提交、打分 / 清分、结束之后交不上来。
-- **考核方案**：`/api/scheme` 列出的模块与方案一致、关掉的模块不出现在模块列表里、方案校验挡得住坏规则。\n- **机试**：导入题库（校验挡得住坏卷子）、题库卷两个学生拿到的题不一样、答案不下发、客观题交卷即判、主观题老师给分、卷面分按系数进计分表、答卷文件（exam.json + 答卷.md）落在学生目录。
-- **大作业**：建作业不需要选课、默认未开始、开始前 403、说明/链接/附件至少要一项、附件落在学生自己的目录、
-  老师能下载、**别的学生下不到**（403）、大作业不会被混进课堂作业列表、删除作业会清掉每个学生的附件目录。
-- **状态判定**：心跳置为在线、报离立即离线、WS 通道断开后按缓冲时间下线；投屏状态只在开播时计入、观看页断开即消失。
-- **投屏中继协议**：hello / peers / mode 广播、二进制逐字节转发、**100KB 分片消息拼接**、学生断开后 `peers=0`、非法 role 被关闭。
-- **开播通知**：学生端 SPA 通道能收到「开始 / 停止投屏」（刚连上补发 + 变化时实时推），心跳接口 `/api/presence/ping` 也带回 `cast` 字段兜底 —— 学生端自动开投屏页全靠这三条路。
+- **接口与算分**：登录鉴权、建班、名单导入、六种记分（考勤 / 互动 / 作业 / 机试 / 大作业 / 加分）、
+  撤销后总分回退、学生只能读自己、学生不能读讲义、点名不重复
+- **课堂作业**：新建默认未开始、没开始就提交被拒、整份提交（`files` 全量 + `changed` 只留真实路径）、
+  老师能读回每一个文件、学生看不到别人的提交、打分 / 清分、结束后交不上来
+- **考核方案**：模块与方案一致、关掉的模块不出现、方案校验挡得住坏规则
+- **机试**：导入题库（校验挡得住坏卷子）、按学生抽题、客观题判分
+- **大作业**：建作业不需要选课、开始前 403、附件落在学生自己目录、**别的学生下不到**（403）、
+  删除作业会清掉每个学生的附件目录
+- **状态判定**：心跳在线、报离立即离线、WS 断开后按缓冲时间下线；投屏只在开播时计入
+- **投屏中继协议**：hello / peers / mode 广播、二进制逐字节转发、100KB 分片拼接、非法 role 被关闭
+- **课程包**：格式规范、压缩方式、导入导出往返
 
 输出全 ASCII（避免 Windows 控制台编码干扰判断）。
 
@@ -817,58 +832,66 @@ cd web && node tools/test-identity.mjs      # 12 项：游客 / 已登录 / 已�
 ## 6. 目录结构
 
 ```
-classroom-system/
-  server/
-    index.js            入口：静态托管 + /api + /examples + /ws
-    selftest.js         零依赖自检（137 项）
-    config.js           路径与口令（可用 TS_* 环境变量覆盖）
-    lib/http.js         路由 / JSON / 静态文件
-    lib/ws.js           自己实现的 WebSocket（分片、掩码、背压、心跳）
-    lib/csv.js          CSV 基础工具：解析 / 序列化 / 列类型 / 表增删改查（原子写）
-    lib/db.js           数据仓库：六张 CSV 表 + 内存视图 + 老 JSON 迁移
-    lib/scheme.js       考核方案：读 data/schemes/*.json、校验、热加载、物化成界面结构
-    lib/rules/          计分规则库（base / acc / avg / last / raw / rubric）+ 参数 schema
-    lib/exam.js         机试：卷子/题库校验、按学生抽题、客观题判分、出答卷报告
-    lib/students.js     每个学生的专属目录：骨架 / 记分与证据快照（派生）
-    lib/submissions.js  课堂作业提交：正文落进学生目录 / 读回 / 删除（路径校验在这）
-    lib/auth.js         令牌（内存表）
-    lib/content.js      materials / lecture / 代码示例 索引（只读）
-    lib/scoring.js      考核方案与算分（服务端权威）
-    lib/presence.js     在场状态（WS 通道 + HTTP 心跳，不落盘）
-    routes/api.js       业务接口
-    routes/cast.js      投屏中继
-  web/                  Vue 3 + Vite（构建产物在 web/dist）
-    src/views/teacher/  讲义 / 投屏设置 / 计分（点名是计分里的页签）/ 模块入口（ModuleHost）/ 机试判卷（ExamModule）/ 考核方案
-    src/views/student/  材料 / 我的分数 / 模块入口（列表 + 做题 + 提交页）
-    src/views/          Login、代码练习（工作台的壳）、Watch、两种布局
-    src/components/     骨架类：PageShell（页面外壳：头 + 内容区）、PageHead（标题+说明+右侧操作）、
-                        CardHead（卡片头）、FilterBar（筛选条）、DataTable（表格：列定义 + 排序 + 空状态）、
-                        Icon、Toast；
-                        业务类：MdView、ScoreForm、StudentDrawer、PgWorkbench（编辑 + 预览）、FileIcon（文件类型图标，按 VS Code / JetBrains 习惯画）、
-                        CodeViewer（只读）、GradeBox（按规则出打分控件）、ErrorBoundary（出错不白屏）
-    src/utils/          讲义切片、抓屏推流、名单清洗、xlsx 解析、代码练习 文件树分组、CodeMirror 封装、
-                        预览渲染（pgPreview：srcdoc + 入口推断，代码练习 与审阅弹层共用）、
-                        考核方案（scheme：拉 /api/scheme，导航与模块入口读它）、时间显示
-    public/vendor/      marked / mermaid / srcdoc（全部本地，无 CDN）
-  data/                 运行时数据：六张 CSV + schemes/（考核方案）+ exams/（试卷模板）**进 git**；
-                        students/ 是每人一套的档案（作业正文、附件、机试答卷进 git，派生 CSV 忽略）；
-                        config.json（含口令与 courseDir）/ uploads 不入库
-  data/exams/           机试试卷 / 题库源文件（老师导入的那份 JSON + _template.json）
-  tools/                工具脚本（check-compat.mjs：Chrome 109 / Node 20 两条基线体检 + .bat 体检；
-                        check-bat.mjs：批处理行尾/括号/chcp 体检；pack-course.mjs：打课程包）
-教学机代理/            教学机上的「局域网→公网」代理（Python 版，带缓存 + 投屏扇出）：lan-proxy.py + 启动代理.bat
-                        投屏帧走 WebSocket 二进制帧，原样转发；扇出开着时公网上行/下行都只有 1 份
-                        + proxy.conf（配置，git 忽略）+ runtime/python（内嵌 Python 3.8，git 忽略）
-  开发调试.bat          一键起后端 18730 + vite dev 5173（改前端时用它，带 HMR）
-  打开教师端.bat         教师机上双击它：改一行 BASE_URL 就能开教师端
-                        （探活 + 带抓屏白名单开 Chrome，自动找绿色版 Chrome 109 / 安装的 Chrome / Edge；不生成任何文件）
-  打开学生端.bat         学生机上双击它：改一行 BASE_URL 就能开学生端（同样不生成任何文件）
-  机试试卷格式规范.md   老师出卷的格式说明（模板见 data/exams/_template.json）
-  课程包格式规范.md     一门课打包成一个 zip 的规范（课程 / 方案 / 班级名单 / 内容目录，配置与文件分开）
+课堂系统/
+  api/src/                 Fastify 服务（零依赖跑不起来，用 better-sqlite3 + fastify）
+    server.js              入口：listen（ipv6Only:false 保证双栈）
+    app.js                 装配：注册 static / 路由 / 错误处理
+    config.js              端口、口令、courseDir（TS_* 环境变量覆盖）
+    db/                    SQLite：schema.sql（11 表）+ migrate.js + index.js
+    lib/                   业务层（32 个）
+      repo.js              数据仓库（唯一碰 db 的地方）
+      content.js           materials / lecture / 代码示例 索引（只读）
+      scoring.js           算分（服务端权威）
+      scheme.js            考核方案：读 schemes/*.json、校验、热加载
+      rules.js             计分规则库（base / acc / avg / last / raw / rubric）
+      exam.js              机试：卷子校验、按学生抽题、客观题判分
+      students.js          学生专属目录：骨架 / 记分与证据快照（派生）
+      submitstore.js       作业提交落盘 / 读回 / 删除（路径校验在这）
+      scoresheet.js        记分变化 → 300ms 去抖重写分数表
+      zip.js               zip 读写（课程包、导入导出都用它）
+      ...
+    routes/                18 个路由文件（auth / classes / scoring / exam / cast / coursepack ...）
+    plugins/               auth（鉴权）等
+    test/                  run-all.mjs + 19 组测试
+  web/                     Vue 3 + Vite（构建产物在 web/dist）
+    src/views/teacher/     讲义 / 考勤 / 班级 / 成绩 / 考核方案 / 作业 / 机试 / 投屏 / 代码练习
+    src/views/student/     材料 / 我的分数 / 作业 / 机试 / 代码练习 / 看投屏
+    src/components/        骨架类（PageShell / PageHead / DataTable / FilterBar …）
+                          业务类（MdView / ScoreForm / StudentDrawer / PgWorkbench …）
+    src/components/pg/     代码练习工作台拆出来的子组件（PgFileTree / PgPreview）
+    src/composables/       usePgLayout / usePgStore / usePgPreview / usePgEditor / usePgSync
+    src/utils/             讲义切片、抓屏推流、名单清洗、xlsx、pgPreview（srcdoc 渲染）
+    public/vendor/         marked / mermaid / srcdoc（全部本地，无 CDN）
+  data/                    运行时数据（见 §3）：teach.db + courses/ schemes/ exams/ students/ …
+  docs/
+    内容规范.md            materials / lecture / 代码示例 的格式规范（被代码强制执行）
+  tools/                   体检与打包脚本
+    check-compat.mjs       Chrome 109 / Node 20 两条基线体检 + .bat 体检
+    check-bat.mjs          批处理行尾 / 括号 / chcp 体检
+    pack-course.mjs        打课程包
+    kg-live-check.mjs      青果账号密码真机验证
+    audit-*.mjs            基线与依赖审计（chrome78 / gap 上下文 / mermaid / vendor 运行时）
+  downloads/               绿色版 Chrome 安装包（学生端点「下载浏览器」时直接出，不走公网）
+  教学机代理/              教学机上的「局域网→公网」代理（Python）
+    lan-proxy.py           转发 + 缓存 + 投屏扇出 + IPv6 双栈 + 启动预热
+    warmup.py              预热逻辑（名单在 warmup.conf，模板见 warmup.example.conf）
+    proxy.conf             代理配置（含 edge.key，git 忽略）
+    runtime/python/        内嵌 Python（git 忽略）
+  Dockerfile              镜像构建
+  docker-compose.yml      
+  docker-entrypoint.sh    
+  服务器部署.md            详细的部署文档（镜像 / 反向代理 / 备份）
+  课程包格式规范.md        一门课打包成 zip 的规范（teaching-course v1）
+  机试试卷格式规范.md      老师出卷的格式说明（模板见 data/exams/_template.json）
+  课堂作业规范与提交约定.md  
+  大作业规范与提交约定.md    
+  启动课堂系统.bat         一键起服务
+  开发调试.bat             后端 18730 + vite dev 5173（改前端时用，带 HMR）
+  打开教师端.bat / 打开学生端.bat   教学机 / 学生机上双击打开（探活 + 带参数启动 Chrome）
 ```
 
-> 课程内容（`lecture/` `materials/` `代码示例/`）**不在这个目录里**，由 `data/config.json` 的 `courseDir` 指过去
-> （默认 `../course-content`）。整个仓库可以单独拷到别的机器，只带着内容目录一起走就行。
+> 课程内容（`lecture/` `materials/` `代码示例/`）不在这个目录里，由 `data/config.json` 的 `courseDir` 指过去。
+> 整个目录可以单独拷到别的机器，只带着内容目录一起走就行。
 
 ### 前端依赖的版本钉子
 
@@ -941,7 +964,7 @@ node tools/check-compat.mjs --frontend # 只查浏览器基线
 - **代码练习 的代码存在学生本机，不上服务器**：刷新、关浏览器都还在（`localStorage`，按人来分桶），但换机器 / 换浏览器 / 清浏览器数据就没了。这是刻意的——随手玩的代码不用收；要交给老师看的，走**课堂作业**的「提交」（那是唯一把代码送上服务器的地方，而且只送改过的文件）。
 - **课堂作业交的是整份，但「改了什么」单独记**：`files` 是全份（老师要能跑起来看渲染），`changed` 是改动清单。
   学生改完又改回原样 = 等于没改，会被前端拦下（一个脏文件都没有时提示「还没改动任何文件」）。
-  提交里只有该课目录下的文件；`../vue.global.js`、`../playground/sfc-boot.js` 这类跨目录的共用件仍由服务器按 `<base>` 提供。
+   提交里只有该课目录下的文件；`/api/assets/lib/vue.global.js`、`/api/assets/lib/sfc-boot.js` 这类共用件由服务器提供
 - **审阅弹层的预览是沙箱跑的**：`sandbox` 不给 `allow-same-origin`，所以学生代码碰不到教师端的令牌；
   代价是示例里如果用了 `localStorage` / `sessionStorage`，在预览里会抛错（讲义示例目前没有这种）。
   要真机验证存储相关的作业，仍按课程里的办法用 `npm run dev` 跑。
@@ -951,3 +974,38 @@ node tools/check-compat.mjs --frontend # 只查浏览器基线
 - 浏览器基准 **Chrome 109**（机房现有设备的底线 —— **不是 Win7 遗留要求，Win7 已不支持**）；
   构建 target 与基线对齐在 `chrome109`。
 - 单次上传证据上限 6MB，单条记录最多 6 个附件。
+
+---
+
+## 8. 待办
+
+> 原来有三份「某一轮优化做完了」的结案报告（前端审视 / 接口请求审视 / 前端浏览器基线分析），
+> 结论都已经落进代码和注释里，2026-11 删掉了。这里只留**明确记下、但还没做**的。
+
+### 前端
+
+1. **长列表虚拟化** —— `Assignments.vue` / `Projects.vue` / `Classes.vue` 都是一次渲染全部行。
+   60 人以内感觉不出来，150 人以上会开始卡。做法：`vueuse` 的 `useVirtualList`，或自己写固定行高的窗口化容器。
+   **前提**：行高必须固定（现在是固定的，改样式时要注意）。
+2. **`Scheme.vue` 拆分** —— 1251 行、18 处 `v-for`，是前端剩的最大的单文件。
+   拆法参考 `PgWorkbench`：按「考核项列表 / 编辑抽屉 / 量规编辑器」拆组件 + composable。
+
+### 接口
+
+3. **`/api/pgsync` 去重** —— 代码练习页里 `StudentLayout` 和 `PgWorkbench` **各拉一次**，
+   同步进行中时两次都带回完整代码内容。做法：在 `usePgSync` 里做模块级单例（共用 in-flight Promise），
+   两处调同一个 `resumeOnce()`。
+4. **班级页分页 / 懒加载** —— 现在一次返回「名单 + 每人 8 项分数」，60 人 52KB 尚可；
+   若某班 150 人 + 每人 8 项，会回到 150KB 量级。做法：先只返回「名单 + 总分」，展开某个学生时再取明细。
+5. **`/api/content/doc` 是否预取相邻课次** —— 评估过：单篇 14KB，一次一篇是对的；
+   首屏预取相邻课次会白拉（学生不一定往下翻）。**结论是不做**，记在这里免得以后重新纠结。
+
+### 已经做完的（供对照，不用再做）
+
+| 项 | 结果 |
+|---|---|
+| `PgWorkbench.vue` 拆分 | 1881 → 927 行，拆出 `PgFileTree` / `PgPreview` + 5 个 composable |
+| 「老师推代码给全班」 | **原来从来没生效**（后端发 `t:'pg'`、前端只认 `t:'pgsync'`），已修 |
+| `build.target` | `chrome78` → `chrome109`（CSS 早就把下限推到 108/84，定 78 是自欺） |
+| 登录页请求 | 3 个请求 4.6KB → 1 个请求 0.36KB |
+| 按身份分档下发 | 不再给所有人发全量数据 |
