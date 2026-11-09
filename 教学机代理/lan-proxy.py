@@ -1004,8 +1004,14 @@ def warmup_cache():
     t0 = time.time()
 
     # ---------- ① 静态资源 ----------
+    #
+    # 分两层抠：
+    #   · HTML 里只有入口 bundle（index-*.js / index-*.css）
+    #   · 路由懒加载的 20~50 个 chunk（StudentLayout / Materials / Playground…）
+    #     名字全在入口 bundle 里（Vite 的 chunk 映射），只能拉下来再正则
+    # 只拉 HTML 那一层的话，学生进材料页/代码页时每个 chunk 都还要 MISS 一次。
     paths = ['/']
-    # assets 文件名带 hash，只能从 HTML 里抠
+    entry_js = ''
     try:
         st, body = req('GET', '/', timeout=30)
         if st == 200:
@@ -1013,25 +1019,56 @@ def warmup_cache():
             for m in re.finditer(r'/assets/[A-Za-z0-9._-]+\.(?:js|css)', text):
                 if m.group(0) not in paths:
                     paths.append(m.group(0))
+            em = re.search(r'/assets/index-[A-Za-z0-9_-]+\.js', text)
+            if em:
+                entry_js = em.group(0)
     except Exception as e:
         verbose('预热：首页没拉到（%s）' % e)
+
+    if entry_js:
+        try:
+            st, body = req('GET', entry_js, timeout=60)
+            if st == 200:
+                js = body.decode('utf-8', 'ignore')
+                # Vite 产物里 chunk 名形如 StudentLayout-B9kT2wJU.js
+                for m in re.finditer(r'[A-Za-z0-9_-]+-[A-Za-z0-9_-]{8}\.(?:js|css)', js):
+                    p = '/assets/' + m.group(0)
+                    if p not in paths:
+                        paths.append(p)
+        except Exception as e:
+            verbose('预热：入口 bundle 没拉到（%s）' % e)
 
     for p in ('/lib/vue.global.js', '/lib/vue3-sfc-loader.js', '/lib/sfc-boot.js',
               '/favicon.svg',
               # 材料页的渲染库：marked 解析 md、mermaid 画图、srcdoc 处理示例
-              # 从 HTML 里抠不到（是按需动态 import 的），只能写死
+              # 按需动态 import，HTML 和入口 bundle 里都没有字符串，只能写死
               '/vendor/marked.min.js', '/vendor/mermaid.min.js', '/vendor/srcdoc.js'):
         if p not in paths:
             paths.append(p)
 
-    ok = 0
-    for p in paths:
-        try:
-            st, _ = req('GET', p)
-            if st == 200:
-                ok += 1
-        except Exception:
-            pass
+    # SPA 各路由返回的都是同一份 HTML，但缓存 key 是完整 path ——
+    # 只预热 "/" 的话，学生进 /student/materials 还是要 MISS 一次。
+    for r in ('/login', '/student/materials', '/student/playground', '/student/score',
+              '/student/watch', '/teacher/classes', '/teacher/attendance',
+              '/teacher/courses', '/teacher/settings'):
+        if r not in paths:
+            paths.append(r)
+
+    # 几十个 chunk 串行拉要等很久（每个经隧道 ~300ms），并发 8 路
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _one(p):
+            try:
+                st, _ = req('GET', p)
+                return 1 if st == 200 else 0
+            except Exception:
+                return 0
+
+        with ThreadPoolExecutor(max_workers=16) as ex:
+            ok = sum(ex.map(_one, paths))
+    except Exception:
+        ok = 0
     print('  预热静态：%d/%d 个资源（%.1f 秒）' % (ok, len(paths), time.time() - t0))
 
     # ---------- ② 用教师身份预热公开内容 ----------
