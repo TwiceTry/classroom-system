@@ -983,9 +983,9 @@ cd web && node tools/test-identity.mjs      # 12 项：游客 / 已登录 / 已�
   tools/                   体检与打包脚本
     check-compat.mjs       Chrome 109 / Node 20 两条基线体检 + .bat 体检
     check-bat.mjs          批处理行尾 / 括号 / chcp 体检
-    pack-course.mjs        打课程包
-    kg-live-check.mjs      青果账号密码真机验证
-    audit-*.mjs            基线与依赖审计（chrome78 / gap 上下文 / mermaid / vendor 运行时）
+    coursepack/build-pack.mjs   打课程包（源目录 → zip，生成 pack.json 带每个文件的 sha256）
+    coursepack/check-pack.mjs   按《课程包格式规范》检查一个课程目录，报「通过/提示/报错」
+    kg-live-check.mjs      青果账号密码真机验证（核对上游接口行为）
   downloads/               绿色版 Chrome 安装包（学生端点「下载浏览器」时直接出，不走公网）
   教学机代理/              教学机上的「局域网→公网」代理（Python）
     lan-proxy.py           转发 + 缓存 + 投屏扇出 + IPv6 双栈 + 启动预热
