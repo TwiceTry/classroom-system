@@ -5,6 +5,7 @@ import os from 'node:os'
  * 对照《课程包格式规范.md》逐条验：结构 / 清单 / 哈希 / 班级 id / 名单编码 / 压缩 / 命名
  */
 import fs from 'node:fs'
+import zlib from 'node:zlib'
 import crypto from 'node:crypto'
 
 import { readZip, makeZip } from '../lib/zip.js'
@@ -198,9 +199,24 @@ ok('counts.files = content/ 下的实际文件数', pack.counts.files === conten
 console.log('\n=== 7. 压缩 ===')
 const TEXT = /\.(md|html|css|js|json|txt|csv|vue|mjs)$/i
 const ALREADY = /\.(png|jpe?g|mp4|zip|pdf|svg|gif|webp)$/i
-const textStored = entries.filter((e) => !e.dir && TEXT.test(e.name) && e.method === 0)
+/*
+ * 不按扩展名一刀切，而是**实际试压**：
+ * 能压小却没压 → 真问题；压不小（极小文件）退回存储 → 正确行为。
+ *
+ * 踩过的例子：7 个 58 字节的 main.mjs（只有几行 import），
+ * deflate 后是 60 字节，压了反而更大。原来这条测试因此一直报失败。
+ */
+const textStored = entries.filter((e) => {
+  if (e.dir || !TEXT.test(e.name) || e.method !== 0) return false
+  const raw = Buffer.from(e.data)
+  return zlib.deflateRawSync(raw, { level: 9 }).length < raw.length
+})
 const binDeflated = entries.filter((e) => !e.dir && ALREADY.test(e.name) && e.method === 8)
-ok('文本文件走 deflate（method=8）', textStored.length === 0, textStored.length ? textStored.length + ' 个文本被「存储」了' : '检查 ' + entries.filter((e) => !e.dir && TEXT.test(e.name)).length + ' 个文本')
+ok('能压小的文本都走了 deflate', textStored.length === 0,
+  textStored.length
+    ? textStored.length + ' 个文本可压小却被「存储」：' +
+      textStored.slice(0, 3).map((e) => e.name).join(', ')
+    : '检查 ' + entries.filter((e) => !e.dir && TEXT.test(e.name)).length + ' 个文本')
 note('已压缩格式（svg/gif 等）也走 deflate：' + binDeflated.length + ' 个 —— 规范说「png/jpg/mp4/zip/pdf 按存储」，svg 属文本可压，不算违背')
 
 const rawBytes = entries.filter((e) => !e.dir).reduce((n, e) => n + (Buffer.from(e.data).length || 0), 0)
