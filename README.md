@@ -865,6 +865,10 @@ cd web && node tools/test-identity.mjs      # 12 项：游客 / 已登录 / 已�
   data/                    运行时数据（见 §3）：teach.db + courses/ schemes/ exams/ students/ …
   docs/
     内容规范.md            materials / lecture / 代码示例 的格式规范（被代码强制执行）
+    课程包格式规范.md      一门课打包成 zip 的规范（teaching-course v1）
+    机试试卷格式规范.md    老师出卷的格式说明（模板见 data/exams/_template.json）
+    课堂作业规范与提交约定.md  
+    大作业规范与提交约定.md    
   tools/                   体检与打包脚本
     check-compat.mjs       Chrome 109 / Node 20 两条基线体检 + .bat 体检
     check-bat.mjs          批处理行尾 / 括号 / chcp 体检
@@ -881,10 +885,6 @@ cd web && node tools/test-identity.mjs      # 12 项：游客 / 已登录 / 已�
   docker-compose.yml      
   docker-entrypoint.sh    
   服务器部署.md            详细的部署文档（镜像 / 反向代理 / 备份）
-  课程包格式规范.md        一门课打包成 zip 的规范（teaching-course v1）
-  机试试卷格式规范.md      老师出卷的格式说明（模板见 data/exams/_template.json）
-  课堂作业规范与提交约定.md  
-  大作业规范与提交约定.md    
   启动课堂系统.bat         一键起服务
   开发调试.bat             后端 18730 + vite dev 5173（改前端时用，带 HMR）
   打开教师端.bat / 打开学生端.bat   教学机 / 学生机上双击打开（探活 + 带参数启动 Chrome）
