@@ -8,7 +8,9 @@
   机制：第一个学生要经公网隧道拉 2.35MB 的运行时库，其余 39 个卡在
   防穿透锁上等；学生等 3 秒就按 F5，全部挤进等待队列，越刷越慢。
 
-配置独立在 warmup.conf（模板见 warmup.example.conf），**不写死任何具体文件**：
+配置独立在 warmup.conf（模板见 warmup.example.conf），**不写死任何具体文件**。
+warmup.conf 不存在就**不预热**，代码里没有任何内置名单兜底 ——
+名单是本机的部署事实，猜错了比不预热更难发现。
 
   [static]   /assets/*  /lib/*.js  /vendor/*.js  …
              候选由程序自动发现（HTML 引用 + 入口 bundle 里的懒加载 chunk
@@ -33,56 +35,25 @@ from urllib.parse import quote
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CONF_PATH = os.path.join(HERE, 'warmup.conf')
 
-# 配置文件缺失时的兜底（和 warmup.example.conf 保持一致）
-FALLBACK_CONF = """\
-enabled = yes
-workers = 16
-password =
-materials-max = 30
-examples-max = 25
-
-[static]
-/
-/assets/*
-/lib/*.js
-/vendor/marked.min.js
-/vendor/mermaid.min.js
-/vendor/srcdoc.js
-/favicon.svg
-
-[routes]
-/login
-/student/materials
-/student/playground
-/student/score
-/student/watch
-/teacher/classes
-/teacher/attendance
-/teacher/courses
-/teacher/settings
-
-[content]
-/api/courses/{courseId}/content/list?type=materials&path=materials
-/api/examples?courseId={courseId}
-/api/examples/*
-/api/content/doc?type=materials&id=*&courseId={courseId}
-"""
-
 
 # ---------------- 配置 ----------------
 
 def load_conf(path=None):
-    """读 warmup.conf。读不到就用 FALLBACK_CONF。
+    """读 warmup.conf。读不到返回 None —— **没有内置名单兜底**。
+
+    为什么不留兜底：名单是本机的部署事实（哪门课、哪些路径），
+    藏在代码里的默认值一旦和现场不一致，表现是「预热跑成功了但预热的
+    不是你要的东西」，比直接不预热更难发现。
+    模板在 warmup.example.conf，复制改名即可。
 
     返回 {顶层 key: value, 'sections': {name: [pattern, ...]}}
     """
     p = path or DEFAULT_CONF_PATH
-    text = None
     try:
         with open(p, 'r', encoding='utf-8-sig') as f:
             text = f.read()
     except Exception:
-        text = FALLBACK_CONF
+        return None
 
     conf = {'sections': {}}
     cur = None
@@ -143,6 +114,12 @@ def run(port, conf_path=None, log=None, cache_enabled=True):
             pass
 
     conf = load_conf(conf_path)
+    if conf is None:
+        # 没有 warmup.conf 就**不预热**，不做任何内置兜底：
+        # 预热名单是本机的部署事实，猜错了比不预热更糟（看起来跑成功了，
+        # 预热的却不是现场要的那些路径）。模板见 warmup.example.conf。
+        print('  预热：没有 warmup.conf，跳过（复制 warmup.example.conf 改名即可）')
+        return
     if not _as_bool(conf.get('enabled'), True):
         print('  预热：已关闭（warmup.conf 里 enabled = no）')
         return
@@ -252,11 +229,13 @@ def run(port, conf_path=None, log=None, cache_enabled=True):
     # 缓存 key 是 method+path（不含 token），所以这里的内容全班共享。
     # 绝不能放 /api/bootstrap、/api/classes/:id/scores —— 那是按人返回的，
     # 缓存后 A 的分数会发给所有人。
-    pw = str(conf.get('password', '') or '').strip() or _local_password()
+    pw = str(conf.get('password', '') or '').strip()
     if not content_pat:
         return
     if not pw:
-        print('  预热内容：跳过（warmup.conf 里 password 空，本地也没有 data/config.json）')
+        # 口令只认 warmup.conf，不去别处猜 —— 猜错了会静默跳过内容预热，
+        # 日志上只是少了一行，很难发现。宁可明说。
+        print('  预热内容：跳过（warmup.conf 里 password 没填）')
         return
 
     try:
@@ -395,11 +374,4 @@ def _num(v, default):
         return default
 
 
-def _local_password():
-    """同机部署（开发/测试）时从 ../data/config.json 读教师口令。"""
-    try:
-        cfg_file = os.path.join(HERE, '..', 'data', 'config.json')
-        with open(cfg_file, 'r', encoding='utf-8-sig') as f:
-            return str(json.load(f).get('teacherPassword') or '').strip()
-    except Exception:
-        return ''
+
