@@ -2509,6 +2509,26 @@ class Server(ThreadingHTTPServer):
     allow_reuse_address = True
 
 
+class Server6(Server):
+    """IPv6（双栈）监听。
+
+    ThreadingHTTPServer 的 address_family 固定是 AF_INET，
+    listen.host 填 '::' 会直接绑不上。要单独一个子类。
+
+    server_bind 里必须先关掉 IPV6_V6ONLY：Windows 默认是 1（只收 IPv6），
+    关掉才是双栈（同一端口也接 IPv4）。Linux 默认已经是 0，设了也无害。
+    """
+
+    address_family = socket.AF_INET6
+
+    def server_bind(self):
+        try:
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        except Exception:
+            pass
+        Server.server_bind(self)
+
+
 def fmt_bytes(n):
     if n >= 1048576:
         return '%.0f MB' % (n / 1048576.0)
@@ -2685,7 +2705,9 @@ def main():
         _wd_thread.start()
         print('  投屏看门狗：每 10 秒检查一次上游通道')
 
-    httpd = Server((LISTEN_HOST, LISTEN_PORT), HealthHandler)
+    # listen.host 填 IPv6（'::' 或具体地址）→ 用双栈 Server6
+    _srv_cls = Server6 if _is_ipv6(LISTEN_HOST) else Server
+    httpd = _srv_cls((LISTEN_HOST, LISTEN_PORT), HealthHandler)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
