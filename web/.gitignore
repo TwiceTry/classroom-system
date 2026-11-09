@@ -1,0 +1,10 @@
+# 依赖
+node_modules/
+
+# 构建产物（Dockerfile 里现构建，不入库）
+/dist/
+/dist-build/
+/.vite/
+
+# 前端测试的临时目录
+/.tmp-test/
