@@ -213,7 +213,7 @@ docker compose pull && docker compose up -d      # data/ 不动，只换代码
 - **教师端**：把 `打开教师端.bat` 拷到教师机，用记事本打开，把里面 `EDIT HERE` 那段的 `BASE_URL` 改成服务器地址（脚本不生成任何文件）
   （如 `http://192.0.2.10:18730`），之后双击 `.bat` 即可。它会探活、挑浏览器、并用白名单启动 Chrome，
   让**纯 http 下「开始投屏」也能用**（原因见上一节「http 下能不能投屏」）
-- **学生端**：浏览器打开 `<服务器地址>/` → 选课程 + 学号 + 姓名，不需要任何参数
+- **学生端**：浏览器直接打开 `<服务器地址>/` → 选课程 + 学号 + 姓名，不需要任何参数、也不用装任何东西
 - 也可以直接 `https://<服务器>/teacher/lecture` 用普通浏览器打开 —— 那样只有 https 才能投屏
 
 ### 每节课
@@ -226,7 +226,14 @@ docker compose pull && docker compose up -d      # data/ 不动，只换代码
 
 ### 开发调试（改前端时用）
 
-双击 **`开发调试.bat`**：一个窗口起后端（`node server/index.js`，18730），一个窗口起 vite dev（5173，带 HMR），然后自动打开浏览器。端口已被占用时那一半会跳过，不会报 EADDRINUSE。
+开两个窗口：
+
+```bash
+cd 课堂系统/api && node src/server.js        # 后端 18730
+cd 课堂系统/web && npm run dev               # vite dev 5173，带 HMR
+```
+
+前端改完要出正式产物：`cd 课堂系统/web && npm run build`（产物在 `web/dist`，服务端直接托管它）。端口已被占用时那一半会跳过，不会报 EADDRINUSE。
 
 ```
 前端  http://127.0.0.1:5173     ← 改 web/src 里的文件，保存即生效
@@ -989,9 +996,9 @@ cd web && node tools/test-identity.mjs      # 12 项：游客 / 已登录 / 已�
   Dockerfile              镜像构建
   docker-compose.yml      
   docker-entrypoint.sh    
-  启动课堂系统.bat         一键起服务
-  开发调试.bat             后端 18730 + vite dev 5173（改前端时用，带 HMR）
-  打开教师端.bat / 打开学生端.bat   教学机 / 学生机上双击打开（探活 + 带参数启动 Chrome）
+
+
+  打开教师端.bat           教学机上双击打开：探活 + 带白名单参数启动 Chrome（纯 http 下投屏要用它）
 ```
 
 > 课程内容（`lecture/` `materials/` `代码示例/`）不在这个目录里，由 `data/config.json` 的 `courseDir` 指过去。
