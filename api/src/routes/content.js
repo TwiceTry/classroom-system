@@ -171,8 +171,14 @@ export default async function contentRoutes(app) {
     const st = fs.statSync(full)
     const etag = 'W/"' + st.size.toString(16) + '-' + Math.floor(st.mtimeMs).toString(16) + '"'
     const inm = String(req.headers['if-none-match'] || '').trim()
+    /*
+     * 同上（compat.js 那个同名接口）：材料里的资源 public 可缓存，
+     * 讲义（lecture/）下的保留 private —— 那些只有教师该看，
+     * 标成 public 会被教学机代理缓存、然后发给学生。
+     */
+    const isLecture = clean.split('/')[0] === 'lecture'
     const headers = {
-      'Cache-Control': 'private, max-age=300',
+      'Cache-Control': isLecture ? 'private, max-age=300' : 'public, max-age=86400',
       'Last-Modified': st.mtime.toUTCString(),
       ETag: etag,
     }

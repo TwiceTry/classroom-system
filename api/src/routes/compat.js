@@ -551,12 +551,20 @@ export default async function compatRoutes(app) {
       '.pdf': 'application/pdf',
       '.mp4': 'video/mp4',
     }
+    /*
+     * 材料里的图片/附件 → public：内容和身份无关，教学机代理能缓存、能预热，
+     * 40 人打开同一篇材料时只出一次公网（每篇 5~8 张，每张 1~5KB）。
+     *
+     * 讲义（lecture/）下的**保留 private**：那些图只有教师该看，
+     * 一旦标成 public，代理缓存后学生也能拿到（缓存 key 不含 token）。
+     */
+    const isLecture = clean.split('/')[0] === 'lecture'
     return reply
       .status(200)
       .headers({
         'Content-Type': MIME[ext] || 'application/octet-stream',
         'Content-Length': st.size,
-        'Cache-Control': 'private, max-age=300',
+        'Cache-Control': isLecture ? 'private, max-age=300' : 'public, max-age=86400',
       })
       .send(fs.createReadStream(full))
   })
