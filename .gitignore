@@ -60,3 +60,6 @@ Thumbs.db
 # 提交信息草稿（临时文件，辅助脚本写的，不进仓库）
 .c.txt
 *.c.txt
+
+# 预热名单（含教师口令，不进仓库；模板见 warmup.example.conf）
+教学机代理/warmup.conf

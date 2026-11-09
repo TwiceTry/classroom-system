@@ -997,8 +997,11 @@ def warmup_cache():
     """
     if warmup is None:
         return
+    # 预热名单在 warmup.conf（同目录），**不读 proxy.conf** ——
+    # 调预热不用碰代理配置，也不会因为代理配置里少一项就静默失效。
+    conf_file = os.path.join(HERE, 'warmup.conf')
     try:
-        warmup.run(LISTEN_PORT, conf_get, verbose, CACHE_ENABLED)
+        warmup.run(LISTEN_PORT, conf_file, verbose, CACHE_ENABLED)
     except Exception:
         # 预热失败不该影响代理本身，但要留下痕迹 —— 静默吞掉的话
         # 表现就是「启动日志里没有预热那两行」，很难判断是关掉了还是崩了
