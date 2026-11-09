@@ -88,26 +88,131 @@
 > **Win7 已不支持**：便携 Node 13 那条离线包路线已下线，服务端按现代 Node 写。
 > 浏览器下限是 **Chrome 109** —— 这是机房现有设备的底线，不是 Win7 的遗留要求；
 > 机房整体换代后，可以把这个下限和 `build.target` 一起上调（见 §「兼容体检」）。
-> 入口页自带兼容性检测：缺能力直接给兜底提示页（含绿色版 Chrome 下载按钮），版本偏低挂一条可关闭的提示条 —— 见 `服务器部署.md`「浏览器要求与兼容性兜底页」。
-> 服务器部署（systemd / NSSM / Nginx / HTTPS / 备份 / 升级 / 监控）见 **`服务器部署.md`**。
 
 ### 服务器（一次性）
 
-1. 装 **Node.js ≥ 18 LTS**（20 / 22 都行）。服务端零第三方依赖，不用 `npm install`。
-2. 首次启动会自动生成 `data/config.json`：
-   ```bash
-   sudo mkdir -p /var/lib/classroom/data
-   sudo TS_DATA_DIR=/var/lib/classroom/data node server/index.js
-   ```
-3. 改 `config.json`：`teacherPassword`（**必改**）、`secret`（首次自动生成，别清空）、`courseDir`（课程内容位置）。
-4. 用 systemd / NSSM 托管（`服务器部署.md` §4 / §5），前面挂 Nginx 上 HTTPS（§6 / §7）。
-5. 学生端地址形如 `https://classroom.example.edu/`；机房只要能打开这个网址。
+**用 Docker**。镜像里只有系统本身，一个字节的课程内容都不带 —— 换课、换学期都同一个镜像。
+
+```bash
+cd 课堂系统
+TS_PASSWORD=你的口令 docker compose up -d --build
+docker compose logs -f            # 启动日志会打印教师端 / 学生端地址
+```
+
+不用 compose 也行：
+
+```bash
+docker build -t classroom-system .
+mkdir -p data && sudo chown -R 1000:1000 data     # Linux 才需要，见下
+docker run -d --name teach-system -p 18730:18730 \
+  -e TS_PASSWORD=你的口令 -e TZ=Asia/Shanghai \
+  -v "$(pwd)/data:/data" classroom-system
+```
+
+拉 CI 构建好的镜像（不本地构建）：
+
+```bash
+docker pull ghcr.io/twicetry/classroom-system:latest
+```
+
+#### 数据卷权限（Linux 上唯一要留意的）
+
+容器里用非 root 的 `node` 用户（uid 1000）跑，所以宿主机上的 `data/` 要让它可写：
+
+```bash
+mkdir -p data && sudo chown -R 1000:1000 data
+```
+
+忘了也不会一头雾水 —— 容器起来时会直接告诉你缺什么、该执行哪条命令。
+Windows / macOS 的 Docker Desktop 不用管（文件系统自动映射）。
+
+#### 环境变量
+
+| 变量 | 说明 |
+|---|---|
+| `TS_PASSWORD` | 教师口令。**只在第一次启动时生效**（写进 `data/config.json`），之后改这里无效 —— 用教师端「投屏设置 → 账号安全」改。这是有意的：防止一个写死的环境变量把你锁死 |
+| `TS_SECRET` | 多实例 / 负载均衡时要一致；单机留空会自动生成并存进 `config.json` |
+| `TS_PORT` / `TS_HOST` | 容器里固定 18730，一般不用改 |
+| `TS_DATA_DIR` | 镜像里已经是 `/data`，不用设 |
+
+#### 可选挂载
+
+```yaml
+volumes:
+  - ./data:/data                      # 必须有，否则重启就丢数据
+  - ./downloads:/app/downloads:ro     # 兜底页要发 Chrome 109 绿色版时
+  - ./content:/course:ro              # 老部署的课程内容还在系统目录外时，配合 TS_COURSE_DIR=/course
+```
+
+#### 从 .tar 导入（不配密钥拿镜像）
+
+CI 每次都会把镜像存成 `teach-system-image.tar`（纯 tar，不用解压）：Actions 运行页底部的 Artifacts，或打 tag 后的 Release 页。
+
+```bash
+docker load -i teach-system-image.tar
+docker images | grep classroom-system      # 导入后名字是 ghcr.io/twicetry/classroom-system:x.y.z
+mkdir -p data && sudo chown -R 1000:1000 data    # Linux 才需要
+docker run -d --name teach -p 18730:18730 \
+  -e TS_PASSWORD=你的口令 -v "$PWD/data:/data" \
+  ghcr.io/twicetry/classroom-system:x.y.z
+```
+
+Windows 上也可以纯点：Docker Desktop → Images → 右上角 Load → 选这个 `.tar`。
+
+#### 镜像里有什么 / 没有什么
+
+| 有 | 说明 |
+|---|---|
+| `api/` | 服务端代码 + `api/templates/` 那几份空白模板（讲义/材料/示例/试卷骨架，给「下载模板」按钮用） |
+| `web/dist/` | 构建好的前端（约 4 MB） |
+| `node_modules/` | 只有 production 依赖 |
+| `docker-entrypoint.sh` | 入口检查 + 起服务 |
+
+| 没有 | 从哪来 |
+|---|---|
+| 讲义 / 材料 / 代码示例 / 试卷 | 运行时挂在 `data/courses/<课程>/content/`，用课程包或各页的导入按钮放进去 |
+| `data/`（teach.db、学生提交、上传、回收站） | 运行时 `-v ...:/data` 挂进来 |
+| Chrome 109 绿色版 | 需要时挂 `-v .../downloads:/app/downloads:ro` |
+
+#### 升级
+
+```bash
+docker compose pull && docker compose up -d      # data/ 不动，只换代码
+```
+
+数据全在 `./data`，备份就是拷走这个目录（`teach.db` 建议连 `-wal` `-shm` 一起，或先停服务）。
+
+#### 浏览器基线（机房那台机器的底线）
+
+**Chrome 109**。入口页里有一段 **ES5** 内联脚本，在任何框架代码之前跑，分三级：
+
+| 级别 | 触发 | 表现 |
+|---|---|---|
+| `block` | IE 内核 / 不支持 module 脚本 / 缺必需能力（fetch、WebSocket、Canvas 2D、Grid、ResizeObserver） | 整页兜底提示 + 下载按钮 |
+| `warn` | 能力齐全但内核低于 109 | 正常进入，底部一条可关闭提示条 |
+| `ok` | 都满足 | 无提示 |
+
+绿色版 Chrome 放 `downloads/`（不进版本库），服务端按 `chrome109.zip|7z|exe` 或带版本号的便携版原名自动找；
+也可以改 `web/public/compat.json` 的 `downloadUrl` 指到内网共享。都没有就显示「请向任课老师索取」。
+
+#### http 下能不能投屏（这条决定机房要不要配证书）
+
+浏览器只在**安全上下文**里允许屏幕捕获：
+
+| 访问方式 | 教师端能否截屏投屏 |
+|---|---|
+| `https://域名/` | 可以 |
+| `http://localhost/` | 可以（仅本机） |
+| `http://内网IP/`（机房常见） | **不行** —— Chrome 直接禁掉 `getDisplayMedia` |
+| `http://内网IP/` + `打开教师端.bat` | **可以** —— 启动器的白名单把该 origin 当安全来源 |
+
+**所以机房不用配证书**：教师机用 `打开教师端.bat` 打开就行，服务器可以是纯 http。
 
 ### 教师机 / 学生机（零安装）
 
 - **教师端**：把 `打开教师端.bat` 拷到教师机，用记事本打开，把里面 `EDIT HERE` 那段的 `BASE_URL` 改成服务器地址（脚本不生成任何文件）
   （如 `http://192.0.2.10:18730`），之后双击 `.bat` 即可。它会探活、挑浏览器、并用白名单启动 Chrome，
-  让**纯 http 下「开始投屏」也能用**（详见 `服务器部署.md` §7）
+  让**纯 http 下「开始投屏」也能用**（原因见上一节「http 下能不能投屏」）
 - **学生端**：浏览器打开 `<服务器地址>/` → 选课程 + 学号 + 姓名，不需要任何参数
 - 也可以直接 `https://<服务器>/teacher/lecture` 用普通浏览器打开 —— 那样只有 https 才能投屏
 
@@ -884,7 +989,6 @@ cd web && node tools/test-identity.mjs      # 12 项：游客 / 已登录 / 已�
   Dockerfile              镜像构建
   docker-compose.yml      
   docker-entrypoint.sh    
-  服务器部署.md            详细的部署文档（镜像 / 反向代理 / 备份）
   启动课堂系统.bat         一键起服务
   开发调试.bat             后端 18730 + vite dev 5173（改前端时用，带 HMR）
   打开教师端.bat / 打开学生端.bat   教学机 / 学生机上双击打开（探活 + 带参数启动 Chrome）
@@ -931,7 +1035,7 @@ node tools/check-compat.mjs --frontend # 只查浏览器基线
 | `package-win7/`（便携 Node 13.6.0 + 三个启动器） | 后端改为服务器部署，Node 13 跑不动现在的依赖（`better-sqlite3` 要 Node ≥ 18，`api/package.json` 写的是 `>= 20`） |
 | `tools/win7-package/export-win7.mjs`、`check-node-pe.mjs` | 同上；需要时从 git 历史取回 |
 
-现在教师机只需要 `打开教师端.bat` 一个文件（地址写在脚本里），见 `服务器部署.md` §7。
+现在教师机只需要 `打开教师端.bat` 一个文件（地址写在脚本里），见上一节「http 下能不能投屏」。
 
 > **注意**：`downloads/` 里那个 `Chrome-109…-Win7.exe` **不是** Win7 支持 ——
 > 它是打包者起的文件名。这个绿色版在 Win10/11 上一样能跑，作用只是「零安装」。
