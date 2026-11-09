@@ -427,6 +427,20 @@ export default async function compatRoutes(app) {
 
     const ext = path.extname(full).toLowerCase()
     const MIME = {
+      /*
+       * 脚本/样式必须给对 MIME。
+       * 课程示例的 <script src="/api/assets/lib/vue.global.prod.js"> 如果拿到
+       * application/octet-stream，浏览器会按「未知类型」处理 —— 要么拒绝执行，
+       * 要么在 nosniff 下直接报错。这类问题只会在控制台留一行，页面看着像「没反应」。
+       */
+      '.js': 'application/javascript',
+      '.mjs': 'application/javascript',
+      '.css': 'text/css',
+      '.json': 'application/json',
+      '.html': 'text/html',
+      '.htm': 'text/html',
+      '.txt': 'text/plain',
+      '.md': 'text/plain',
       '.svg': 'image/svg+xml',
       '.png': 'image/png',
       '.jpg': 'image/jpeg',
@@ -436,11 +450,18 @@ export default async function compatRoutes(app) {
       '.ico': 'image/x-icon',
       '.pdf': 'application/pdf',
       '.mp4': 'video/mp4',
+      '.wasm': 'application/wasm',
       '.woff': 'font/woff',
       '.woff2': 'font/woff2',
     }
     reply.type(MIME[ext] || 'application/octet-stream')
-    reply.header('cache-control', 'public, max-age=600')
+    /*
+     * 静态素材给 7 天：assets 里的东西（课程配图、示例用的库）跟着课程内容走，
+     * 极少变；老师换图时文件名通常也变。原来只给 600 秒，等于每次上课都重新下。
+     * 代理侧对 /api/assets/ 是 365 天，浏览器这层给 7 天就够。
+     */
+    const longLived = ['.js', '.mjs', '.css', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.woff', '.woff2', '.ico'].includes(ext)
+    reply.header('cache-control', longLived ? 'public, max-age=604800' : 'public, max-age=3600')
     return fs.createReadStream(full)
   })
 
