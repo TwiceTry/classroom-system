@@ -173,7 +173,20 @@ export function setPassword(pwd) {
 
 export const config = {
   port: Number(process.env.TS_PORT || stored.port || 18730),
-  host: process.env.TS_HOST || '0.0.0.0',
+  /*
+   * 默认 '::' 双栈：同一条监听同时接受 IPv4 和 IPv6。
+   *
+   * 原来是 '0.0.0.0'（**只** IPv4）—— 隧道或校园网给的是 IPv6 地址时就连不上，
+   * 教学机代理填 IPv6 目标也连不过来（代理那边 connect_out 已改成双栈）。
+   *
+   * 本机实测 listen({ host:'::' }) 之后：
+   *   http://127.0.0.1:18730  → 200 · 8ms   （IPv4 走 IPv4-mapped）
+   *   http://[::1]:18730      → 200 · 1ms
+   *
+   * 少数 Linux 发行版把 '::' 设成 ipv6Only，那时 IPv4 进不来；
+   * 遇到就设环境变量 TS_HOST=0.0.0.0 强制回纯 IPv4。
+   */
+  host: process.env.TS_HOST || '::',
 
   secret: tokenSecret,
   edgeKey,

@@ -20,7 +20,19 @@ setEventHook((classId, sid) => scheduleSheet(classId, sid))
 const app = await buildApp()
 
 try {
-  await app.listen({ port: config.port, host: config.host })
+  /*
+   * ipv6Only: false —— 关键，别删。
+   *
+   * Windows 上 Node 对 host='::' 默认设 IPV6_V6ONLY=1（Linux 相反），
+   * 结果只有 loopback 的 IPv4-mapped 能进，**局域网 IPv4 全部超时**。
+   * 实测 192.168.5.226:18730 直接不可达，而 127.0.0.1 却正常 —— 很容易看漏。
+   *
+   * 显式关掉之后三种地址都能访问：
+   *   127.0.0.1 / [::1] / 192.168.x.x
+   *
+   * host 是 '0.0.0.0' 时这个选项无意义，传了也不报错。
+   */
+  await app.listen({ port: config.port, host: config.host, ipv6Only: false })
   app.log.info('api listening on ' + config.host + ':' + config.port)
   console.log('')
   console.log('  课堂系统 · API（Fastify + SQLite）')
