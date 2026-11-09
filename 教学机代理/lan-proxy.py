@@ -403,6 +403,17 @@ def cache_policy(path):
             return 0, 0
         return TTL_CONTENT, TTL_CONTENT
 
+    if p.startswith('/api/examples'):
+        # 代码示例的文件清单 + 源码：纯课程内容，和是谁在请求无关。
+        # 实测 40 人切 3 节课 = 40 × 3 × 14.8KB ≈ 1.8MB 全打上游；
+        # 缓存 60 秒后只出一次（≈15KB），省 1.7MB。
+        # 老师改示例走 content-edit，改完 60 秒内生效，够快。
+        return TTL_CONTENT, TTL_CONTENT
+
+    if p.startswith('/api/courses/') and '/content/list' in p:
+        # 课程材料目录树：同样是公开内容，40 人各拉一次就是 164KB。
+        return TTL_CONTENT, TTL_CONTENT
+
     # ---- 其它一律不缓存 ----
     if p.startswith('/api/') or p.startswith('/download/'):
         # 记分、名单、导出的 xlsx、状态、投屏控制…… 都是实时数据。
