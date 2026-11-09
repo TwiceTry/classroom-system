@@ -989,10 +989,10 @@ def warmup_cache():
         return
     time.sleep(2)  # 等 httpd 真正开始 accept
 
-    def fetch(path, timeout=60):
+    def req(method, path, headers=None, body=None, timeout=60):
         c = HTTPConnection('127.0.0.1', LISTEN_PORT, timeout=timeout)
         try:
-            c.request('GET', path)
+            c.request(method, path, body=body, headers=headers or {})
             r = c.getresponse()
             return r.status, r.read()
         finally:
@@ -1001,10 +1001,13 @@ def warmup_cache():
             except Exception:
                 pass
 
+    t0 = time.time()
+
+    # ---------- ① 静态资源 ----------
     paths = ['/']
     # assets 文件名带 hash，只能从 HTML 里抠
     try:
-        st, body = fetch('/', 30)
+        st, body = req('GET', '/', timeout=30)
         if st == 200:
             text = body.decode('utf-8', 'ignore')
             for m in re.finditer(r'/assets/[A-Za-z0-9._-]+\.(?:js|css)', text):
@@ -1018,15 +1021,93 @@ def warmup_cache():
             paths.append(p)
 
     ok = 0
-    t0 = time.time()
     for p in paths:
         try:
-            st, _ = fetch(p)
+            st, _ = req('GET', p)
             if st == 200:
                 ok += 1
         except Exception:
             pass
-    print('  预热缓存：%d/%d 个资源已就位（%.1f 秒）' % (ok, len(paths), time.time() - t0))
+    print('  预热静态：%d/%d 个资源（%.1f 秒）' % (ok, len(paths), time.time() - t0))
+
+    # ---------- ② 用教师身份预热公开内容 ----------
+    # 材料正文、代码示例、材料目录都需要登录才给 —— 但它们的内容和「是谁在请求」无关，
+    # 缓存 key 是 method+path（不含 token），所以预热一次全班共享。
+    #
+    # 绝不能预热 /api/bootstrap、/api/classes/:id/scores 这类按人返回的数据：
+    # 缓存 key 不含 token，A 的个人分数会被发给全班。路径上它们本来就不缓存，这里也不碰。
+    pw = str(conf_get('warmup.password', '') or '').strip()
+    if not pw:
+        # 同机部署（开发和测试）直接从 data/config.json 读，省得再配一遍
+        try:
+            cfg_file = os.path.join(os.path.dirname(os.path.abspath(CONF_PATH)), '..', 'data', 'config.json')
+            with open(cfg_file, 'r', encoding='utf-8-sig') as f:
+                pw = str(json.load(f).get('teacherPassword') or '').strip()
+        except Exception:
+            pw = ''
+
+    if not pw:
+        print('  预热内容：跳过（没配 warmup.password，且本地没有 data/config.json）')
+        return
+
+    try:
+        st, body = req('POST', '/api/auth/login/teacher',
+                       {'Content-Type': 'application/json'},
+                       json.dumps({'password': pw}).encode('utf-8'), timeout=30)
+        token = (json.loads(body.decode('utf-8')) or {}).get('token') if st == 200 else ''
+    except Exception as e:
+        verbose('预热：教师登录失败（%s）' % e)
+        token = ''
+    if not token:
+        print('  预热内容：跳过（教师登录失败，检查 warmup.password）')
+        return
+
+    H = {'Authorization': 'Bearer ' + token}
+    got = 0
+
+    # 课程 id
+    course_id = ''
+    try:
+        st, body = req('GET', '/api/bootstrap', H)
+        if st == 200:
+            cs = (json.loads(body.decode('utf-8')) or {}).get('courses') or []
+            if cs:
+                course_id = cs[0].get('id') or ''
+    except Exception:
+        pass
+
+    # 材料目录 + 每篇正文
+    if course_id:
+        try:
+            st, _ = req('GET', '/api/courses/%s/content/list?type=materials&path=materials' % quote(course_id), H)
+            if st == 200:
+                got += 1
+        except Exception:
+            pass
+
+    # 代码示例：清单 + 每节课的文件
+    lessons = []
+    try:
+        st, body = req('GET', '/api/examples', H)
+        if st == 200:
+            got += 1
+            lessons = (json.loads(body.decode('utf-8')) or {}).get('lessons') or []
+    except Exception:
+        pass
+
+    # 前 25 课足够覆盖一学期初期；全拉 75 课会让启动多花十几秒
+    for les in lessons[:25]:
+        d = (les or {}).get('dir') or ''
+        if not d:
+            continue
+        try:
+            st, _ = req('GET', '/api/examples/' + quote(d), H, timeout=30)
+            if st == 200:
+                got += 1
+        except Exception:
+            pass
+
+    print('  预热内容：%d 项公开内容已就位（%.1f 秒）' % (got, time.time() - t0))
 
 
 def edge_loop():
