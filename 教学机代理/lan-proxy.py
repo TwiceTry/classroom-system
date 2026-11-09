@@ -483,6 +483,33 @@ class UpstreamPool(object):
         self.lock = threading.Lock()
         self.free = {}
 
+    def put(self, target, conn):
+        """用完的连接放回池子，下次 take 时复用（省掉 TCP + TLS 握手）。
+
+        这个方法原来**不存在**：两处调用 POOL.put(target, conn) 都抛
+        AttributeError，被外面宽泛的 `except Exception: pass` 吞掉，
+        所以连接从来没进过池子 —— 每个请求都新建 TCP + TLS。
+
+        后果（40 人压测实测）：
+          1500 次请求 = 1500 次 TLS 握手，单轮 40~80 秒；
+          连续压测时 TIME_WAIT 堆积（Windows 120 秒回收），
+          端口逐渐耗尽 → 连不上上游 → 学生看到 502。
+          表现是「第一次还行，越跑越差」，很像上游隧道扛不住，
+          但直接并发打上游 40 个只要 23ms，根本没压力。
+        """
+        key = id(target)
+        now = time.time()
+        with self.lock:
+            lst = self.free.get(key) or []
+            if len(lst) >= POOL_MAX:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                return
+            lst.append((conn, now))
+            self.free[key] = lst
+
     def take(self, target):
         """拿一条空闲连接。
 
@@ -496,9 +523,9 @@ class UpstreamPool(object):
         now = time.time()
         with self.lock:
             lst = self.free.get(key) or []
+            picked = None
             keep = []
-            while lst:
-                item = lst.pop()
+            for item in lst:
                 conn, born = item if isinstance(item, tuple) else (item, now)
                 if now - born > POOL_IDLE:
                     try:
@@ -506,18 +533,27 @@ class UpstreamPool(object):
                     except Exception:
                         pass
                     continue
+                alive = False
                 try:
-                    if conn.sock is not None and conn.sock.fileno() != -1 and self._alive(conn):
-                        # 借出去的那条**不要**放回 free（它正在被这个请求用着）
-                        self.free[key] = keep
-                        return conn, True
+                    alive = (conn.sock is not None
+                             and conn.sock.fileno() != -1
+                             and self._alive(conn))
                 except Exception:
-                    pass
-                try:
-                    conn.close()
-                except Exception:
-                    pass
+                    alive = False
+                if not alive:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    continue
+                if picked is None:
+                    # 这条借出去给当前请求用，不留在 free 里
+                    picked = conn
+                else:
+                    keep.append((conn, born))
             self.free[key] = keep
+        if picked is not None:
+            return picked, True
         return None, False
 
     @staticmethod
@@ -922,6 +958,64 @@ def watchdog_loop():
             FANOUT.watchdog()
         except Exception:
             pass
+
+
+def warmup_cache():
+    """启动后主动拉一遍首页 + 静态资源 + 运行时库，把缓存填热。
+
+    为什么需要（实测数据）：
+      40 人冷启动、学生只肯等 3 秒 → 只有 22/40 成功、37 次刷新。
+      热缓存同样的 40 人是 40/40、零刷新。
+
+    机制：第一个学生要经公网隧道拉 2.35MB 的运行时库，其余 39 个卡在
+    防穿透锁上（INFLIGHT_WAIT=45 秒）干等。真实学生等 3 秒就 F5，
+    于是全部挤进等待队列、越刷越慢 —— 越等越糟的正反馈。
+
+    预热之后学生第一波打开全是缓存命中（实测 1~4ms），根本不用排队。
+    代价：代理启动时多花几秒、多拉本来也要拉的 2.5MB。
+    """
+    if not CACHE_ENABLED:
+        return
+    time.sleep(2)  # 等 httpd 真正开始 accept
+
+    def fetch(path, timeout=60):
+        c = HTTPConnection('127.0.0.1', LISTEN_PORT, timeout=timeout)
+        try:
+            c.request('GET', path)
+            r = c.getresponse()
+            return r.status, r.read()
+        finally:
+            try:
+                c.close()
+            except Exception:
+                pass
+
+    paths = ['/']
+    # assets 文件名带 hash，只能从 HTML 里抠
+    try:
+        st, body = fetch('/', 30)
+        if st == 200:
+            text = body.decode('utf-8', 'ignore')
+            for m in re.finditer(r'/assets/[A-Za-z0-9._-]+\.(?:js|css)', text):
+                if m.group(0) not in paths:
+                    paths.append(m.group(0))
+    except Exception as e:
+        verbose('预热：首页没拉到（%s）' % e)
+
+    for p in ('/lib/vue.global.js', '/lib/vue3-sfc-loader.js', '/lib/sfc-boot.js'):
+        if p not in paths:
+            paths.append(p)
+
+    ok = 0
+    t0 = time.time()
+    for p in paths:
+        try:
+            st, _ = fetch(p)
+            if st == 200:
+                ok += 1
+        except Exception:
+            pass
+    print('  预热缓存：%d/%d 个资源已就位（%.1f 秒）' % (ok, len(paths), time.time() - t0))
 
 
 def edge_loop():
@@ -2704,6 +2798,11 @@ def main():
         _wd_thread = threading.Thread(target=watchdog_loop, daemon=True)
         _wd_thread.start()
         print('  投屏看门狗：每 10 秒检查一次上游通道')
+
+    # 预热缓存：先把首页/静态资源/运行时库拉一遍，学生第一波来就是命中。
+    # 不预热的话 40 人冷启动会全卡在防穿透锁上等（学生 3 秒就刷新）。
+    if CACHE_ENABLED:
+        threading.Thread(target=warmup_cache, daemon=True).start()
 
     # listen.host 填 IPv6（'::' 或具体地址）→ 用双栈 Server6
     _srv_cls = Server6 if _is_ipv6(LISTEN_HOST) else Server
