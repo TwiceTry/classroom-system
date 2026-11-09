@@ -41,6 +41,20 @@ import ssl
 import sys
 import threading
 import time
+
+# warmup.py 是同目录的兄弟模块。有些启动方式（工作目录被改过、
+# 用绝对路径从别处拉起）不会把脚本目录放进 sys.path，直接 import 会
+# ModuleNotFoundError —— 表现是「启动日志里没有预热那两行」，很难查。
+_here_dir = os.path.dirname(os.path.abspath(__file__))
+if _here_dir not in sys.path:
+    sys.path.insert(0, _here_dir)
+try:
+    import warmup
+except Exception as _warmup_err:
+    # 别静默吞：加载失败的话预热整个不跑，日志里只是「少了两行」，
+    # 很容易误判成「预热关了」或者「代理坏了」
+    warmup = None
+    sys.stderr.write('warmup.py 加载失败：%r\n' % (_warmup_err,))
 from http.client import HTTPConnection, HTTPSConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, quote
@@ -972,223 +986,24 @@ def watchdog_loop():
 
 
 def warmup_cache():
-    """启动后主动拉一遍首页 + 静态资源 + 运行时库，把缓存填热。
+    """预热缓存 —— 实现在 warmup.py。
 
-    为什么需要（实测数据）：
-      40 人冷启动、学生只肯等 3 秒 → 只有 22/40 成功、37 次刷新。
-      热缓存同样的 40 人是 40/40、零刷新。
+    抽出去的原因：这段逻辑两百多行，和代理主流程无关；
+    名单也改成配置了（proxy.conf 的 warmup.* 项），以后调预热不用碰主文件。
 
-    机制：第一个学生要经公网隧道拉 2.35MB 的运行时库，其余 39 个卡在
-    防穿透锁上（INFLIGHT_WAIT=45 秒）干等。真实学生等 3 秒就 F5，
-    于是全部挤进等待队列、越刷越慢 —— 越等越糟的正反馈。
-
-    预热之后学生第一波打开全是缓存命中（实测 1~4ms），根本不用排队。
-    代价：代理启动时多花几秒、多拉本来也要拉的 2.5MB。
+    为什么需要预热（实测 40 人 / 学生只肯等 3 秒）：
+      不预热  22/40 成功 · 37 次刷新 · 公网 9.63 MB
+      预热后  40/40 成功 ·  0 次刷新 · 公网 1.28 MB
     """
-    if not CACHE_ENABLED:
+    if warmup is None:
         return
-    time.sleep(2)  # 等 httpd 真正开始 accept
-
-    def req(method, path, headers=None, body=None, timeout=60):
-        c = HTTPConnection('127.0.0.1', LISTEN_PORT, timeout=timeout)
-        try:
-            c.request(method, path, body=body, headers=headers or {})
-            r = c.getresponse()
-            return r.status, r.read()
-        finally:
-            try:
-                c.close()
-            except Exception:
-                pass
-
-    t0 = time.time()
-
-    # ---------- ① 静态资源 ----------
-    #
-    # 分两层抠：
-    #   · HTML 里只有入口 bundle（index-*.js / index-*.css）
-    #   · 路由懒加载的 20~50 个 chunk（StudentLayout / Materials / Playground…）
-    #     名字全在入口 bundle 里（Vite 的 chunk 映射），只能拉下来再正则
-    # 只拉 HTML 那一层的话，学生进材料页/代码页时每个 chunk 都还要 MISS 一次。
-    paths = ['/']
-    entry_js = ''
     try:
-        st, body = req('GET', '/', timeout=30)
-        if st == 200:
-            text = body.decode('utf-8', 'ignore')
-            for m in re.finditer(r'/assets/[A-Za-z0-9._-]+\.(?:js|css)', text):
-                if m.group(0) not in paths:
-                    paths.append(m.group(0))
-            em = re.search(r'/assets/index-[A-Za-z0-9_-]+\.js', text)
-            if em:
-                entry_js = em.group(0)
-    except Exception as e:
-        verbose('预热：首页没拉到（%s）' % e)
-
-    if entry_js:
-        try:
-            st, body = req('GET', entry_js, timeout=60)
-            if st == 200:
-                js = body.decode('utf-8', 'ignore')
-                # Vite 产物里 chunk 名形如 StudentLayout-B9kT2wJU.js
-                for m in re.finditer(r'[A-Za-z0-9_-]+-[A-Za-z0-9_-]{8}\.(?:js|css)', js):
-                    p = '/assets/' + m.group(0)
-                    if p not in paths:
-                        paths.append(p)
-        except Exception as e:
-            verbose('预热：入口 bundle 没拉到（%s）' % e)
-
-    for p in ('/lib/vue.global.js', '/lib/vue3-sfc-loader.js', '/lib/sfc-boot.js',
-              '/favicon.svg',
-              # 材料页的渲染库：marked 解析 md、mermaid 画图、srcdoc 处理示例
-              # 按需动态 import，HTML 和入口 bundle 里都没有字符串，只能写死
-              '/vendor/marked.min.js', '/vendor/mermaid.min.js', '/vendor/srcdoc.js'):
-        if p not in paths:
-            paths.append(p)
-
-    # SPA 各路由返回的都是同一份 HTML，但缓存 key 是完整 path ——
-    # 只预热 "/" 的话，学生进 /student/materials 还是要 MISS 一次。
-    for r in ('/login', '/student/materials', '/student/playground', '/student/score',
-              '/student/watch', '/teacher/classes', '/teacher/attendance',
-              '/teacher/courses', '/teacher/settings'):
-        if r not in paths:
-            paths.append(r)
-
-    # 几十个 chunk 串行拉要等很久（每个经隧道 ~300ms），并发 8 路
-    try:
-        from concurrent.futures import ThreadPoolExecutor
-
-        def _one(p):
-            try:
-                st, _ = req('GET', p)
-                return 1 if st == 200 else 0
-            except Exception:
-                return 0
-
-        with ThreadPoolExecutor(max_workers=16) as ex:
-            ok = sum(ex.map(_one, paths))
+        warmup.run(LISTEN_PORT, conf_get, verbose, CACHE_ENABLED)
     except Exception:
-        ok = 0
-    print('  预热静态：%d/%d 个资源（%.1f 秒）' % (ok, len(paths), time.time() - t0))
-
-    # ---------- ② 用教师身份预热公开内容 ----------
-    # 材料正文、代码示例、材料目录都需要登录才给 —— 但它们的内容和「是谁在请求」无关，
-    # 缓存 key 是 method+path（不含 token），所以预热一次全班共享。
-    #
-    # 绝不能预热 /api/bootstrap、/api/classes/:id/scores 这类按人返回的数据：
-    # 缓存 key 不含 token，A 的个人分数会被发给全班。路径上它们本来就不缓存，这里也不碰。
-    pw = str(conf_get('warmup.password', '') or '').strip()
-    if not pw:
-        # 同机部署（开发和测试）直接从 data/config.json 读，省得再配一遍
-        try:
-            cfg_file = os.path.join(os.path.dirname(os.path.abspath(CONF_PATH)), '..', 'data', 'config.json')
-            with open(cfg_file, 'r', encoding='utf-8-sig') as f:
-                pw = str(json.load(f).get('teacherPassword') or '').strip()
-        except Exception:
-            pw = ''
-
-    if not pw:
-        print('  预热内容：跳过（没配 warmup.password，且本地没有 data/config.json）')
-        return
-
-    try:
-        st, body = req('POST', '/api/auth/login/teacher',
-                       {'Content-Type': 'application/json'},
-                       json.dumps({'password': pw}).encode('utf-8'), timeout=30)
-        token = (json.loads(body.decode('utf-8')) or {}).get('token') if st == 200 else ''
-    except Exception as e:
-        verbose('预热：教师登录失败（%s）' % e)
-        token = ''
-    if not token:
-        print('  预热内容：跳过（教师登录失败，检查 warmup.password）')
-        return
-
-    H = {'Authorization': 'Bearer ' + token}
-    got = 0
-
-    # 课程 id
-    course_id = ''
-    try:
-        st, body = req('GET', '/api/bootstrap', H)
-        if st == 200:
-            cs = (json.loads(body.decode('utf-8')) or {}).get('courses') or []
-            if cs:
-                course_id = cs[0].get('id') or ''
-    except Exception:
-        pass
-
-    # 材料目录 + 每篇正文 + 正文里的图片
-    asset_seen = set()
-    if course_id:
-        try:
-            st, _ = req('GET', '/api/courses/%s/content/list?type=materials&path=materials' % quote(course_id), H)
-            if st == 200:
-                got += 1
-        except Exception:
-            pass
-
-        # 正文的 id 是**数字课次**（1、4、7…），不是文件名。
-        # 踩过坑：一直用 "第07课-模板语法下.md" 当 id，全是 404。
-        # 这里从 1 试到 30，连续 3 次 404 就认为到头了。
-        miss_streak = 0
-        for lid in range(1, 31):
-            if miss_streak >= 3:
-                break
-            try:
-                p = '/api/content/doc?type=materials&id=%d&courseId=%s' % (lid, quote(course_id))
-                st, body = req('GET', p, H, timeout=30)
-                if st != 200:
-                    miss_streak += 1
-                    continue
-                miss_streak = 0
-                got += 1
-                # 正文里引用的图片（每篇 5~8 个品牌 logo 之类）
-                text = body.decode('utf-8', 'ignore')
-                for m in re.finditer(r'/api/content/asset\?[A-Za-z0-9%&=_.:/\-]+', text):
-                    u = m.group(0)
-                    if u in asset_seen:
-                        continue
-                    asset_seen.add(u)
-                    try:
-                        st2, _ = req('GET', u, H, timeout=30)
-                        if st2 == 200:
-                            got += 1
-                    except Exception:
-                        pass
-            except Exception:
-                miss_streak += 1
-
-    # 代码示例：清单 + 每节课的文件
-    #
-    # 注意带上 courseId！缓存 key 是 method + self.path（**含查询串**），
-    # 而前端请求的是 /api/examples?courseId=web-front-dev ——
-    # 预热时只拉 /api/examples 的话 key 对不上，等于白预热。
-    # （每节课的 /api/examples/<dir> 前端不带参数，所以那边不用加。）
-    lessons = []
-    try:
-        ex_path = '/api/examples'
-        if course_id:
-            ex_path += '?courseId=' + quote(course_id)
-        st, body = req('GET', ex_path, H)
-        if st == 200:
-            got += 1
-            lessons = (json.loads(body.decode('utf-8')) or {}).get('lessons') or []
-    except Exception:
-        pass
-
-    # 前 25 课足够覆盖一学期初期；全拉 75 课会让启动多花十几秒
-    for les in lessons[:25]:
-        d = (les or {}).get('dir') or ''
-        if not d:
-            continue
-        try:
-            st, _ = req('GET', '/api/examples/' + quote(d), H, timeout=30)
-            if st == 200:
-                got += 1
-        except Exception:
-            pass
-
-    print('  预热内容：%d 项公开内容已就位（%.1f 秒）' % (got, time.time() - t0))
+        # 预热失败不该影响代理本身，但要留下痕迹 —— 静默吞掉的话
+        # 表现就是「启动日志里没有预热那两行」，很难判断是关掉了还是崩了
+        import traceback
+        traceback.print_exc()
 
 
 def edge_loop():
