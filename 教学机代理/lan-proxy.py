@@ -973,6 +973,80 @@ def edge_report():
         verbose('快照上报失败：%s: %s' % (type(e).__name__, e))
 
 
+# 启动自检结果 —— 给启动输出和 /__proxy_health 共用
+EDGE_SELFCHECK = {'ok': None, 'status': 0, 'message': '未检查', 'at': 0}
+
+
+def edge_selfcheck():
+    """启动时验一次 edge.key 和上游对不对得上。
+
+    为什么要专门验：edge.key 填错时，所有「代表多人」的请求都被 401，而症状极隐蔽 ——
+      · 投屏黑屏：上游学生管道建起来就被 close(1008)，日志只说「已建立 → 断开 → 重连」
+      · 在线人数恒为 0：快照上报被拒
+      · 而跟随讲义 / 点名 / 代码同步照常（它们用学生自己的令牌，不碰 edge 签名）
+    三条同时成立时，最像「投屏模块的 bug」，实际上是配置错。2026-11 排查绕了很久，
+    所以把「配置对不对」变成启动时的一句话，而不是等上课时发现黑屏。
+
+    做法：用当前 key 签一个**空名单**快照打上去。
+      200 → 服务端验签通过（key 对、算法对、与服务器的时间差也在 ±300 秒内）
+      401 → key 不是这台服务器的（也顺带覆盖时钟偏差过大的情况）
+
+    空名单的意思是「这台教学机现在没人在场」，刚启动时就是事实，
+    不会污染在线状态 —— 反而比留着上一节课的旧快照干净。
+    """
+    global EDGE_SELFCHECK
+    if not EDGE_KEY:
+        EDGE_SELFCHECK = {'ok': False, 'status': 0,
+                          'message': 'proxy.conf 里没填 edge.key', 'at': int(time.time())}
+        return EDGE_SELFCHECK
+
+    body = b'{"students":[]}'
+    ts = str(int(time.time()))
+    mac = hmac.new(EDGE_KEY.encode('utf-8'), digestmod=hashlib.sha256)
+    mac.update((EDGE_SOURCE + '\n' + ts + '\n').encode('utf-8'))
+    mac.update(body)
+    sign = mac.hexdigest()
+
+    status = 0
+    text = ''
+    try:
+        raw_sock = connect_out(UP.host, UP.port, 10)
+        if is_https(UP):
+            ctx = make_tls_context()
+            conn = HTTPSConnection(UP.host, UP.port, timeout=10, context=ctx)
+            conn.sock = ctx.wrap_socket(raw_sock, server_hostname=UP.host)
+        else:
+            conn = HTTPConnection(UP.host, UP.port, timeout=10)
+            conn.sock = raw_sock
+        conn.auto_open = False
+        conn.request('POST', (UP.base_path or '') + '/api/presence/snapshot', body=body,
+                     headers={'Content-Type': 'application/json',
+                              'Content-Length': str(len(body)),
+                              'X-Edge-Source': EDGE_SOURCE,
+                              'X-Edge-Ts': ts,
+                              'X-Edge-Sign': sign})
+        resp = conn.getresponse()
+        text = resp.read()[:200].decode('utf-8', 'replace')
+        status = resp.status
+        conn.close()
+    except Exception as e:
+        EDGE_SELFCHECK = {'ok': None, 'status': 0,
+                          'message': '连不上上游（%s: %s）' % (type(e).__name__, e),
+                          'at': int(time.time())}
+        return EDGE_SELFCHECK
+
+    if status == 200:
+        EDGE_SELFCHECK = {'ok': True, 'status': status,
+                          'message': 'edge.key 与上游一致', 'at': int(time.time())}
+    elif status == 401:
+        EDGE_SELFCHECK = {'ok': False, 'status': status,
+                          'message': 'edge.key 与上游不一致', 'at': int(time.time())}
+    else:
+        EDGE_SELFCHECK = {'ok': None, 'status': status,
+                          'message': 'HTTP %s · %s' % (status, text), 'at': int(time.time())}
+    return EDGE_SELFCHECK
+
+
 def watchdog_loop():
     """投屏通道看门狗（每 10 秒）"""
     while True:
@@ -2893,6 +2967,23 @@ def print_banner():
         print('    · 看看 target 的地址与端口对不对')
         print('    · 上游是 https 且用自签证书时，配置里加 tls.insecure = yes')
         print('    · 隧道 / 防火墙也可能挡住')
+    # edge.key 自检：填错时投屏黑屏、在线人数恒 0，而跟随/点名/同步都正常 ——
+    # 最容易被误判成「投屏模块的 bug」。这里在启动阶段就把结论说出来。
+    if EDGE_KEY:
+        _ec = edge_selfcheck()
+        if _ec['ok'] is True:
+            print('  edge.key 自检：OK（与上游一致，投屏与在线人数可正常上报）')
+        elif _ec['ok'] is False:
+            print('  edge.key 自检：✗ 与上游不一致（HTTP %s）' % _ec['status'])
+            print('    → 后果：投屏黑屏、教师端在线人数恒为 0；而跟随讲义/点名/代码同步')
+            print('            看起来正常（它们用学生自己的令牌，不碰 edge 签名），很容易误判')
+            print('    → 修法：登录 target 那台的教师端，GET /api/teacher/edge-key')
+            print('           把返回的 key 抄到 proxy.conf 的 edge.key，重启代理')
+            print('    注意：本机调试那份服务和教室/公网那台各自独立生成，别抄错那一份')
+        else:
+            print('  edge.key 自检：无法确认（%s）' % _ec['message'])
+    else:
+        print('  edge.key 自检：跳过 —— 没填 edge.key，投屏只能代表 1 个人，在线人数不上报')
     print('  自检：%s:%d/__proxy_health' % ('127.0.0.1' if LISTEN_HOST == '0.0.0.0' else LISTEN_HOST, LISTEN_PORT))
     try:
         host_name = socket.gethostname()
@@ -2975,6 +3066,9 @@ def main():
                 'target': UP.raw,
                 'sampleRoute': '公网',
                 'uptimeSec': int(time.time() - START),
+                # edge.key 与上游是否一致。false 时投屏黑屏、在线人数恒 0。
+                # 学生机也能读这个接口，出问题时不用等老师翻日志。
+                'edgeSelfcheck': EDGE_SELFCHECK,
             }, ensure_ascii=False).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
