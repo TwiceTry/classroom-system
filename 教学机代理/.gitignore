@@ -1,5 +1,7 @@
-# 实际配置（含教学机 IP / 公网地址，不入库）
-/proxy.conf
+# 实际配置（含教学机 IP / 公网地址 / edge.key，不入库）
+# 用 proxy.conf* 而不是 /proxy.conf：改配置时顺手 cp 出来的 proxy.conf.bak、
+# proxy.conf.new 也含 edge.key，只写精确名会漏掉它们。
+/proxy.conf*
 
 # 预热名单（含教师口令；模板见 warmup.example.conf）
 /warmup.conf

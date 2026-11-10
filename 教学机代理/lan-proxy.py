@@ -2324,12 +2324,22 @@ class CastFanout(object):
         ws = None
         try:
             sock = open_upstream_ws(path)
+            # 之前只挂了 on_bin（投屏帧是二进制），上游发来的文本消息全被丢掉 ——
+            # 包括「这条连接不能代表其他人观看」这类拒绝理由。表现是日志只有
+            # 「已建立 → 断开 → 重连」，看不出为什么。
             ws = WsConn(sock, mask_out=True, on_bin=self.on_up_stu_bin,
+                        on_text=self.on_up_stu_text,
                         on_close=self.on_up_stu_closed)
             with self.lock:
                 self.up_stu = ws
             ws.start()
             verbose('上游学生通道已建立（投屏帧的管道，公网下行 1 份）')
+            # 排查用：签名对不上时，光看「已建立」看不出问题（服务端会立刻 close）
+            verbose('  握手 URL：%s' % path)
+            if EDGE_KEY:
+                verbose('  握手 body：%s' % hello_text[:220])
+                verbose('  edge.key sha256 前 8 位：%s' % hashlib.sha256(
+                    EDGE_KEY.encode('utf-8')).hexdigest()[:8])
             # 必须打招呼：服务器要认了这条连接才会把投屏帧广播过来
             ws.send_text(hello_text)
             return ws
@@ -2461,6 +2471,16 @@ class CastFanout(object):
         if isinstance(msg, dict) and msg.get('t') == 'mode':
             EDGE.mode = msg.get('mode') or 'idle'
             self.notify_local_presence(text)
+
+    def on_up_stu_text(self, text):
+        """上游学生管道收到的文本消息。
+
+        正常情况只有 peers / mode 这类；**出错时会收到 {"t":"error","message":...}
+        然后服务端 close(1008)**。以前这里没挂回调，拒绝理由被直接丢掉，
+        日志只剩「已建立 → 断开 → 重连」，根本看不出为什么建不起来。
+        """
+        s = text if len(text) <= 200 else text[:200] + '…'
+        verbose('上游学生通道收到文本：%s' % s)
 
     def on_up_stu_bin(self, buf):
         """服务器会把帧广播给每一条 student 连接（每个观看者一条）。
@@ -2912,6 +2932,11 @@ def main():
                     'cacheEnabled': CACHE_ENABLED,
                 'upstreamPool': {'size': POOL.size(), 'max': POOL_MAX},
                 'cast': FANOUT.stats(),
+                # 跟随/同步通道：state=idle|connecting|on · locals=本地学生数 ·
+                # got=上行收到几条广播 · fanned=分发了几份。
+                # 这组数字是「老师一按、全班跟着变」是否真的有效的唯一观察口：
+                # 在线名单走快照上报，看起来永远正常，广播断了极难发现。
+                'follow': FOLLOW.stats(),
                     'cache': st,
                     'upstream': {
                         'requests': TRAFFIC['reqs'],
