@@ -39,7 +39,7 @@ rem ################ EDIT HERE ################
 rem  1) the classroom server address:
 set "BASE_URL=http://192.168.20.200:18799"
 rem  2) which page to open:
-set "PAGE=/student/materials"
+set "PAGE="
 rem ############################################
 
 if "%BASE_URL%"=="" goto :no_url

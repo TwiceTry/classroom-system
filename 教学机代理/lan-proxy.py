@@ -1600,12 +1600,15 @@ class Handler(BaseHTTPRequestHandler):
             # 学生端要收到这两条才认为「连上了」
             ws.send_text(json.dumps({'t': 'auth-ok'}, ensure_ascii=False))
             ws.send_text(json.dumps({'t': 'cast', 'mode': EDGE.mode}, ensure_ascii=False))
+            # 课程跟随/同步：本地终结的同时挂一条上行（单条），广播由它转进来
+            FOLLOW.add_local(ws, token)
 
         def on_close():
             ident = holder.get('ident')
             if ident:
                 EDGE.drop_flags(ident.get('sid'), online=False, casting=None)
                 verbose('本地：%s 离开了' % ident.get('sid'))
+            FOLLOW.drop_local(ws)
 
         ws = WsConn(self.connection, mask_out=False, on_text=on_text, on_close=on_close,
                     reader=self.read_client)
@@ -2220,8 +2223,15 @@ class CastFanout(object):
         }
         hello = json.dumps(payload, ensure_ascii=False)
         if not EDGE_KEY:
-            # 没配 edge.key → 退回单身份握手（for 会被服务端拒绝，至少别断）
-            return hello, '/ws?role=student'
+            # 没配 edge.key → **必须去掉 for**，退回「只代表一个人」的握手。
+            #
+            # 服务端对带 for 但没签名的连接是直接 close(1008)（防冒充：「一个学生令牌
+            # 不能声称全班都在看」）。以前这里把 for 原样留下，于是这条帧管道
+            # 建起来就被踢、代理 1 秒后重连、再被踢 —— 表现为
+            # 「代理下投屏永远黑屏，学生一条帧都收不到」，而日志只有一行「已建立」。
+            # 代价：云端只记 1 个人在看；本地人数由代理改写 peers 回填（如实上报）。
+            payload.pop('for', None)
+            return json.dumps(payload, ensure_ascii=False), '/ws?role=student'
         ts = str(int(time.time()))
         mac = hmac.new(EDGE_KEY.encode('utf-8'), digestmod=hashlib.sha256)
         mac.update((EDGE_SOURCE + '\n' + ts + '\n' + 'student').encode('utf-8'))
@@ -2575,6 +2585,156 @@ class CastFanout(object):
 
 
 FANOUT = CastFanout()
+
+
+class FollowHub(object):
+    """课程跟随 / 代码同步（方案 B：本地终结 + 单条上行 + 本地扇出）
+
+        本地 presence（N 条，局域网）──┐
+                                       ├─ 1 条上游 presence（第一个学生的令牌）
+        服务端 broadcast(pgsync/…) ────┘        │
+                                                └─▶ 分发给本地 N 条
+
+    **为什么必须有一条上行**：pgsync / spotlight / stuvis 都是**服务端主动推**
+    （routes/cast.js 的 broadcast → followers）。代理若只把 presence 在本地终结、
+    不往上开连接，服务端就不知道有这批人，"老师一按、全班立刻跟着变"全部失效
+    （而在线名单走快照上报，看起来是正常的，所以极难发现）。
+
+    **为什么只用一条**：这几种广播不带「给谁」，全班收到的是同一份内容，
+    一条连接足够；在场人数仍由快照上报（EDGE）负责，两边职责不重叠。
+    上行的令牌取第一个本地连接的学生令牌（他本来就在这个班，不会凭空多出人）。
+    """
+
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.up = None            # 上游 WsConn
+        self.up_token = ''
+        self.last_token = ''      # 最近一个本地学生的令牌（上行失效后换它重试）
+        self.up_state = 'idle'    # idle / connecting / on
+        self.locals = []          # 本地 presence WsConn
+        self.got = 0              # 收到的广播条数
+        self.fanned = 0           # 分发出去的份数
+        self.last_error = ''
+
+    # ---------- 本地连接 ----------
+    def add_local(self, ws, token):
+        with self.lock:
+            if ws not in self.locals:
+                self.locals.append(ws)
+            if token:
+                self.last_token = token
+        self.ensure_up(token)
+
+    def drop_local(self, ws):
+        with self.lock:
+            if ws in self.locals:
+                self.locals.remove(ws)
+            empty = not self.locals
+        # 一个人都不在就断开上行，别白占一条公网长连接
+        if empty:
+            self.stop_up()
+
+    # ---------- 上行 ----------
+    def ensure_up(self, token):
+        if not token:
+            return
+        with self.lock:
+            if self.up_state in ('connecting', 'on'):
+                return
+            self.up_state = 'connecting'
+            self.up_token = token
+        t = threading.Thread(target=self._connect, name='follow-up')
+        t.daemon = True
+        t.start()
+
+    def _connect(self):
+        try:
+            sock = open_upstream_ws('/ws?role=presence')
+            conn = WsConn(sock, mask_out=True, on_text=self._on_text, on_close=self._on_close)
+            conn.start()
+            with self.lock:
+                self.up = conn
+                self.up_state = 'on'
+            conn.send_text(json.dumps({'t': 'auth', 'token': self.up_token}))
+            verbose('跟随通道：上行已接通（本地 %d 人）' % len(self.locals))
+        except Exception as e:
+            with self.lock:
+                self.up = None
+                self.up_state = 'idle'
+                self.last_error = str(e)
+            verbose('跟随通道：上行连不上（%s）' % e)
+
+    def _on_close(self):
+        with self.lock:
+            self.up = None
+            self.up_state = 'idle'
+            token = self.up_token
+            has_local = bool(self.locals)
+        verbose('跟随通道：上行断开')
+        if has_local and token:
+            time.sleep(1)
+            self.ensure_up(token)
+
+    def stop_up(self):
+        with self.lock:
+            conn = self.up
+            self.up = None
+            self.up_state = 'idle'
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    # ---------- 消息 ----------
+    def _on_text(self, text):
+        try:
+            msg = json.loads(text)
+        except Exception:
+            return
+        kind = msg.get('t')
+        if kind == 'auth-ok':
+            return                      # 本地那份 auth-ok 已经自造过，不重复发
+        if kind == 'auth-fail':
+            with self.lock:
+                self.last_error = '上行 auth 失败（令牌无效或过期）'
+                used = self.up_token
+                fresh = self.last_token
+                has_local = bool(self.locals)
+            verbose('跟随通道：上行 auth 失败（令牌过期/被撤销）')
+            self.stop_up()
+            # 换「最新一个学生」的令牌重试一次；令牌过期不该让同步静默失效
+            if has_local and fresh and fresh != used:
+                time.sleep(0.5)
+                self.ensure_up(fresh)
+            return
+        if kind in ('pgsync', 'spotlight', 'stuvis', 'follow', 'cast', 'spot'):
+            self.got += 1
+            self._fan(msg)
+
+    def _fan(self, msg):
+        text = json.dumps(msg, ensure_ascii=False)
+        with self.lock:
+            targets = list(self.locals)
+        for w in targets:
+            try:
+                w.send_text(text)
+                self.fanned += 1
+            except Exception:
+                pass
+
+    def stats(self):
+        with self.lock:
+            return {
+                'state': self.up_state,
+                'locals': len(self.locals),
+                'got': self.got,
+                'fanned': self.fanned,
+                'error': self.last_error,
+            }
+
+
+FOLLOW = FollowHub()
 
 
 class Server(ThreadingHTTPServer):

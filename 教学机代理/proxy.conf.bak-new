@@ -1,0 +1,44 @@
+# 教学机代理配置（改完重启生效）
+# 这份文件含 edge.key，已在 .gitignore 里，不进版本库。
+# 模板见 proxy.example.conf
+
+listen.port = 18799
+target = https://forum.r85269122.nyat.app:45600
+tls.insecure = yes
+
+# 出口网卡（随身 WiFi）
+# bind.source =（留空：由系统路由决定）
+bind.source = 192.168.100.100
+# ↑ 默认**不要**打开。
+# 这台机器上绑死源地址会直接导致出网超时（WinError 10060），而系统默认路由是好的。
+# 原因：随身 WiFi 的 IP 会变（DHCP 续租、重连、换设备），写死的 IP 一旦失效，
+# 连接就卡在 SYN 无响应 —— 报错是「连接超时」，看起来特别像网络波动，极难查。
+# 单网卡（或默认路由已经对）的机器，让系统按路由表决定就行。
+# 只有多网卡要强制分流时再打开，并且填**当前**的 IP。
+
+# ---- 缓存 ----
+cache.enabled = yes
+cache.maxbytes = 268435456
+cache.ttl.html = 300
+cache.ttl.html.verify = 1
+# 课程内容接口（examples / 材料列表 / 材料正文）的代理缓存时长。
+# 默认 60 秒太短：一节课 45 分钟里会反复过期、反复穿透。
+# 300 秒（5 分钟）兼顾「老师改内容尽快生效」和「一节课基本不重拉」。
+cache.ttl.content = 1800
+
+# ---- 上游连接池 ----
+upstream.pool = 16
+upstream.poolidle = 60
+
+# ---- 边缘端在场上报 ----
+# 上报周期（秒）。服务端 SNAPSHOT_TTL = 10 分钟才清空这个 source。
+# 选 5 秒是为了「谁在线/谁在看投屏」够灵敏：一次 2.2 秒内就能反映出来。
+# 代价：40 人快照约 9KB × 12 次/分 ≈ 4.6MB/节课。
+# 如果哪天流量吃紧，改成 30 只是这一行（离线状态最多延迟 30 秒）。
+edge.snapshot.interval = 5
+
+# 上报签名（教师端 GET /api/teacher/edge-key 取的）
+edge.key = 39a92b5e8eebfbfa265985da0bb89fe42a5e709348a546fd
+
+# 临时：排查投屏问题
+# log.verbose = yes   （压测期间关掉：每请求打日志会拖慢）
