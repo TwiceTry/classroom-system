@@ -1403,6 +1403,28 @@ class Handler(BaseHTTPRequestHandler):
             # 上游明确说「不要缓存」（no-store / private）→ 尊重它，不进缓存
             up_cc = (resp.getheader('Cache-Control') or '').lower()
             may_cache = ('no-store' not in up_cc) and ('private' not in up_cc)
+
+            # 兜底页伪装成静态资源 → 绝对不能缓存
+            #
+            # 服务端的 SPA 兜底会把「找不到的路径」返回成 index.html（200 + text/html）。
+            # 请求的是 /assets/xxx.js，拿到的却是入口页 —— 浏览器执行不了（报
+            # Unexpected token '<'），而按 /assets/ 的策略它会**缓存 365 天**，
+            # 等于让这个 chunk 名坏一整年，只能重启代理才清掉。
+            #
+            # 判据比改 TTL 精准：真资源（application/javascript / text/css）照旧长缓存，
+            # 只有「要脚本却拿到 HTML」这种明显不对的才拦下。改 TTL 的话，
+            # 为了防这个偶发情况，所有真 assets 都要从 365 天降到几分钟，代价太大。
+            try:
+                up_ct = (resp.getheader('Content-Type') or '').lower()
+                wants_static = bool(re.search(
+                    r'\.(js|mjs|css|map|json|woff2?|ttf|svg|png|jpe?g|gif|ico|wasm|mp4)(\?|$)',
+                    self.path or '', re.I))
+                if wants_static and up_ct.startswith('text/html'):
+                    may_cache = False
+                    verbose('疑似兜底页冒充资源，不缓存：%s → %s' % (self.path, up_ct))
+            except Exception:
+                pass
+
             if ttl > 0 and resp.status == 200 and may_cache:
                 # 可缓存的：整包读进来 → 存一份 → 回给浏览器
                 buf = self.read_all(resp)
