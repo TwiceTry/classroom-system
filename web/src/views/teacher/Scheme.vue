@@ -8,22 +8,28 @@
           </span></template>
         <template #sub>有哪些考核项、各占多少分、用哪条规则、哪个模块开着，都在这里改；保存后全站生效（导航、评分表、入口一起变）。
           方案跟着课程走 —— 换课程请用左下角的「课程」切换器</template>
-        <template #right>
-          <span v-if="raw" class="tag" :class="raw.version > 1 ? 'ok' : 'mute'">v{{ raw.version }}</span>
-          <button class="btn mini" :disabled="loading || !dirty" @click="revert">还原改动</button>
-          <button class="btn mini" :disabled="loading || previewing" @click="openPreview">试算对比</button>
-          <button class="btn mini" @click="downloadScheme" title="下载当前方案（scheme.json，可跨机器 / 跨课程复用）">
-            下载方案
-          </button>
-          <button class="btn mini" @click="openIO" title="导入一份 scheme.json：先看差异，再决定覆盖 / 保留 / 另存">
-            导入方案
-          </button>
-          <button class="btn primary" :disabled="loading || saving || !dirty" @click="save">
-            {{ saving ? '保存中…' : '保存方案' }}
-          </button>
-        </template>
+        <!-- 本页操作下放到下面的 .page-actions（页头只留标题和全局字号） -->
       </PageHead>
     </template>
+
+    <!-- 方案操作：只作用于这份考核方案，所以放在页面内 -->
+    <div class="page-actions">
+      <span v-if="raw" class="tag" :class="raw.version > 1 ? 'ok' : 'mute'">v{{ raw.version }}</span>
+      <span v-if="dirty" class="dim mini">有未保存的改动</span>
+      <span class="spacer"></span>
+      <button class="btn mini" :disabled="loading || !dirty" @click="revert">还原改动</button>
+      <button class="btn mini" :disabled="loading || previewing" @click="openPreview">试算对比</button>
+      <button class="btn mini" @click="downloadScheme" title="下载当前方案（scheme.json，可跨机器 / 跨课程复用）">
+        下载方案
+      </button>
+      <button class="btn mini" @click="openIO" title="导入一份 scheme.json：先看差异，再决定覆盖 / 保留 / 另存">
+        导入方案
+      </button>
+      <button class="btn primary" :disabled="loading || saving || !dirty" @click="save">
+        {{ saving ? '保存中…' : '保存方案' }}
+      </button>
+    </div>
+
     <p v-if="error" class="hint err">{{ error }}</p>
     <div v-if="errors.length" class="hint err">
       <b>方案有问题，先改完再保存：</b>

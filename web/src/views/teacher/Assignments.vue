@@ -4,11 +4,11 @@
       <PageHead>
         <template #title>{{ moduleTitle }}</template>
         <template #sub>新建 → 点「开始」收作业 → 学生交一份这里就多一条，按时间顺序排，边看边打分</template>
-        <template #right>
-          <button class="btn mini" :disabled="loading" @click="loadAll">刷新</button>
-          <button class="btn mini" @click="openLib" title="作业设计目录：已导入 / 新建的设计都可以在这里挑、导入、导出">作业目录</button>
-          <button class="btn primary" @click="openEditor('new')">＋ 新建作业</button>
-        </template>
+        <!--
+          原来这里有「刷新 / 作业目录 / ＋新建作业」三个按钮。
+          它们只作用于**这一页的作业列表**，挂在页头会让人以为作用于整个系统；
+          而且和字号控件挤一行时，标题会被压得很窄。现在下放到下面那条 .hw-actions。
+        -->
       </PageHead>
     </template>
     <p v-if="err" class="hint err">{{ err }}</p>
@@ -30,6 +30,19 @@
       <span v-if="showMissing" class="pb-miss dim">{{ missingText }}</span>
     </div>
 
+    <!-- 页面自己的操作条：只作用于这份作业列表，所以放在页面内 -->
+    <div class="page-actions">
+      <span class="dim mini">{{ list.length ? '共 ' + list.length + ' 份作业' : '' }}</span>
+      <span class="spacer"></span>
+      <button class="btn mini" :disabled="loading" @click="loadAll">刷新</button>
+      <button
+        class="btn mini"
+        @click="openLib"
+        title="作业设计目录：已导入 / 新建的设计都可以在这里挑、导入、导出"
+      >作业目录</button>
+      <button class="btn primary" @click="openEditor('new')">＋ 新建作业</button>
+    </div>
+
     <!-- 作业切换条：一个学期就几份，横向摆开比下拉好点 -->
     <div class="hwbar">
       <button
@@ -45,7 +58,7 @@
       <span v-if="a.weight && Number(a.weight) !== 1" class="cnt" :title="'权重 ' + a.weight">×{{ a.weight }}</span>
       <span class="cnt">{{ a.studentCount }}</span>
     </button>
-    <span v-if="!list.length && !loading" class="dim" style="font-size: 13px">还没有作业，点右上角「新建作业」。</span>
+    <span v-if="!list.length && !loading" class="dim" style="font-size: 13px">还没有作业，点上面「＋ 新建作业」。</span>
     </div>
 
     <template v-if="d">

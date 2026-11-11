@@ -5,38 +5,42 @@
         <template #title>课堂互动</template>
         <template #sub>抽人 → 提问 → 记分：点快捷按钮会自动抽一个本轮没抽过的学生并记分，
           抽到谁学生端同步弹「课堂点名」；也能在名单里直接加减分，实时写进「{{ itemName }}」。</template>
-        <template #right>
-          <span class="tag mute">{{ itemName }} · 满分 {{ full }}</span>
-          <button class="btn mini" :disabled="!activeId" @click="resetRoll">重置抽取</button>
-          <label class="check" title="锁定时学生点不掉弹窗，必须等你重置或换人">
-            <input
-              type="checkbox"
-              :checked="spotLock"
-              @change="setSpotLock($event.target.checked)"
-            />
-            学生端锁定
-          </label>
-          <!--
-            原来这里是 :disabled="!activeId" —— activeId 是「当前选的班级」，
-            只要选了班就一直可点，哪怕根本没在点名。改成按「有没有正在点名的人」判断，
-            并且进行中时变红，一眼看得出「现在有个点名没结束」。
-          -->
-          <button
-            class="btn mini"
-            :class="{ danger: !!current }"
-            :disabled="!current"
-            :title="current ? '收起学生端的点名提示（你自己这边的名单不动）' : '现在没有进行中的点名'"
-            @click="endSpot"
-          >
-            结束点名
-          </button>
-          <button class="btn primary" :disabled="!activeId || drawing" @click="openSpot">
-            {{ drawing ? '抽取中…' : '随机点名' }}
-          </button>
-        </template>
+        <!-- 本页操作下放到下面的 .page-actions（页头只留标题和全局字号） -->
       </PageHead>
     </template>
     <p v-if="error" class="hint err">{{ error }}</p>
+
+    <!-- 点名相关操作：只作用于这个班这次抽取，放在页面内 -->
+    <div class="page-actions">
+      <span class="tag mute">{{ itemName }} · 满分 {{ full }}</span>
+      <span class="spacer"></span>
+      <button class="btn mini" :disabled="!activeId" @click="resetRoll">重置抽取</button>
+      <label class="check" title="锁定时学生点不掉弹窗，必须等你重置或换人">
+        <input
+          type="checkbox"
+          :checked="spotLock"
+          @change="setSpotLock($event.target.checked)"
+        />
+        学生端锁定
+      </label>
+      <!--
+        :disabled 原来写的是 !activeId —— activeId 是「当前选的班级」，
+        只要选了班就一直可点，哪怕根本没在点名。改成按「有没有正在点名的人」判断，
+        并且进行中时变红，一眼看得出「现在有个点名没结束」。
+      -->
+      <button
+        class="btn mini"
+        :class="{ danger: !!current }"
+        :disabled="!current"
+        :title="current ? '收起学生端的点名提示（你自己这边的名单不动）' : '现在没有进行中的点名'"
+        @click="endSpot"
+      >
+        结束点名
+      </button>
+      <button class="btn primary" :disabled="!activeId || drawing" @click="openSpot">
+        {{ drawing ? '抽取中…' : '随机点名' }}
+      </button>
+    </div>
 
     <div class="card bar">
       <div class="classes">

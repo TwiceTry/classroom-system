@@ -462,6 +462,29 @@ textarea {
   flex-wrap: wrap;
 }
 
+/* 页面自己的操作条：从页头下放来的业务控件（刷新 / 新建 / 导入…）放这里。
+   为什么和页头分开：页头是「整个系统」的（字号），这里是「这一页」的。
+   混在一行时，标题被挤得很窄，而且看不出按钮的归属。 */
+.page-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0 0 10px;
+}
+
+/* 页头里的全局字号（PageHead 内置，各页不用自己放）。
+   和右侧业务控件之间用一条细线隔开 —— 一个是「全站设置」，一个是「本页操作」，
+   视觉上不该混成一片。 */
+.pagehead .head-fs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 10px;
+  margin-right: 2px;
+  border-right: 1px solid #e6eaee;
+}
+
 /* 页面外壳（components/PageShell.vue）：头部 + 内容区两段。
    .page 只是给 .main 一个可撑满的 flex 列，避免各页各写一层裸 div。 */
 .page {

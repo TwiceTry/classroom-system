@@ -4,20 +4,24 @@
       <PageHead>
         <template #title>{{ moduleTitle }}</template>
         <template #sub>导入试卷 / 题库 → 开始 → 学生限时作答 → 客观题自动判、主观题你判 → 自动出答卷文件</template>
-        <template #right>
-          <!--
-            label 用「试卷库」而不是「试卷」：
-            这里是**整个 content/exams 目录**的搬运（批量搬走/搬入试卷库），
-            而列表里每个机试还有「导入这份卷子」的按钮（只给那一个作业装卷子）——
-            两个都叫「导入试卷」会点错。
-          -->
-          <DirIO dir="exams" label="试卷库" />
-          <button class="btn mini" :disabled="loading" @click="loadAll">刷新</button>
-          <button class="btn primary" @click="openEditor">＋ 新建机试</button>
-        </template>
+        <!-- 本页操作下放到下面的 .page-actions（页头只留标题和全局字号） -->
       </PageHead>
     </template>
     <p v-if="err" class="hint err">{{ err }}</p>
+
+    <!--
+      试卷库搬运 / 刷新 / 新建。
+      label 用「试卷库」而不是「试卷」：这里是**整个 content/exams 目录**的搬运
+      （批量搬走/搬入试卷库），而列表里每个机试还有「导入这份卷子」的按钮
+      （只给那一个作业装卷子）—— 两个都叫「导入试卷」会点错。
+    -->
+    <div class="page-actions">
+      <span class="dim mini">{{ list.length ? '共 ' + list.length + ' 场机试' : '' }}</span>
+      <span class="spacer"></span>
+      <DirIO dir="exams" label="试卷库" />
+      <button class="btn mini" :disabled="loading" @click="loadAll">刷新</button>
+      <button class="btn primary" @click="openEditor">＋ 新建机试</button>
+    </div>
 
     <div class="hwbar">
       <button
@@ -31,7 +35,7 @@
       {{ a.title }}
       <span class="dim">{{ a.status === 'open' ? '考试中' : a.started ? '已结束' : '未开始' }}</span>
     </button>
-    <span v-if="!list.length && !loading" class="dim" style="font-size: 13px">还没建过机试，点右上角。</span>
+    <span v-if="!list.length && !loading" class="dim" style="font-size: 13px">还没建过机试，点上面「＋ 新建机试」。</span>
     </div>
 
     <template v-if="d">

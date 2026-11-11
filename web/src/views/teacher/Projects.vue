@@ -4,14 +4,18 @@
       <PageHead>
         <template #title>{{ moduleTitle }}</template>
         <template #sub>课程项目：布置 → 开始收 → 学生交说明 / 链接 / 附件（落在学生自己的目录里）→ 逐个批阅打分</template>
-        <template #right>
-          <button class="btn mini" :disabled="loading" @click="loadAll">刷新</button>
-          <button class="btn mini" @click="openLib" title="大作业设计目录：题目与附件要求都在这里">作业目录</button>
-          <button class="btn primary" @click="openEditor('new')">＋ 新建大作业</button>
-        </template>
+        <!-- 本页操作下放到下面的 .page-actions（页头只留标题和全局字号） -->
       </PageHead>
     </template>
     <p v-if="err" class="hint err">{{ err }}</p>
+
+    <div class="page-actions">
+      <span class="dim mini">{{ list.length ? '共 ' + list.length + ' 份大作业' : '' }}</span>
+      <span class="spacer"></span>
+      <button class="btn mini" :disabled="loading" @click="loadAll">刷新</button>
+      <button class="btn mini" @click="openLib" title="大作业设计目录：题目与附件要求都在这里">作业目录</button>
+      <button class="btn primary" @click="openEditor('new')">＋ 新建大作业</button>
+    </div>
 
     <div v-if="prog && prog.studentCount" class="progbar">
       <span class="pb-k">已交</span>

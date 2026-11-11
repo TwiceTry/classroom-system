@@ -4,36 +4,35 @@
       <PageHead>
         <template #title>班级管理 · 名单与分数</template>
         <template #sub>{{ itemsLine }}；这一页只看分，记分在各模块页 / 考勤页里做</template>
-        <template #right>
-          <!--
-            页头只留「整门课」级别的操作，而且导出与导入分成两个按钮 ——
-            和内容目录那条工具栏（⤓ 导出 / ⤒ 导入）保持同一套语言。
-            导出原来藏在导入弹窗里，等于「想导出得先点导入」，方向是反的。
-          -->
-          <button
-            class="btn mini"
-            :disabled="!hasClasses"
-            @click="ioExport"
-            title="把本课程所有班级与名单打成一个 zip（换机器 / 交给同事）"
-          >
-            ⤓ 导出班级与名单
-          </button>
-          <button
-            class="btn mini"
-            @click="openIO"
-            title="从一个 zip 导入班级与名单（先给逐班报告，确认后才写）"
-          >
-            ⤒ 导入班级与名单
-          </button>
-          <button class="btn mini" @click="newClass">＋ 新建班级</button>
-        </template>
       </PageHead>
     </template>
     <p v-if="error" class="hint err" style="margin-bottom:12px">{{ error }}</p>
 
+    <!-- 本页操作：导出 / 导入 / 新建，从页头下放（页头只留标题和全局字号） -->
+    <div class="page-actions">
+      <span class="dim mini">{{ classes.length ? '共 ' + classes.length + ' 个班级' : '' }}</span>
+      <span class="spacer"></span>
+      <button
+        class="btn mini"
+        :disabled="!hasClasses"
+        @click="ioExport"
+        title="把本课程所有班级与名单打成一个 zip（换机器 / 交给同事）"
+      >
+        ⤓ 导出班级与名单
+      </button>
+      <button
+        class="btn mini"
+        @click="openIO"
+        title="从一个 zip 导入班级与名单（先给逐班报告，确认后才写）"
+      >
+        ⤒ 导入班级与名单
+      </button>
+      <button class="btn mini" @click="newClass">＋ 新建班级</button>
+    </div>
+
     <div v-if="!classes.length" class="card">
       <div class="empty">
-        还没有班级。点右上角「＋ 新建班级」，建好后在名单卡片上点「⤒ 导入名单」（支持 .xlsx / .csv，也可直接粘贴）。
+        还没有班级。点上面「＋ 新建班级」，建好后在名单卡片上点「⤒ 导入名单」（支持 .xlsx / .csv，也可直接粘贴）。
       </div>
     </div>
 

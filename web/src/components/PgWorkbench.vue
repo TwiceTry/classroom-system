@@ -32,10 +32,11 @@
         <button class="btn mini" :disabled="!bundle" title="Ctrl+S" @click="run">▶ 运行</button>
         <button v-if="!readonly" class="btn mini" :disabled="!dirtyCount" @click="resetAll">↺ 还原{{ dirtyCount ? '（' + dirtyCount + '）' : '' }}</button>
         <label class="check"><input v-model="autoRun" type="checkbox" /> 自动运行</label>
-        <span class="fontbox">
-          <button class="btn mini" title="字号 -" @click="adjustFont(-1)">A−</button>
-          <button class="btn mini" title="字号 +" @click="adjustFont(1)">A+</button>
-        </span>
+        <!--
+          原来这里有一组 A− / A+，改字号只影响编辑器。
+          现在字号是全站的、控件由 PageHead 内置（再放一组就重复了），
+          这里删掉；Ctrl+滚轮仍然能调（走 usePgEditor 的 onFontDelta）。
+        -->
         <button class="btn mini" :title="layout === 'row' ? '改成上下排列' : '改成左右排列'" @click="toggleLayout">
           {{ layout === 'row' ? '上下排' : '左右排' }}
         </button>

@@ -4,18 +4,16 @@
       <PageHead>
         <template #title>课程材料</template>
         <template #sub>每课一份，随时回看</template>
-        <template #right>
-          <span v-if="following" class="tag ok" :title="'老师正在讲：' + following">
-            跟随中 · {{ shortFollowing }}
-          </span>
-          <input v-model.trim="q" class="input" placeholder="搜课名" style="width: 140px" />
-          <button class="btn mini" title="全站字号：讲义、材料、代码一起变" @click="adjustDoc(-1)">A−</button>
-          <span class="dim">{{ docPx }}</span>
-          <button class="btn mini" title="全站字号：讲义、材料、代码一起变" @click="adjustDoc(1)">A+</button>
-        </template>
+        <!-- 页头只留标题和全局字号；搜索和「跟随中」下放到左侧列表顶上 -->
       </PageHead>
     </template>
     <aside class="lesson-list">
+      <div class="list-tools">
+        <span v-if="following" class="tag ok" :title="'老师正在讲：' + following">
+          跟随中 · {{ shortFollowing }}
+        </span>
+        <input v-model.trim="q" class="input" placeholder="搜课名" />
+      </div>
       <button v-for="l in filtered" :key="l.id" :class="{ on: l.id === activeId }" @click="open(l.id)">
         <span class="no">{{ l.kind === 'lesson' ? '第' + String(l.no).padStart(2, '0') + '课' : '' }}</span>
         {{ l.title }}
@@ -59,8 +57,8 @@ import { useFontSize } from '../../composables/useFontSize'
 
 const q = ref('')
 const activeId = ref(localStorage.getItem('materials-id') || '')
-/* 字号全站统一（原来读 materials-size，同样从来没人写，刷新就回 15.5） */
-const { docPx, adjustDoc } = useFontSize()
+/* 字号控件已经收进 PageHead（全站一处），这里只要值来渲染正文 */
+const { docPx } = useFontSize()
 const doc = ref({})
 const loading = ref(false)
 const error = ref('')
@@ -180,6 +178,19 @@ async function open(id, opts) {
 </script>
 
 <style scoped>
+/* 左侧列表顶上的搜索条（从页头下放来的）：
+   搜索的是"哪一课"，属于列表自己的工具，放在列表头上最顺手。 */
+.list-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px 8px;
+}
+.list-tools .input {
+  flex: 1;
+  min-width: 0;
+}
+
 .follow-toast {
   position: fixed;
   left: 50%;
