@@ -2,10 +2,34 @@
   <aside class="files">
     <div class="files-head">
       <span class="mono ellip">{{ dirLabel }}</span>
+      <button
+        class="addbtn"
+        :disabled="!canAdd"
+        :title="addHint || '新建一个文件'"
+        @click="startAdd"
+      >
+        +
+      </button>
       <label class="eye" title="连页面和入口文件一起显示">
         <input :checked="showAll" type="checkbox" @change="$emit('update:showAll', $event.target.checked)" /> 全部
       </label>
     </div>
+
+    <!-- 新建文件：内联输入，不弹窗（机房机器上弹窗容易点错） -->
+    <div v-if="adding" class="addrow">
+      <input
+        ref="addInput"
+        v-model="addName"
+        class="addinput"
+        placeholder="文件名，如 style.css"
+        spellcheck="false"
+        @keydown.enter.prevent="commitAdd"
+        @keydown.esc.prevent="cancelAdd"
+      />
+      <button class="addok" @click="commitAdd">建</button>
+      <button class="addcancel" @click="cancelAdd">取消</button>
+    </div>
+    <p v-if="addErr" class="adderr">{{ addErr }}</p>
 
     <div class="treescroll">
       <div v-for="(g, gi) in tree.groups" :key="gi" class="grp">
@@ -39,7 +63,14 @@
           >
             <FileIcon :path="it.path" :size="15" />
             <span class="ellip">{{ shortName(g, it.path) }}</span>
+            <span v-if="isNewPath(it.path)" class="newtag" title="你新建的文件">新</span>
             <span v-if="isDirty(it.path)" class="dot"></span>
+            <span
+              v-if="isNewPath(it.path)"
+              class="del"
+              title="删除这个文件（只删得掉自己新建的）"
+              @click.stop="askRemove(it.path)"
+            >×</span>
           </button>
         </template>
       </div>
@@ -65,6 +96,7 @@
  * 一个容易踩的点：`closed` 是父组件的 reactive 对象，别在这里复制一份，
  * 否则两边的收起状态会各走各的。
  */
+import { nextTick, ref } from 'vue'
 import { baseOf, visibleItemsOf } from '../../utils/pgTree'
 import FileIcon from '../FileIcon.vue'
 
@@ -82,13 +114,71 @@ const props = defineProps({
   storeFail: { type: Boolean, default: false },
   footText: { type: String, default: '' },
   footTitle: { type: String, default: '' },
+  /* ---- 新建文件 ---- */
+  /** 现在能不能新建（只读 / 老师在推代码时为 false） */
+  canAdd: { type: Boolean, default: false },
+  /** 「+」的提示，由父组件按身份给不同文案 */
+  addHint: { type: String, default: '' },
+  /** 学生自己新建的那些路径 */
+  newPaths: { type: Array, default: () => [] },
+  /**
+   * 新建 / 删除的执行函数，由父组件传进来（`(name) => ({ ok, why })`）。
+   *
+   * 为什么用函数 prop 而不是 emit：执行结果（失败原因）要立刻显示在输入框下面，
+   * emit 是单向的、拿不到返回值，只能再加一路事件转发，反而更绕。
+   */
+  doAdd: { type: Function, default: null },
+  doRemove: { type: Function, default: null },
 })
 
 defineEmits(['open-group', 'open-file', 'toggle-group', 'update:showAll', 'clear-saved'])
 
-/** 某个文件改过没有（和原始示例比） */
+/* ---------------- 新建文件 ---------------- */
+const adding = ref(false)
+const addName = ref('')
+const addErr = ref('')
+const addInput = ref(null)
+
+function startAdd() {
+  if (!props.canAdd) {
+    addErr.value = props.addHint || '现在不能新建'
+    return
+  }
+  adding.value = true
+  addErr.value = ''
+  addName.value = ''
+  nextTick(() => addInput.value && addInput.value.focus())
+}
+
+function cancelAdd() {
+  adding.value = false
+  addName.value = ''
+  addErr.value = ''
+}
+
+function commitAdd() {
+  const r = props.doAdd ? props.doAdd(addName.value) : { ok: false, why: '不支持新建' }
+  if (!r || !r.ok) {
+    addErr.value = (r && r.why) || '新建失败'
+    return
+  }
+  cancelAdd()
+}
+
+function askRemove(p) {
+  if (!window.confirm('删除「' + p + '」？这个文件是你自己新建的，删了就没了。')) return
+  const r = props.doRemove ? props.doRemove(p) : { ok: false, why: '不支持删除' }
+  if (!r || !r.ok) addErr.value = (r && r.why) || '删除失败'
+}
+
+function isNewPath(p) {
+  return (props.newPaths || []).indexOf(p) >= 0
+}
+
+/** 某个文件改过没有（和原始示例比）；学生新建的天然算「改过」 */
 function isDirty(p) {
   if (!p) return false
+  if (isNewPath(p)) return true
   const files = (props.bundle && props.bundle.files) || []
   const f = files.find((x) => x.path === p)
   if (!f) return false
@@ -243,5 +333,84 @@ function shortPage(p) {
   border-radius: 50%;
   background: #d08a2c;
   margin-left: auto;
+}
+
+/* ---------------- 新建文件 ---------------- */
+.addbtn {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  line-height: 1;
+  border: 1px solid #d5dbe2;
+  background: #fff;
+  border-radius: 5px;
+  color: #5b7b86;
+  font-size: 14px;
+  cursor: pointer;
+}
+.addbtn:hover:not(:disabled) {
+  border-color: #9dbcc8;
+  color: #2b6cb0;
+}
+.addbtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.addrow {
+  display: flex;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #e8eef2;
+}
+.addinput {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 7px;
+  border: 1px solid #d5dbe2;
+  border-radius: 5px;
+  font-size: 12px;
+  font-family: inherit;
+}
+.addok,
+.addcancel {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid #d5dbe2;
+  background: #fff;
+  border-radius: 5px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.addok {
+  color: #2e7d32;
+  border-color: #cfe6cf;
+}
+.adderr {
+  margin: 4px 10px 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #c0392b;
+}
+.newtag {
+  flex: none;
+  margin-left: 4px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: #eef6ff;
+  color: #2b6cb0;
+  font-size: 10px;
+  line-height: 14px;
+}
+.item .del {
+  flex: none;
+  margin-left: 4px;
+  padding: 0 3px;
+  color: #b0b9c2;
+  font-size: 13px;
+  cursor: pointer;
+}
+.item .del:hover {
+  color: #c0392b;
 }
 </style>

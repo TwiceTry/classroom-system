@@ -67,11 +67,16 @@
           :store-fail="storeFail"
           :foot-text="footText"
           :foot-title="footTitle"
+          :can-add="canAddFile"
+          :add-hint="addHint"
+          :new-paths="newFilePaths"
+          :do-add="addFile"
+          :do-remove="removeFile"
           @open-group="openGroup"
           @open-file="openFile"
           @toggle-group="toggleGroup"
           @clear-saved="clearSaved"
-        />
+          />
 
         <div class="stack">
         <section v-show="!codeHidden" class="editor" :style="{ flexBasis: codePct + '%' }">
@@ -133,6 +138,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { api } from '../api'
 import { buildTree, isPage as isPagePath, baseOf, visibleItemsOf } from '../utils/pgTree'
+/* 新建文件的规则（校验、骨架、上限）—— usePgStore 恢复存档时用的是同一套 */
+import {
+  checkNewName,
+  skeletonFor,
+  NEW_FILE_MAX_COUNT,
+  NEW_FILES_TOTAL_MAX,
+} from '../utils/pgFile'
 import { createEditor, langNameFor } from '../utils/pgEditor'
 import { buildPreviewDoc, ensureSfcSrcdoc, isNpmProject } from '../utils/pgPreview'
 import { usePgLayout } from '../composables/usePgLayout'
@@ -235,10 +247,114 @@ const { storeFail, saved, scopeOf, storeKey, pageKey, flushEdits, scheduleSave, 
   isFrozen: () => frozenCheck(),
 })
 
-const pages = computed(() =>
-  bundle.value ? bundle.value.files.filter((f) => isPagePath(f.path)).map((f) => f.path) : []
-)
-const tree = computed(() => (bundle.value ? buildTree(bundle.value.files) : { groups: [], byPath: {} }))
+/**
+ * 【唯一出口】服务端原文 + 本机改动 + 本机新建
+ *
+ * 预览（buildPreviewDoc）、提交（slot 的 all-files）、文件树、页面下拉
+ * 全部从它派生 —— 早先这三处各读各的 bundle.files，加「新建文件」时
+ * 就得改四个地方，漏一个就出现「建了看不见 / 交了没有」。
+ *
+ * 跟随时不并入新建文件：那一刻屏幕上是老师推的代码，混进学生自己的文件
+ * 会让预览和同步都对不上。跟完切回自己的目录，文件还在。
+ */
+const allFiles = computed(() => {
+  if (!bundle.value) return []
+  const base = bundle.value.files
+  const out = base.map((f) => ({
+    path: f.path,
+    text: edits[f.path] !== undefined ? edits[f.path] : f.text,
+  }))
+  if (!frozenCheck()) {
+    for (const p in edits) {
+      if (base.some((f) => f.path === p)) continue
+      out.push({ path: p, text: edits[p], isNew: true })
+    }
+  }
+  return out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+})
+
+/* ---------------- 新建 / 删除文件 ----------------
+ * 校验规则在 utils/pgFile.js（usePgStore 从 localStorage 恢复时用的是同一套）。
+ * 只允许「一级文件名」：服务端 lib/submitstore.js 的 safeName() 会把 / 换成 _，
+ * 带目录提交后名字就变了，老师端对不上。
+ */
+const canAddFile = computed(() => !props.readonly && !frozenCheck())
+
+/**
+ * 「+」按钮的提示文案。
+ *
+ * 老师身份要特意说清「只在本机试写」—— 代码工作台里改的东西从来不落库
+ * （改课程示例走「课程管理」那套 content-edit 接口），不说的话老师会以为
+ * 自己改到示例里去了，下节课发现没变。
+ */
+const addHint = computed(() => {
+  if (props.readonly) return '只读，不能新建'
+  if (frozenCheck()) return '老师正在推代码，暂停新建'
+  if (state.role === 'teacher') {
+    return '在这台电脑上试写（只存本机，不进课程示例）；要改示例请用「课程管理」'
+  }
+  return '新建的文件只存在这台电脑上；交作业时会随「整份提交」一起交上去'
+})
+
+const newFilePaths = computed(() => {
+  const base = (bundle.value && bundle.value.files) || []
+  return Object.keys(edits).filter((p) => !base.some((f) => f.path === p))
+})
+
+const newFileBytes = computed(() => newFilePaths.value.reduce((n, p) => n + String(edits[p] || '').length, 0))
+
+/** 新建一个文件：返回 { ok, why } —— 失败原因要能直接显示给用户 */
+function addFile(rawName) {
+  if (!canAddFile.value) {
+    return { ok: false, why: props.readonly ? '只读模式不能新建' : '老师正在推代码，先停下来再新建' }
+  }
+  const name = String(rawName || '').trim()
+  const chk = checkNewName(name, allFiles.value.map((f) => f.path))
+  if (!chk.ok) return chk
+  if (newFilePaths.value.length >= NEW_FILE_MAX_COUNT) {
+    return { ok: false, why: '一次最多新建 ' + NEW_FILE_MAX_COUNT + ' 个文件' }
+  }
+  const body = skeletonFor(name)
+  if (newFileBytes.value + body.length > NEW_FILES_TOTAL_MAX) {
+    return { ok: false, why: '本机存档装不下了（新建文件总量上限 1.5 MB）' }
+  }
+  edits[name] = body
+  /*
+   * 立刻打开它：新建完不打开，学生会以为没建成。
+   * 然后**立即** flushEdits，不用 scheduleSave —— 因为 openFile 会让编辑器加载这个
+   * 文件，触发一次 onChange → 又一次 scheduleSave，400ms 的定时器被重置；
+   * 学生这时候刷新页面，文件就没了（实测踩过一次）。新建是低频操作，同步存一下。
+   */
+  nextTick(() => openFile(name))
+  flushEdits()
+  return { ok: true, why: '' }
+}
+
+/** 删一个**自己新建**的文件；起手文件不给删（题目结构要稳） */
+function removeFile(p) {
+  const f = allFiles.value.find((x) => x.path === p)
+  if (!f) return { ok: false, why: '没有这个文件' }
+  if (!f.isNew) return { ok: false, why: '起手文件不能删，只能改' }
+  delete edits[p]
+  if (activeFile.value === p) {
+    const next = allFiles.value.find((x) => x.path !== p)
+    nextTick(() => openFile(next ? next.path : ''))
+  }
+  /* 删除同样立刻落盘：延时存的话，删完马上刷新又能看到它 */
+  flushEdits()
+  return { ok: true, why: '' }
+}
+
+/*
+ * 下面两处原来直接读 bundle.value.files，现在全部改读 allFiles。
+ *
+ * 原因：学生自己新建的文件不在 bundle 里（那是服务端给的原始清单），
+ * 只读 bundle 的话「下拉里选不到新页面」「树里看不见新文件」——
+ * 建了等于没建。allFiles 是「服务端原文 + 本机改动 + 本机新建」的唯一出口，
+ * 预览、提交、文件树、页面下拉都应该从它派生，只改一处才不会漏。
+ */
+const pages = computed(() => allFiles.value.filter((f) => isPagePath(f.path)).map((f) => f.path))
+const tree = computed(() => buildTree(allFiles.value))
 const langName = computed(() => langNameFor(activeFile.value))
 
 const npmEntry = computed(() => {
@@ -263,28 +379,31 @@ const dirtyCount = computed(() => {
   return n
 })
 
-/** 改动过的文件（用来标红点 / 数改动数） */
+/**
+ * 改动过的文件（用来标红点 / 数改动数 / 提交时的 changed）
+ *
+ * 学生新建的文件也算「改动」—— 不然提交时 changed 里没有它，
+ * 老师端看提交就分不清「哪些是起手就有的、哪些是学生加进来的」。
+ */
 const editedFiles = computed(() => {
   if (!bundle.value) return []
+  const base = bundle.value.files
   const out = []
-  for (const f of bundle.value.files) {
-    const t = edits[f.path]
-    if (t !== undefined && t !== f.text) out.push({ path: f.path, text: t })
+  for (const f of allFiles.value) {
+    const orig = base.find((x) => x.path === f.path)
+    if (!orig) out.push({ path: f.path, text: f.text }) // 新建的
+    else if (edits[f.path] !== undefined && edits[f.path] !== orig.text) {
+      out.push({ path: f.path, text: f.text })
+    }
   }
   return out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
 })
 
-/**
- * 交作业用：整份文件（改过的取改动，没改的取原文）。
+/* allFiles 已经提到上面（pages / tree / editedFiles 都要用它，放后面会踩 TDZ）。
+ *
+ * 交作业时用它是有意的：整份都交（改过的取改动、没改的取原文、新建的带上）。
  * 只交改过的文件虽然省流量，但老师那边没法把页面跑起来看渲染结果，
- * 所以连同没动过的一起交 —— 一整课也就几十 KB。
- */
-const allFiles = computed(() => {
-  if (!bundle.value) return []
-  return bundle.value.files
-    .map((f) => ({ path: f.path, text: edits[f.path] !== undefined ? edits[f.path] : f.text }))
-    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
-})
+ * 一整课也就几十 KB。 */
 
 const footText = computed(() => {
   if (storeFail.value) return '本机存不下（浏览器配额满或被禁），只在本页有效'

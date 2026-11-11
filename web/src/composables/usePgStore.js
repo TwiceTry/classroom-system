@@ -10,6 +10,7 @@
  */
 import { ref } from 'vue'
 import { state } from '../store'
+import { isLegalNewName, NEW_FILE_MAX_COUNT, NEW_FILES_TOTAL_MAX } from '../utils/pgFile'
 
 export function usePgStore(opts) {
   const { bucket, edits, dir, bundle, isFrozen } = opts
@@ -52,11 +53,29 @@ export function usePgStore(opts) {
     }
     // 跟随时屏幕上是老师的代码：不能写进学生自己的存档桶
     if (isFrozen && isFrozen()) return
-    if (!saved.dir) return
+    /*
+     * 用 saved.dir 记账（它记的是「当前 edits 属于哪个目录」，切目录时才对得上）。
+     * 但新建文件可能发生在 saved.dir 还没赋值之前（bundle 刚加载完那一刻），
+     * 早先这里直接 return，结果就是「刚新建的文件没存上，刷新就没了」。
+     * 用 dir.value 兜底：两者都空才真的放弃。
+     */
+    const d = saved.dir || dir.value
+    if (!d) return
     try {
-      const key = storeKey(saved.dir)
-      if (!Object.keys(edits).length) localStorage.removeItem(key)
-      else localStorage.setItem(key, JSON.stringify(edits))
+      const key = storeKey(d)
+      if (!Object.keys(edits).length) {
+        /*
+         * 只有「目录已经确认」时才允许删键。
+         *
+         * 因为 loadDir() 的顺序是：flushEdits() → 清空 edits → restoreEdits()，
+         * 刷新页面时第一次进来 edits 是空的，如果这时就删键，
+         * 上一次存的东西会在恢复之前被整条清掉 —— 表现是「改了/新建的东西
+         * 刷新一下全没了」，而且刷新越勤丢得越干净。
+         */
+        if (saved.dir) localStorage.removeItem(key)
+      } else {
+        localStorage.setItem(key, JSON.stringify(edits))
+      }
       storeFail.value = false
     } catch (e) {
       storeFail.value = true // 配额满了：内存里照常编辑，只是这次存不下
@@ -77,9 +96,31 @@ export function usePgStore(opts) {
       const got = JSON.parse(raw)
       if (!got || typeof got !== 'object') return
       const files = (bundle.value && bundle.value.files) || []
+      /*
+       * 除了「包里真有的文件」，还要恢复**学生自己新建的那些** ——
+       * 否则新建一个 style.css，关掉浏览器再打开就没了，比不给新建更伤。
+       *
+       * 但不能照单全收：edits 存在 localStorage 里，F12 就能改，
+       * 可能被塞进 '../../xxx' 或者 50MB 的字符串。所以：
+       *   · 名字必须合法（一级、白名单扩展名、非 Windows 保留名）
+       *   · 数量与总量有上限，超出的直接不恢复，并把 storeFail 打开
+       *     （界面上会显示「本机存不下」，比静默丢一部分更诚实）
+       */
+      let newCount = 0
+      let newBytes = 0
       for (const p in got) {
         if (typeof got[p] !== 'string') continue
-        if (files.some((f) => f.path === p)) edits[p] = got[p]
+        const known = files.some((f) => f.path === p)
+        if (!known) {
+          if (!isLegalNewName(p)) continue
+          if (newCount >= NEW_FILE_MAX_COUNT || newBytes + got[p].length > NEW_FILES_TOTAL_MAX) {
+            storeFail.value = true
+            continue
+          }
+          newCount++
+          newBytes += got[p].length
+        }
+        edits[p] = got[p]
       }
     } catch (e) {
       storeFail.value = true
