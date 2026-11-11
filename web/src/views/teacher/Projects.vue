@@ -428,7 +428,9 @@ const missingText = computed(() => (prog.value ? prog.value.missing.map((m) => m
 async function loadDesigns() {
   try {
     const r = await api.get('/api/courses/' + encodeURIComponent(getCourse()) + '/designs?kind=project')
-    designs.value = r.project || []
+    /* 接口返回 { courseId, kind, items }；原来读 r.project 永远是 undefined，
+     * 同样表现为「上传成功但列表空、下拉选不出来」。详见 Assignments.vue 同一处。 */
+    designs.value = r.items || r.project || []
   } catch (e) {
     designs.value = []
   }

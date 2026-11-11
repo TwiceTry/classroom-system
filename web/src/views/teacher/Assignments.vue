@@ -485,7 +485,18 @@ const missingText = computed(() => {
 async function loadDesigns() {
   try {
     const r = await api.get('/api/courses/' + encodeURIComponent(getCourse()) + '/designs?kind=homework')
-    designs.value = (r.homework || []).map((d) => Object.assign({}, d, { dueAt: d.dueAt || '' }))
+    /*
+     * 字段是 items，不是 homework。
+     *
+     * 这里原来读的是 r.homework —— 接口返回的是 { courseId, kind, items }，
+     * 于是永远取到 undefined → designs 恒为空数组。表现就是：
+     * 上传设计包**明明成功**（toast 也弹了、库里也真写进去了），
+     * 但「作业目录」里始终显示「还没有设计」，新建作业的下拉里也选不出来。
+     * 后端没错、上传也没错，只是这一行读错了字段，而且被 catch 吞成了空列表，
+     * 连个报错都没有。
+     */
+    const list = r.items || r.homework || []
+    designs.value = list.map((d) => Object.assign({}, d, { dueAt: d.dueAt || '' }))
   } catch (e) {
     designs.value = []
   }
