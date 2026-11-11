@@ -39,7 +39,16 @@ export default async function libraryRoutes(app) {
     const kind = kindOf(req)
     const buf = req.rawBodyBuffer
     if (!buf || !buf.length) throw badRequest('没有收到 zip')
-    return { ok: true, design: assignlib.importDesign(course.id, kind, buf) }
+    /*
+     * importDesign 返回的是 { design, files }，这里要摊平，
+     * 不能整体塞进 design 字段 —— 否则前端拿到的是
+     *   { ok, design: { design: {...}, files } }
+     * 而前端写的是 j.design.id / j.design.title，取到 undefined：
+     *   toast 显示「已导入设计：undefined」（看着像失败），
+     *   上传后也不会自动选中刚导入的那份。
+     */
+    const out = assignlib.importDesign(course.id, kind, buf)
+    return { ok: true, design: out.design, files: out.files }
   })
 
   /** 导出某份设计稿 */
