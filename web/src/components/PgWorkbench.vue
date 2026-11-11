@@ -152,6 +152,7 @@ import { usePgStore } from '../composables/usePgStore'
 import { usePgPreview } from '../composables/usePgPreview'
 import { usePgEditor } from '../composables/usePgEditor'
 import { usePgSync } from '../composables/usePgSync'
+import { useFontSize } from '../composables/useFontSize'
 import { state } from '../store'
 import { currentClassId } from '../utils/classSel'
 import { onPresenceMessage } from '../utils/presence'
@@ -203,7 +204,12 @@ const error = ref('')
 const running = ref(false)
 const closed = reactive({})
 const showAll = ref(localStorage.getItem('pg-showall') === '1')
-const fontPx = ref(Number(localStorage.getItem('pg-font') || 13))
+/*
+ * 代码编辑器字号不再单独存 pg-font —— 跟着全站字号走（正文 15 → 代码 13）。
+ * codePx 是只读 computed，所以这里不能赋值：±1 的意图交给 adjustDoc，
+ * 编辑器实际字号由下面的 watch(codePx) 同步。
+ */
+const { codePx: fontPx, adjustDoc: adjustDocSize } = useFontSize()
 const cmHost = ref(null)
 const frame = ref(null)
 
@@ -570,6 +576,8 @@ const { ed, caret, ensureEditor, syncDoc, setReadOnly, setDocText, setCaret, got
     bundle,
     edits,
     readonly: props.readonly,
+    /* Ctrl+滚轮 / A±  改的是全站字号，不是本页单独一份 */
+    onFontDelta: adjustDocSize,
     getText: textOf,
     onChange() {
       scheduleSave() // ① 存本机（跟随时不写，由 usePgStore 判断）
@@ -587,6 +595,16 @@ const { ed, caret, ensureEditor, syncDoc, setReadOnly, setDocText, setCaret, got
       if (following.value) setReadOnly(true)
     },
   })
+
+/*
+ * 全站字号变了 → 编辑器跟着缩放。
+ * fontPx（= codePx）是只读 computed，不能像以前那样 fontPx.value = n，
+ * 所以改成「adjustDoc 改全局 → 这个 watch 把新值灌给编辑器」。
+ * 换课重建编辑器后也会走一次（afterCreate），不会有遗漏。
+ */
+watch(fontPx, (v) => {
+  if (ed.value) ed.value.setFontSize(v)
+})
 
 /* ---------------- 老师推代码给学生 ---------------- */
 const {

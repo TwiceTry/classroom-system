@@ -9,9 +9,9 @@
             跟随中 · {{ shortFollowing }}
           </span>
           <input v-model.trim="q" class="input" placeholder="搜课名" style="width: 140px" />
-          <button class="btn mini" @click="fontSize = Math.max(13, fontSize - 1)">A−</button>
-          <span class="dim">{{ fontSize }}</span>
-          <button class="btn mini" @click="fontSize = Math.min(24, fontSize + 1)">A+</button>
+          <button class="btn mini" title="全站字号：讲义、材料、代码一起变" @click="adjustDoc(-1)">A−</button>
+          <span class="dim">{{ docPx }}</span>
+          <button class="btn mini" title="全站字号：讲义、材料、代码一起变" @click="adjustDoc(1)">A+</button>
         </template>
       </PageHead>
     </template>
@@ -34,7 +34,7 @@
 
       <p v-if="error" class="hint err">{{ error }}</p>
       <div v-if="loading" class="empty">读取中…</div>
-      <MdView v-else-if="doc.markdown" :source="doc.markdown" :style="{ fontSize: fontSize + 'px' }" />
+      <MdView v-else-if="doc.markdown" :source="doc.markdown" :style="{ fontSize: docPx + 'px' }" />
       <div v-else class="empty">这一课没有材料文件</div>
     </section>
 
@@ -55,10 +55,12 @@ import { onPresenceMessage } from '../../utils/presence'
 import PageHead from '../../components/PageHead.vue'
 import CardHead from '../../components/CardHead.vue'
 import PageShell from '../../components/PageShell.vue'
+import { useFontSize } from '../../composables/useFontSize'
 
 const q = ref('')
 const activeId = ref(localStorage.getItem('materials-id') || '')
-const fontSize = ref(Number(localStorage.getItem('materials-size') || 15.5))
+/* 字号全站统一（原来读 materials-size，同样从来没人写，刷新就回 15.5） */
+const { docPx, adjustDoc } = useFontSize()
 const doc = ref({})
 const loading = ref(false)
 const error = ref('')
@@ -87,6 +89,15 @@ function findSection(anchor) {
 }
 
 async function applyFollow(f, animate) {
+  /*
+   * 老师切到了别的动作（点名 / 推代码），服务端会把跟随停掉并广播 stopped。
+   * 原来这里只认带 lessonId 的消息，收到空消息直接 return —— 于是顶部那条
+   * 「跟随中 · 某节」一直挂着，学生以为还在跟。
+   */
+  if (f && f.stopped) {
+    following.value = ''
+    return
+  }
   if (!f || !f.lessonId || !f.anchor) return
   if (f.lessonId !== activeId.value) {
     const target = lessons.value.find((l) => l.id === f.lessonId)

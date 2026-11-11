@@ -19,7 +19,12 @@
 import crypto from 'node:crypto'
 import { verify } from '../lib/auth.js'
 import * as presence from '../lib/presence.js'
+import * as repo from '../lib/repo.js'
+import { standDown } from '../lib/focus.js'
 import { config } from '../config.js'
+
+/** standDown 的依赖（参数传，避免 focus.js 反向 import 成环） */
+const FOCUS_DEPS = { repo, broadcast }
 
 /**
  * 验「这条 WS 是教学机代理开的」。
@@ -168,9 +173,20 @@ function toFollowers(msg) {
   for (const c of followers) c.sender.json(msg)
 }
 
-function setMode(next, propagate) {
+function setMode(next, propagate, classId) {
   const prev = state.mode
   state.mode = next === 'watch' ? 'watch' : 'idle'
+  /*
+   * 开播 = 抢到了学生端那块屏幕，讲义跟随 / 点名 / 代码同步都得让位。
+   * 否则学生会一边看投屏、一边还挂着「跟随中 · 某节」或者上一次点名的大字。
+   *
+   * 只在「从没播到开播」这一刻清（prev !== 'watch'）：同一节课中途重连、
+   * 换老师接手，不该把别人的状态再抹一遍。
+   * 停播（idle）不清 —— 那是「没人投了」，不是「换成别的动作」。
+   */
+  if (state.mode === 'watch' && prev !== 'watch' && classId) {
+    standDown(String(classId), 'cast', FOCUS_DEPS)
+  }
   for (const s of students) {
     markCast(s, state.mode === 'watch')
     if (propagate) s.sender.json({ t: 'mode', mode: state.mode })
@@ -351,7 +367,13 @@ export default async function castRoutes(app) {
         if (conn.role !== 'ctl' || !conn.ctlOk) return
         if (msg.mode === 'watch') {
           modeOwner = conn
-          setMode('watch', true)
+          /*
+           * conn.cid 是这条 ctl 在 hello 里带上来的班级（字段名是 cid，不是 classId）——
+           * 开播要清的就是那个班的跟随 / 点名 / 代码同步。
+           * 传错字段名不会报错，只是 standDown 收到空串、按班的那两种清不掉，
+           * 表现是「投屏开了，学生端还挂着点名」。
+           */
+          setMode('watch', true, conn.cid)
           return
         }
         // 已经有一条连接在投：忽略这个 idle（它只是自己没开播）

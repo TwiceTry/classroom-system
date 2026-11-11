@@ -90,10 +90,31 @@ function apply(mode) {
     return
   }
   if (was) return // 本来就在投，别反复提醒
-  if (castWatch.muted) return
-  // 不再自动弹新窗口（学生可能正看到一半）：只挂一条横幅，点一下在应用内打开
+  if (castWatch.muted) return // 学生点过「先不看」，这一次就别打扰
+  /*
+   * 开播了就直接送到投屏页。
+   *
+   * 以前这里只挂一条横幅（"点一下在这里打开"），等于把「看屏幕」这件全班同步的动作
+   * 变成每个学生自己的一次选择 —— 老师已经开始讲了，学生的屏幕上还停在材料页，
+   * 要找一眼横幅才点。上课场景里这就是"没跟上"。
+   *
+   * 浏览器不许脚本在没有用户手势时开新标签页，所以分两层：
+   *   1) openWatch()：本会话里点过投屏、或上次自动开过 → 直接复用那个标签页并拉前台（不用点）
+   *   2) 被拦 → 同页跳转 location.href = '/watch'。这条路一定能成，
+   *      代价是离开当前页面，所以把来源记进 sessionStorage，停播时能自己回来。
+   */
+  if (openWatch()) {
+    castWatch.banner = false
+    return
+  }
+  try {
+    sessionStorage.setItem('cast-from', location.pathname + location.search)
+  } catch (e) {
+    /* 隐私模式下写不了，那就不回来了，不影响跳过去 */
+  }
   castWatch.banner = true
-  castWatch.hint = '点一下在这里打开，也可以自己去「课堂投屏」'
+  castWatch.hint = '老师开始投屏，正在打开…'
+  location.href = WATCH_PATH
 }
 
 async function poll() {

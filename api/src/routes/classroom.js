@@ -12,6 +12,10 @@ import { scoring, withCourseScheme } from '../lib/scheme.js'
 import * as sheetLib from '../lib/sheet.js'
 import { rowsToXlsx, stampedName } from '../lib/xlsx.js'
 import { broadcast } from './cast.js'
+import { standDown } from '../lib/focus.js'
+
+/** standDown 的依赖（参数传，避免 focus.js 反向 import 成环） */
+const FOCUS_DEPS = { repo, broadcast }
 
 /** 上传类接口的体积上限（与《课程包格式规范》§8 一致：整包 500MB） */
 const BIG_BODY = 512 * 1024 * 1024
@@ -41,6 +45,12 @@ function announceSpotlight(classId, payload) {
       /* 补不上就算了，别因为显示名字把点名流程搞挂 */
     }
   }
+  /*
+   * 立起点名之前，先把这个班的讲义跟随 / 代码同步停掉。
+   * 学生端同一时刻只该看一块东西 —— 否则「跟着讲义」的提示条和点名大字会叠在一起，
+   * 学生既不知道看哪儿，老师也以为点名把学生拽过来了、其实没有。
+   */
+  standDown(classId, 'spotlight', FOCUS_DEPS)
   repo.setState(SPOT_KEY(classId), spot)
   const delivered = broadcast(Object.assign({ t: 'spotlight' }, spot))
   return delivered
@@ -370,6 +380,8 @@ export default async function classroomRoutes(app) {
     handler: async (req) => {
       const cls = repo.getClass(req.params.id)
       if (!cls) throw notFound('班级不存在')
+      /* 推代码之前，先把这个班的点名 / 讲义跟随停掉：学生端只该跟着一块走 */
+      standDown(cls.id, 'pgsync', FOCUS_DEPS)
       const prev = livePg(cls.id)
       const sync = {
         seq: (prev && Number(prev.seq)) ? Number(prev.seq) + 1 : 1,

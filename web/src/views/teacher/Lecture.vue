@@ -40,9 +40,9 @@
         </button>
         <span class="dim sync-tip">{{ syncTip }}</span>
         <span class="sep"></span>
-        <button class="btn mini" @click="fontSize = Math.max(13, fontSize - 1)">A−</button>
-        <span class="dim">{{ fontSize }}</span>
-        <button class="btn mini" @click="fontSize = Math.min(24, fontSize + 1)">A+</button>
+        <button class="btn mini" title="全站字号：讲义、材料、代码一起变" @click="adjustDoc(-1)">A−</button>
+        <span class="dim">{{ docPx }}</span>
+        <button class="btn mini" title="全站字号：讲义、材料、代码一起变" @click="adjustDoc(1)">A+</button>
         <button class="btn mini" :disabled="loading" @click="reload">重新读取</button>
         </template>
       </PageHead>
@@ -71,7 +71,7 @@
     <p v-if="viewHint" class="hint" style="margin-bottom:12px">{{ viewHint }}</p>
     <p v-if="error" class="hint err">{{ error }}</p>
     <div v-if="loading" class="empty">读取中…</div>
-    <MdView v-else-if="viewMarkdown" :source="viewMarkdown" :style="{ fontSize: fontSize + 'px' }" />
+    <MdView v-else-if="viewMarkdown" :source="viewMarkdown" :style="{ fontSize: docPx + 'px' }" />
     <div v-else class="empty">
     这一课没有{{ view === 'lecture' ? '讲义' : '课程材料' }}文件。
     <template v-if="view === 'lecture'">切到「课程材料」看学生版内容。</template>
@@ -90,12 +90,19 @@ import PageHead from '../../components/PageHead.vue'
 import DirIO from '../../components/DirIO.vue'
 import CardHead from '../../components/CardHead.vue'
 import PageShell from '../../components/PageShell.vue'
+import { useFontSize } from '../../composables/useFontSize'
+import { currentClassId } from '../../utils/classSel'
 
 const lessons = computed(() => state.lessons)
 const activeId = ref(localStorage.getItem('lecture-id') || '')
 // 'lecture' = 讲义原文（含讲稿批注）；'materials' = 学生手上那一份
 const view = ref(localStorage.getItem('lecture-view') === 'materials' ? 'materials' : 'lecture')
-const fontSize = ref(Number(localStorage.getItem('lecture-size') || 15.5))
+/*
+ * 字号改成全站统一（composables/useFontSize.js）。
+ * 原来这里读 localStorage['lecture-size']，但**从来没人写它** ——
+ * 点 A+ 只改内存，刷新就回到 15.5，这就是「刷新失效」。
+ */
+const { docPx, adjustDoc } = useFontSize()
 const doc = ref({})
 const matDoc = ref({})
 const loading = ref(false)
@@ -271,6 +278,12 @@ function pushFollow() {
       lessonId: activeId.value,
       anchor,
       sectionTitle: currentSec.value.title,
+      /*
+       * 带上班级：服务端要用它把这个班的点名 / 代码同步停掉。
+       * 教师可能同时带多个班，从令牌里推不出「现在讲的是哪个班」，
+       * 漏了的话「切到跟随」就不会把学生端的点名浮层收掉。
+       */
+      classId: currentClassId.value || '',
     })
     .then((r) => {
       delivered.value = r.delivered

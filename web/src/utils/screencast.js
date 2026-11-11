@@ -10,6 +10,7 @@
  */
 import { reactive } from 'vue'
 import { getToken } from '../api'
+import { currentClassId } from './classSel'
 
 const TILE = 64
 const MASK32 = 0xf8f8f8f8
@@ -352,7 +353,13 @@ function createScreenCast() {
       // 必须发：否则「学生先上线、控制台后开」时拿不到 peers，一帧都不推。
       // 同时带上教师令牌：控制台不再靠「来自本机」认人，改成认登录身份，
       // 这样从局域网 IP / 另一台机器打开教师端也能投屏。
-      ws.send(JSON.stringify({ t: 'hello', token: getToken() }))
+      /*
+       * cid 一定要带：服务端靠它知道「这次投屏是哪个班的」，
+       * 开播时才能把那个班的讲义跟随 / 点名 / 代码同步停掉。
+       * 只传 token 的话 conn.cid 是空串，开播只清全局的跟随，
+       * 学生端会一边看投屏、一边挂着上一次点名的大字。
+       */
+      ws.send(JSON.stringify({ t: 'hello', token: getToken(), cid: currentClassId.value || '' }))
       ws.send(JSON.stringify({ t: 'mode', mode: running ? 'watch' : 'idle' }))
     }
     ws.onmessage = (ev) => {

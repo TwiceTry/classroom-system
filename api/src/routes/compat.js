@@ -20,8 +20,15 @@ import { contentRootOf } from './courses.js'
 import { broadcast } from './cast.js'
 import { findBundle, kindOf, info as compatInfo } from '../lib/compat.js'
 
-/** 讲义跟随：同一时刻只跟一个位置（一个老师在讲课，全班只看一处） */
-let followState = null
+/*
+ * 讲义跟随的位置挪到 lib/focus.js 了 —— 那边要能在「切换到点名 / 代码同步」时
+ * 把它一起清掉，一个模块级变量留在这里别处就没法收拾。
+ * 语义不变：全局一个，一个老师在讲、全班看同一处。
+ */
+import { getFollow, setFollow, standDown } from '../lib/focus.js'
+
+/** standDown 要用的依赖（用参数传是为了避免 focus.js 反向 import 造成环） */
+const FOCUS_DEPS = { repo, broadcast }
 
 /** 当前点名聚焦（存在 state 表的 spot:<班级>） */
 function liveSpot(classId) {
@@ -280,23 +287,38 @@ export default async function compatRoutes(app) {
           anchor: { type: 'string' },
           sectionTitle: { type: 'string', maxLength: 80 },
           courseId: { type: 'string' },
+          /* 教师在讲哪个班 —— 教师可能带多个班，令牌里推不出来，必须前端带 */
+          classId: { type: 'string' },
         },
       },
     },
     handler: async (req) => {
-      followState = {
+      /*
+       * 立起「跟随」之前，先把这个班的点名 / 代码同步停掉。
+       * 学生端同一时刻只该看一块东西：跟着讲义走的时候，
+       * 上一次点名的大字浮层和上一次推过去的代码都应该让位。
+       */
+      const stopped = standDown(String(req.body.classId || ''), 'follow', FOCUS_DEPS)
+      const next = {
         lessonId: String(req.body.lessonId),
         anchor: String(req.body.anchor),
         sectionTitle: String(req.body.sectionTitle || '').slice(0, 80),
         courseId: String(req.body.courseId || ''),
         at: Date.now(),
       }
-      const delivered = broadcast(Object.assign({ t: 'follow' }, followState))
-      return { ok: true, delivered, follow: followState }
+      setFollow(next)
+      const delivered = broadcast(Object.assign({ t: 'follow' }, next))
+      return { ok: true, delivered, follow: next, stopped }
     },
   })
 
-  app.get('/api/follow', { preHandler: requireAuth() }, async () => followState || { lessonId: '', anchor: '', sectionTitle: '', at: 0 })
+  /* 停跟随：切到点名 / 代码同步时由前端调，也可以老师手动停 */
+  app.delete('/api/teacher/follow', { preHandler: requireAuth('teacher') }, async () => {
+    const stopped = standDown('', 'none', FOCUS_DEPS)
+    return { ok: true, stopped }
+  })
+
+  app.get('/api/follow', { preHandler: requireAuth() }, async () => getFollow() || { lessonId: '', anchor: '', sectionTitle: '', at: 0 })
 
   /* ---------------- 附件下载 ---------------- */
 

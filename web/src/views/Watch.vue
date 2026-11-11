@@ -124,8 +124,27 @@ function hideToast() {
 
 function applyMode(m) {
   mode = m
-  if (m === 'idle') showOverlay('本节课未投屏', '请等待教师开始广播')
-  else if (hasFrame) hideOverlay()
+  if (m === 'idle') {
+    /*
+     * 老师开播时如果是「自动把学生送到这一页」的（castWatch 记了来源），
+     * 停播就把他送回去 —— 否则学生停在一块黑底提示上，还得自己找路回课件，
+     * 而老师可能已经切去讲课了。
+     *
+     * 只对自动跳来的生效：学生自己点「课堂投屏」进来的没有 cast-from，就留在这页。
+     */
+    let back = ''
+    try {
+      back = sessionStorage.getItem('cast-from') || ''
+      sessionStorage.removeItem('cast-from')
+    } catch (e) {
+      /* 隐私模式读不到就留在本页 */
+    }
+    if (back && back !== location.pathname + location.search) {
+      location.replace(back)
+      return
+    }
+    showOverlay('本节课未投屏', '请等待教师开始广播')
+  } else if (hasFrame) hideOverlay()
   else showOverlay('正在接收画面…')
 }
 

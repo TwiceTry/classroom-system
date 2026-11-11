@@ -165,7 +165,19 @@ function stopRoll() {
 }
 
 function onMsg(msg) {
-  if (!msg || msg.t !== 'spotlight') return
+  if (!msg) return
+  /*
+   * 兜底：老师切到了别的动作（讲义跟随 / 推代码），这个点名浮层必须让位。
+   * 正常情况下服务端会先发 spotlight clear，走下面那条分支；
+   * 但两类消息是两次广播，中间有个毫秒级窗口，万一 clear 丢了（弱网、重连），
+   * 学生屏幕上就会一直挂着一个早就结束的点名。focus 这条是最后一道保险。
+   */
+  if (msg.t === 'focus' && msg.active !== 'spotlight') {
+    locked.value = false
+    dismiss()
+    return
+  }
+  if (msg.t !== 'spotlight') return
   if (msg.clear) {
     locked.value = false
     dismiss()

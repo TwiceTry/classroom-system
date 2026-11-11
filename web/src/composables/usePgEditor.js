@@ -126,14 +126,16 @@ export function usePgEditor(opts) {
     return ed.value ? ed.value.view.state.doc.toString() : ''
   }
 
+  /*
+   * 字号不在这里持久化了 —— 全站一个设置（composables/useFontSize.js）。
+   *
+   * 原来这里自己写 localStorage['pg-font']，和讲义的 lecture-size、
+   * 材料的 materials-size 是三套互不相干的 key，用户得调三遍。
+   * 现在只把「±1」这个意图抛给页面，由页面调 adjustDoc()；
+   * 编辑器实际字号靠 watch(codePx) 同步（codePx 是只读 computed，不能赋值）。
+   */
   function adjustFont(d) {
-    fontPx.value = Math.min(24, Math.max(11, fontPx.value + d))
-    try {
-      localStorage.setItem('pg-font', String(fontPx.value))
-    } catch (e) {
-      /* ignore */
-    }
-    if (ed.value) ed.value.setFontSize(fontPx.value)
+    if (typeof opts.onFontDelta === 'function') opts.onFontDelta(d)
   }
 
   function destroy() {
