@@ -253,7 +253,13 @@ async function submit(changed, all) {
   const ok = window.confirm(
     '交这一份给老师？\n\n' +
       '共 ' + all.length + ' 个文件，其中 ' + changed.length + ' 个你改过：\n' + names +
-      '\n\n整份一起交上去，老师那边能直接跑起来看效果。重交不会覆盖上一次，老师能看到每一次。'
+      /*
+       * 这里原来写着「重交不会覆盖上一次，老师能看到每一次」—— 与服务端不符：
+       * assignments.js 的提交是**覆盖**（旧文件先清掉，只留最新一份，旧的挪进
+       * data/.trash）。按旧文案，学生会以为交错了能反悔，实际不能。
+       */
+      '\n\n整份一起交上去，老师那边能直接跑起来看效果。' +
+      '\n注意：重交会覆盖上一次，只保留最新一份。'
   )
   if (!ok) return
   busy.value = true

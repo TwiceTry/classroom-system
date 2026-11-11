@@ -255,6 +255,12 @@
     </span>
     <button class="btn line" :disabled="saving" @click="clearGrade">清掉</button>
     <button class="btn line" :disabled="saving" title="分数与评语清空、计分记录作废，学生可以再交一次" @click="redo">打回重做</button>
+    <button
+      class="btn line danger"
+      :disabled="saving"
+      title="连文件一起删掉、学生回到「未交」，不可恢复（和「打回重做」不同）"
+      @click="delSubmit"
+    >删除提交</button>
     <button class="btn primary" :disabled="saving" @click="saveGrade">
       {{ saving ? '保存中…' : '保存并下一条' }}
     </button>
@@ -914,6 +920,51 @@ async function redo() {
     viewing.value = res.submission
     d.value.stats.gradedCount = d.value.submissions.filter((x) => x.graded).length
     toast.value = res.message || '已打回'
+    loadProgress()
+  } catch (e) {
+    toast.value = e.message
+  } finally {
+    saving.value = false
+  }
+}
+
+/**
+ * 删除某个学生的这份提交。
+ *
+ * 和「打回重做」的区别（两个都要，别合并）：
+ *   打回重做 —— 提交还在，只清分数/评语、作废计分，学生能接着改再交
+ *   删除提交 —— 文件 + 记录一起删，学生回到「未交」，**找不回来**
+ *
+ * 为什么需要它：学生交错了（比如把别的课的包传上来），老师没法在界面上清掉，
+ * 只能让他重交覆盖 —— 但「这份根本不该存在」的情况覆盖不了。
+ * 后端一直有 DELETE /api/assignments/:id/submissions/:sid，缺的是入口。
+ */
+async function delSubmit() {
+  if (!viewing.value) return
+  const s = viewing.value
+  const ok = window.confirm(
+    '删除「' + (s.name || s.sid) + '」的这份提交？\n\n' +
+      '会一起删掉：交上来的 ' + (s.fileCount || 0) + ' 个文件' +
+      (s.graded ? '，以及这次的评分（计分记录会作废）' : '') + '。\n' +
+      '删完学生回到「未交」，可以重新交一次。\n\n' +
+      '删掉找不回来 —— 只是想让他重做的话，用「打回重做」。',
+  )
+  if (!ok) return
+  saving.value = true
+  try {
+    await api.del(
+      '/api/assignments/' + encodeURIComponent(curId.value) +
+        '/submissions/' + encodeURIComponent(s.id),
+    )
+    /* 就地从列表里去掉，再拉一次进度（已交/已批两个数字要跟着变） */
+    const i = d.value.submissions.findIndex((x) => x.id === s.id)
+    if (i >= 0) d.value.submissions.splice(i, 1)
+    if (d.value.stats) {
+      d.value.stats.submissionCount = d.value.submissions.length
+      d.value.stats.gradedCount = d.value.submissions.filter((x) => x.graded).length
+    }
+    closeReview()
+    toast.value = '已删除 ' + (s.name || s.sid) + ' 的提交'
     loadProgress()
   } catch (e) {
     toast.value = e.message

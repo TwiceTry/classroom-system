@@ -16,10 +16,21 @@
             />
             学生端锁定
           </label>
-          <button class="btn mini" :disabled="!activeId" title="收起学生端的点名提示（你自己这边的名单不动）" @click="endSpot">
+          <!--
+            原来这里是 :disabled="!activeId" —— activeId 是「当前选的班级」，
+            只要选了班就一直可点，哪怕根本没在点名。改成按「有没有正在点名的人」判断，
+            并且进行中时变红，一眼看得出「现在有个点名没结束」。
+          -->
+          <button
+            class="btn mini"
+            :class="{ danger: !!current }"
+            :disabled="!current"
+            :title="current ? '收起学生端的点名提示（你自己这边的名单不动）' : '现在没有进行中的点名'"
+            @click="endSpot"
+          >
             结束点名
           </button>
-          <button class="btn primary" :disabled="!activeId || drawing" @click="drawOnly">
+          <button class="btn primary" :disabled="!activeId || drawing" @click="openSpot">
             {{ drawing ? '抽取中…' : '随机点名' }}
           </button>
         </template>
@@ -38,6 +49,21 @@
       <span class="dim mini" v-if="activeId">
         本轮已抽 {{ roll.pickedCount }} 人 · 还剩 {{ roll.remaining }} 人 · 在线 {{ onlineCount }}
       </span>
+    </div>
+
+    <!--
+      点名状态条。
+      老师上课时会切到名单 / 记录那边去，回头就忘了「学生端那个弹窗还开着吗、
+      要不要收」—— 之前没有任何标记，只能凭记忆。这里给一条显眼的提示 + 结束按钮。
+    -->
+    <div v-if="current" class="spotbar">
+      <i class="dot on pulse"></i>
+      <b>点名中</b>
+      <span class="sb-who">{{ current.name }} · {{ current.sid }}</span>
+      <span class="dim mini">{{ spotLock ? '学生端已锁定，等你结束' : '学生端显示中' }}</span>
+      <span class="spacer"></span>
+      <button class="btn mini" @click="spotOpen = true">看点名</button>
+      <button class="btn mini danger" @click="endSpot">结束点名</button>
     </div>
 
     <!-- 抽到的人 + 快捷加减分 -->
@@ -120,6 +146,84 @@
     </div>
 
 
+    <!--
+      点名弹窗（形态照搬「考勤点名」的核对弹层）：
+      抽到人自动打开，一眼看清「谁被点了 / 学生端在显示 / 点结束收掉」。
+
+      关掉弹窗 ≠ 结束点名：关掉只是自己这边不挡视线，学生端还开着，
+      顶部那条「点名中」还在 —— 想真结束必须点弹窗头上或状态条里的「结束点名」。
+    -->
+    <div v-if="spotOpen" class="mask" @click.self="spotOpen = false">
+      <div class="modal spotbox">
+        <div class="modal-head">
+          <h3>
+            课堂点名 <span class="dim">{{ itemName }} · 学生端同步显示</span>
+          </h3>
+          <button
+            class="btn mini"
+            style="margin-left: auto"
+            title="收起学生端点名提示，本轮已抽过的人保留"
+            @click="endSpot"
+          >
+            结束点名
+          </button>
+        </div>
+        <div class="modal-body">
+          <p v-if="!current" class="empty">还没抽人。点右下「下一个」随机抽一个本轮没抽过的学生。</p>
+          <template v-else>
+            <div class="spotwho">
+              <b class="wname">{{ current.name }}</b>
+              <span class="wsid">{{ current.sid }}</span>
+              <span class="tag" :class="current.online ? 'ok' : 'mute'">
+                <i class="dot" :class="{ on: current.online }"></i>
+                {{ current.online ? '在线' : '离线' }}
+              </span>
+              <span class="dim">互动 {{ current.score }} / {{ full }}</span>
+            </div>
+            <div class="drawbtns">
+              <button
+                v-for="p in presets"
+                :key="p.label"
+                class="kbtn"
+                :class="{ minus: (p.delta || 0) < 0 }"
+                :disabled="busy"
+                @click="quick(p)"
+              >
+                {{ p.label }}
+              </button>
+            </div>
+          </template>
+
+          <div class="drawfoot">
+            <div class="df-row">
+              <span class="dim">
+                本轮已抽 {{ roll.pickedCount }} 人 · 还剩 {{ roll.remaining }} 人 · 在线 {{ onlineCount }}
+              </span>
+              <span class="spacer"></span>
+              <label class="check" title="锁定时学生点不掉弹窗，必须等你点「结束」">
+                <input
+                  type="checkbox"
+                  :checked="spotLock"
+                  @change="setSpotLock($event.target.checked)"
+                />
+                学生端锁定
+              </label>
+            </div>
+            <div class="df-row">
+              <button class="btn mini" :disabled="!activeId" @click="resetRoll">从头开始</button>
+              <span class="spacer"></span>
+              <button class="btn mini" title="只收起弹窗，学生端的点名提示还开着" @click="spotOpen = false">
+                先放着
+              </button>
+              <button class="btn primary" :disabled="!activeId || drawing" @click="nextSpot">
+                {{ drawing ? '抽取中…' : '下一个 ›' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <Toast :text="toast" />
   </PageShell>
 </template>
@@ -169,6 +273,8 @@ const listCols = [
   { key: 'actions', label: '当场记', width: '132px' },
 ]
 const drawing = ref(false)
+/* 点名弹窗开着没（只是自己这边挡不挡视线，与「点名是否结束」是两回事） */
+const spotOpen = ref(false)
 const error = ref('')
 const toast = ref('')
 
@@ -252,11 +358,30 @@ async function drawOnly() {
   try {
     const who = await drawOne()
     if (who) show('抽到：' + who.name)
+    return who
   } catch (e) {
     error.value = e.message
+    return null
   } finally {
     drawing.value = false
   }
+}
+
+/**
+ * 「随机点名」按钮：打开点名弹窗，没有当前人就先抽一个。
+ *
+ * 点完弹窗立刻出现 —— 不能让老师点完只看到页面里那张卡片变了个名字，
+ * 而不知道学生端已经弹出提示了、也不知道要点「结束」收掉。
+ */
+async function openSpot() {
+  spotOpen.value = true
+  if (!current.value) await drawOnly()
+}
+
+/** 弹窗里的「下一个 ›」：再抽一个，弹窗保持开着 */
+async function nextSpot() {
+  await drawOnly()
+  spotOpen.value = true
 }
 
 /** 快捷按钮：没人就抽一个，然后加分 */
@@ -335,6 +460,7 @@ async function endSpot() {
   try {
     await api.post(url('/spotlight'), { clear: true })
     current.value = null
+    spotOpen.value = false
     show('已结束点名，学生端提示已收起')
   } catch (e) {
     error.value = e.message
@@ -515,5 +641,103 @@ onMounted(async () => {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 120px;
+}
+
+/* ---------------- 点名状态条 ---------------- */
+.spotbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 9px 14px;
+  border: 1px solid #f0c9c4;
+  border-left: 4px solid #c0392b;
+  background: #fdf4f3;
+  border-radius: 8px;
+  font-size: 13.5px;
+}
+.spotbar b {
+  color: #c0392b;
+}
+.spotbar .sb-who {
+  font-variant-numeric: tabular-nums;
+}
+/* 跳动的小红点：静止的圆点在余光里看不见，动一下才注意得到 */
+.spotbar .dot.on.pulse {
+  animation: spot-pulse 1.4s ease-in-out infinite;
+}
+@keyframes spot-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(192, 57, 43, 0.45); }
+  50% { opacity: 0.55; box-shadow: 0 0 0 5px rgba(192, 57, 43, 0); }
+}
+
+/* ---------------- 点名弹窗 ---------------- */
+/* .mask / .modal / .modal-head / .modal-body 在 styles/app.css 里是全局的，这里只补差异 */
+.spotbox {
+  max-width: 560px;
+}
+.spotwho {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 4px 0 16px;
+}
+.spotwho .wname {
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  line-height: 1.1;
+}
+.spotwho .wsid {
+  font-size: 13px;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+.spotwho .tag .dot {
+  margin-right: 4px;
+}
+.drawbtns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 0 18px;
+}
+.kbtn {
+  padding: 9px 16px;
+  border: 1px solid #cfe6cf;
+  background: #f6fbf6;
+  color: #2e7d32;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.kbtn:hover:not(:disabled) {
+  background: #edf7ed;
+}
+.kbtn.minus {
+  border-color: #f0c9c4;
+  background: #fdf4f3;
+  color: #c0392b;
+}
+.kbtn.minus:hover:not(:disabled) {
+  background: #fae9e6;
+}
+.kbtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.drawfoot {
+  border-top: 1px solid #eef0f2;
+  padding-top: 12px;
+}
+.df-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.df-row:last-child {
+  margin-bottom: 0;
 }
 </style>
