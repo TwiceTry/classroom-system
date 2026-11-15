@@ -1,7 +1,7 @@
 <template>
   <PageShell body-class="split">
     <template #head>
-      <PageHead>
+      <PageHead @reload="reload">
         <template #title>讲义</template>
         <template #sub>讲义与课程材料是同一批小节 · 切换视图不打断「跟随」，学生端仍按小节跳</template>
         <template #right>
@@ -29,12 +29,16 @@
           :dir="view === 'materials' ? 'materials' : 'lecture'"
           :label="view === 'materials' ? '课程材料' : '讲义'"
         />
-        <!--
-          「跟随中 / 重新读取」下放到右边那张卡片的头里（见下面 CardHead #right）——
-          它们只影响正在看的这一篇，不是整页的模式切换。
-          页头这里只留「讲义 / 课程材料」和导出导入：那两个是"看哪一份内容"，
-          相当于两个标签页，放页头才说得通。
-        -->
+        <span class="sep"></span>
+        <button
+          class="btn mini"
+          :class="{ on: syncOn }"
+          :title="syncOn ? '学生端课程材料会自动跟着你翻' : '已暂停：学生端不再跟着跳'"
+          @click="toggleSync"
+        >
+          {{ syncOn ? '跟随中' : '已暂停' }}
+        </button>
+        <span class="dim mini sync-tip">{{ syncTip }}</span>
         </template>
       </PageHead>
     </template>
@@ -55,17 +59,6 @@
     <template #title>{{ headTitle }}</template>
     <template #meta><span v-if="headFile" class="tag mute">{{ headFile }}</span></template>
     <template #right>
-    <!-- 这一篇自己的操作：跟随开关 / 重新读取（从页头下放来的） -->
-    <button
-      class="btn mini"
-      :class="{ on: syncOn }"
-      :title="syncOn ? '学生端课程材料会自动跟着你翻' : '已暂停：学生端不再跟着跳'"
-      @click="toggleSync"
-    >
-      {{ syncOn ? '跟随中' : '已暂停' }}
-    </button>
-    <span class="dim mini sync-tip">{{ syncTip }}</span>
-    <button class="btn mini" :disabled="loading" @click="reload">重新读取</button>
     <span class="dim">{{ stats.chars }} 字 · 约 {{ stats.minutes }} 分钟</span>
     </template>
     </CardHead>

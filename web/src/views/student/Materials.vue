@@ -1,19 +1,19 @@
 <template>
   <PageShell body-class="split">
     <template #head>
-      <PageHead>
+      <PageHead @reload="() => activeId && open(activeId, { keepScroll: true })">
         <template #title>课程材料</template>
         <template #sub>每课一份，随时回看</template>
-        <!-- 页头只留标题和全局字号；搜索和「跟随中」下放到左侧列表顶上 -->
+        <!-- 专属区：搜课名 + 跟随状态。刷新走通用区的「↻」（重新拉当前这一课） -->
+        <template #right>
+          <span v-if="following" class="tag ok" :title="'老师正在讲：' + following">
+            跟随中 · {{ shortFollowing }}
+          </span>
+          <input v-model.trim="q" class="input" placeholder="搜课名" style="width: 140px" />
+        </template>
       </PageHead>
     </template>
     <aside class="lesson-list">
-      <div class="list-tools">
-        <span v-if="following" class="tag ok" :title="'老师正在讲：' + following">
-          跟随中 · {{ shortFollowing }}
-        </span>
-        <input v-model.trim="q" class="input" placeholder="搜课名" />
-      </div>
       <button v-for="l in filtered" :key="l.id" :class="{ on: l.id === activeId }" @click="open(l.id)">
         <span class="no">{{ l.kind === 'lesson' ? '第' + String(l.no).padStart(2, '0') + '课' : '' }}</span>
         {{ l.title }}
@@ -178,18 +178,6 @@ async function open(id, opts) {
 </script>
 
 <style scoped>
-/* 左侧列表顶上的搜索条（从页头下放来的）：
-   搜索的是"哪一课"，属于列表自己的工具，放在列表头上最顺手。 */
-.list-tools {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 6px 8px;
-}
-.list-tools .input {
-  flex: 1;
-  min-width: 0;
-}
 
 .follow-toast {
   position: fixed;

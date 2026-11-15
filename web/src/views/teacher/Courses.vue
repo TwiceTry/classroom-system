@@ -1,24 +1,20 @@
 <template>
   <PageShell>
     <template #head>
-      <PageHead>
+      <PageHead @reload="load">
         <template #title>课程管理</template>
         <template #sub>一门课 = 自己的讲义 / 材料 / 代码示例 / 试卷 + 自己的考核方案 + 若干班级。可以手工建壳，也可以上传课程包一次配好</template>
-        <!-- 本页操作下放到下面的 .page-actions（页头只留标题和全局字号） -->
+        <!-- 专属区：刷新走通用区的「↻」，这里不重复放 -->
+        <template #right>
+          <button class="btn mini" @click="openImport" title="课程包里有讲义 / 材料 / 示例 / 试卷 / 考核方案，一次配好">导入课程包</button>
+          <button class="btn primary" @click="openNew">＋ 新建课程</button>
+        </template>
       </PageHead>
     </template>
     <p v-if="err" class="hint err">{{ err }}</p>
 
-    <div class="page-actions">
-      <span class="dim mini">{{ list.length ? '共 ' + list.length + ' 门课程' : '' }}</span>
-      <span class="spacer"></span>
-      <button class="btn mini" :disabled="loading" @click="load">刷新</button>
-      <button class="btn mini" @click="openImport" title="课程包里有讲义 / 材料 / 示例 / 试卷 / 考核方案，一次配好">导入课程包</button>
-      <button class="btn primary" @click="openNew">＋ 新建课程</button>
-    </div>
-
     <div v-if="!loading && !list.length" class="card empty">
-      还没有课程。点上面「＋ 新建课程」建一个空的，或者用「导入课程包」把配好的一门课整体装进来。
+      还没有课程。点右上角「＋ 新建课程」建一个空的，或者用「导入课程包」把配好的一门课整体装进来。
     </div>
 
     <div v-else class="sgroups">

@@ -1,34 +1,34 @@
 <template>
   <PageShell>
     <template #head>
-      <PageHead>
+      <PageHead @reload="reloadScheme">
         <template #title>考核方案
           <span v-if="courseName" class="cchip" :title="'当前课程：' + courseName + '（修改只影响这门课）'">
             课程：{{ courseName }}
           </span></template>
         <template #sub>有哪些考核项、各占多少分、用哪条规则、哪个模块开着，都在这里改；保存后全站生效（导航、评分表、入口一起变）。
           方案跟着课程走 —— 换课程请用左下角的「课程」切换器</template>
-        <!-- 本页操作下放到下面的 .page-actions（页头只留标题和全局字号） -->
+        <!--
+          专属区：这份考核方案自己的操作。
+          刷新走通用区的「↻」（各页可以注册只重拉数据的做法，见 PageHead 的 @reload）。
+        -->
+        <template #right>
+          <span v-if="raw" class="tag" :class="raw.version > 1 ? 'ok' : 'mute'">v{{ raw.version }}</span>
+          <span v-if="dirty" class="dim mini">有未保存的改动</span>
+          <button class="btn mini" :disabled="loading || !dirty" @click="revert">还原改动</button>
+          <button class="btn mini" :disabled="loading || previewing" @click="openPreview">试算对比</button>
+          <button class="btn mini" @click="downloadScheme" title="下载当前方案（scheme.json，可跨机器 / 跨课程复用）">
+            下载方案
+          </button>
+          <button class="btn mini" @click="openIO" title="导入一份 scheme.json：先看差异，再决定覆盖 / 保留 / 另存">
+            导入方案
+          </button>
+          <button class="btn primary" :disabled="loading || saving || !dirty" @click="save">
+            {{ saving ? '保存中…' : '保存方案' }}
+          </button>
+        </template>
       </PageHead>
     </template>
-
-    <!-- 方案操作：只作用于这份考核方案，所以放在页面内 -->
-    <div class="page-actions">
-      <span v-if="raw" class="tag" :class="raw.version > 1 ? 'ok' : 'mute'">v{{ raw.version }}</span>
-      <span v-if="dirty" class="dim mini">有未保存的改动</span>
-      <span class="spacer"></span>
-      <button class="btn mini" :disabled="loading || !dirty" @click="revert">还原改动</button>
-      <button class="btn mini" :disabled="loading || previewing" @click="openPreview">试算对比</button>
-      <button class="btn mini" @click="downloadScheme" title="下载当前方案（scheme.json，可跨机器 / 跨课程复用）">
-        下载方案
-      </button>
-      <button class="btn mini" @click="openIO" title="导入一份 scheme.json：先看差异，再决定覆盖 / 保留 / 另存">
-        导入方案
-      </button>
-      <button class="btn primary" :disabled="loading || saving || !dirty" @click="save">
-        {{ saving ? '保存中…' : '保存方案' }}
-      </button>
-    </div>
 
     <p v-if="error" class="hint err">{{ error }}</p>
     <div v-if="errors.length" class="hint err">
@@ -698,6 +698,18 @@ function onToggleEye(key) {
 watch(cur, (v) => {
   if (v) presetText.value = JSON.stringify(v.presets || [], null, 0)
 })
+
+/**
+ * 页头那个通用「↻」落到这一页时走这里。
+ *
+ * 这一页有「未保存的改动」：直接重读会把它冲掉，而且没有任何提示 ——
+ * 老师改了半天考核项，手滑点一下刷新就全没了。所以先问一句。
+ * 这就是「各页注册自己的重载」的意义：页面知道自己有什么怕丢。
+ */
+function reloadScheme() {
+  if (dirty.value && !window.confirm('有未保存的改动，重新读取会丢掉它们。继续？')) return
+  load()
+}
 
 async function load() {
   loading.value = true
