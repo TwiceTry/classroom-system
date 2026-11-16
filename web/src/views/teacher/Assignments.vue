@@ -33,7 +33,7 @@
     </div>
 
     <!-- 作业切换条：一个学期就几份，横向摆开比下拉好点 -->
-    <div class="hwbar">
+    <div class="card hwbar">
       <button
       v-for="a in list"
       :key="a.id"
@@ -47,7 +47,7 @@
       <span v-if="a.weight && Number(a.weight) !== 1" class="cnt" :title="'权重 ' + a.weight">×{{ a.weight }}</span>
       <span class="cnt">{{ a.studentCount }}</span>
     </button>
-    <span v-if="!list.length && !loading" class="dim" style="font-size: 13px">还没有作业，点右上角「＋ 新建作业」。</span>
+    <span v-if="!list.length && !loading" class="dim" style="font-size: var(--fs-md)">还没有作业，点右上角「＋ 新建作业」。</span>
     </div>
 
     <template v-if="d">
@@ -1019,7 +1019,7 @@ async function clearGrade() {
   flex-wrap: wrap;
   gap: 6px;
   margin: 2px 0 8px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: #40505f;
 }
 
@@ -1052,7 +1052,7 @@ async function clearGrade() {
   border: 1px solid var(--line);
   border-radius: 6px;
   margin-bottom: 6px;
-  background: #fff;
+  background: var(--card);
 }
 
 .lib-main {
@@ -1105,10 +1105,10 @@ async function clearGrade() {
 
 .hwpill .cnt {
   padding: 0 5px;
-  border-radius: 8px;
+  border-radius: var(--r-lg);
   background: #eef1f3;
   color: #5a6570;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
 }
 
 .led {
@@ -1149,7 +1149,7 @@ async function clearGrade() {
 
 .ctrl-l p {
   margin: 2px 0;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .ctrl-r {
@@ -1171,8 +1171,8 @@ async function clearGrade() {
 .st {
   padding: 10px 12px;
   border: 1px solid var(--line);
-  border-radius: 4px;
-  background: #fff;
+  border-radius: var(--r-md);
+  background: var(--card);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1198,7 +1198,7 @@ async function clearGrade() {
 }
 
 .stl {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--dim);
 }
 
@@ -1217,18 +1217,18 @@ async function clearGrade() {
 
 .missi {
   padding: 2px 8px;
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   background: #fbf4e9;
   border: 1px solid #dfcba8;
   color: #7a5a20;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .missi em {
   font-style: normal;
   margin-left: 5px;
   color: #a08a5e;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
 }
 
 /* 审阅弹层比常规 wide 更宽：左边代码 + 右边渲染，两侧都得看得清 */
@@ -1263,9 +1263,9 @@ async function clearGrade() {
   min-width: 0;
   min-height: 0;
   border: 1px solid var(--line-soft);
-  border-radius: 4px;
+  border-radius: var(--r-md);
   overflow: hidden;
-  background: #fff;
+  background: var(--card);
 }
 
 .rev-head {
@@ -1279,7 +1279,7 @@ async function clearGrade() {
 
 .rev-head .select {
   padding: 4px 8px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   max-width: 62%;
 }
 
@@ -1287,14 +1287,14 @@ async function clearGrade() {
   flex: 1;
   width: 100%;
   border: none;
-  background: #fff;
+  background: var(--card);
   min-height: 0;
 }
 
 .npmnote {
   flex: 1;
   padding: 16px 14px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   line-height: 1.75;
   color: #92400e;
   background: #fffdf7;
@@ -1332,7 +1332,7 @@ async function clearGrade() {
   background: none;
   color: #b91c1c;
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--fs-md);
   line-height: 1;
 }
 
@@ -1364,7 +1364,7 @@ async function clearGrade() {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: #4a525a;
 }
 
@@ -1378,7 +1378,7 @@ async function clearGrade() {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--dim);
 }
 </style>

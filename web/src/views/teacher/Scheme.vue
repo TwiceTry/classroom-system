@@ -2,12 +2,8 @@
   <PageShell>
     <template #head>
       <PageHead @reload="reloadScheme">
-        <template #title>考核方案
-          <span v-if="courseName" class="cchip" :title="'当前课程：' + courseName + '（修改只影响这门课）'">
-            课程：{{ courseName }}
-          </span></template>
-        <template #sub>有哪些考核项、各占多少分、用哪条规则、哪个模块开着，都在这里改；保存后全站生效（导航、评分表、入口一起变）。
-          方案跟着课程走 —— 换课程请用左下角的「课程」切换器</template>
+        <template #title>考核方案</template>
+        <template #sub>有哪些考核项、各占多少分、用哪条规则、哪个模块开着，都在这里改；保存后全站生效（导航、评分表、入口一起变）</template>
         <!--
           专属区：这份考核方案自己的操作。
           刷新走通用区的「↻」（各页可以注册只重拉数据的做法，见 PageHead 的 @reload）。
@@ -15,20 +11,57 @@
         <template #right>
           <span v-if="raw" class="tag" :class="raw.version > 1 ? 'ok' : 'mute'">v{{ raw.version }}</span>
           <span v-if="dirty" class="dim mini">有未保存的改动</span>
-          <button class="btn mini" :disabled="loading || !dirty" @click="revert">还原改动</button>
-          <button class="btn mini" :disabled="loading || previewing" @click="openPreview">试算对比</button>
-          <button class="btn mini" @click="downloadScheme" title="下载当前方案（scheme.json，可跨机器 / 跨课程复用）">
-            下载方案
+          <button class="btn mini" :disabled="loading || !dirty" title="丢掉这次改动，回到上次保存的样子" @click="revert">
+            还原
           </button>
-          <button class="btn mini" @click="openIO" title="导入一份 scheme.json：先看差异，再决定覆盖 / 保留 / 另存">
-            导入方案
+          <button class="btn mini" :disabled="loading || previewing" title="按新方案算一遍，和现在对比" @click="openPreview">
+            试算
           </button>
+          <!--
+            下载 / 导入一周用不到一次，收进「⋯」。
+            原来六个控件挤一行，1440 宽下就折行了，页头比别的页高 20px。
+          -->
+          <details class="menu">
+            <summary class="btn mini" title="下载 / 导入方案文件">⋯</summary>
+            <div class="menu-body col">
+              <button
+                class="btn mini"
+                @click="downloadScheme"
+                title="下载当前方案（scheme.json，可跨机器 / 跨课程复用）"
+              >
+                ⤓ 下载方案
+              </button>
+              <button
+                class="btn mini"
+                @click="openIO"
+                title="导入一份 scheme.json：先看差异，再决定覆盖 / 保留 / 另存"
+              >
+                ⤒ 导入方案
+              </button>
+            </div>
+          </details>
           <button class="btn primary" :disabled="loading || saving || !dirty" @click="save">
-            {{ saving ? '保存中…' : '保存方案' }}
+            {{ saving ? '保存中…' : '保存' }}
           </button>
         </template>
       </PageHead>
     </template>
+
+    <!--
+      当前课程条。
+      以前「课程：xxx」是页头标题旁边一个小标签，很容易漏看 ——
+      而这一页所有改动都只影响那门课，改错课是最贵的错误。
+      改成和考勤 / 互动 / 班级管理一致的 .card.bar，把上下文摆成第一条。
+    -->
+    <div v-if="raw" class="card bar course-bar">
+      <span class="dim">当前课程</span>
+      <b class="cname">{{ courseName || '（未命名）' }}</b>
+      <span class="dim mini">改的只是这门课的考核方案</span>
+      <span class="spacer"></span>
+      <span class="dim mini">
+        {{ raw.items.length }} 个考核项 · 合计 {{ raw.totalFull }} 分 · v{{ raw.version }}
+      </span>
+    </div>
 
     <p v-if="error" class="hint err">{{ error }}</p>
     <div v-if="errors.length" class="hint err">
@@ -899,6 +932,20 @@ async function runPreview() {
 </script>
 
 <style scoped>
+/* 当前课程条：和考勤 / 互动 / 班级管理那条 bar 一个样子 */
+.course-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.course-bar .cname {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: #1f2d3d;
+}
+
 /* 考核项右边的「学生端可见」小眼睛 */
 /* 眼睛的固定槽：有眼睛没眼睛都占同样宽，保证右边那组按钮每行都对齐 */
 .eye-slot {
@@ -919,8 +966,8 @@ async function runPreview() {
   height: 20px;
   padding: 0;
   border: 1px solid var(--line);
-  border-radius: 3px;
-  background: #fff;
+  border-radius: var(--r-sm);
+  background: var(--card);
   color: #55636f;
   cursor: pointer;
 }
@@ -948,7 +995,7 @@ async function runPreview() {
 .sio {
   border: 1px solid var(--line);
   border-left: 3px solid #2f7d92;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: #f8fbfd;
   padding: 8px 10px;
   margin-top: 10px;
@@ -964,7 +1011,7 @@ async function runPreview() {
 .sio-k {
   flex: 0 0 42px;
   color: #6b7785;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .sio-list {
@@ -1006,10 +1053,10 @@ async function runPreview() {
   padding: 1px 5px;
   background: #eef2ff;
   border: 1px solid #dbe2f5;
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   color: #3730a3;
   cursor: pointer;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
 }
 
 .hint-vars code:hover {
@@ -1018,12 +1065,12 @@ async function runPreview() {
 
 .cchip {
   margin-left: 8px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 500;
   color: #1d4ed8;
   background: #eef4ff;
   border: 1px solid #cddffb;
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   padding: 2px 7px;
   vertical-align: middle;
 }
@@ -1058,9 +1105,9 @@ async function runPreview() {
 .items li {
   padding: 7px 9px;
   border: 1px solid var(--line-soft);
-  border-radius: 4px;
+  border-radius: var(--r-md);
   cursor: pointer;
-  background: #fff;
+  background: var(--card);
 }
 
 .items li:hover {
@@ -1079,7 +1126,7 @@ async function runPreview() {
 }
 
 .itop b {
-  font-size: 13.5px;
+  font-size: var(--fs-md);
   min-width: 0;
 }
 
@@ -1092,10 +1139,10 @@ async function runPreview() {
 
 .mini-btn {
   border: 1px solid var(--line);
-  background: #fff;
-  border-radius: 3px;
+  background: var(--card);
+  border-radius: var(--r-sm);
   padding: 0 5px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 18px;
   color: #4a525a;
   cursor: pointer;
@@ -1142,7 +1189,7 @@ async function runPreview() {
 
 .detail h4 {
   margin: 16px 0 8px;
-  font-size: 13.5px;
+  font-size: var(--fs-md);
   color: #374151;
   padding-top: 10px;
   border-top: 1px dashed var(--line-soft);
@@ -1155,7 +1202,7 @@ async function runPreview() {
 }
 
 .field > span {
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: #4a525a;
 }
 
@@ -1200,7 +1247,7 @@ async function runPreview() {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: #475569;
   margin-top: 10px;
 }
@@ -1211,14 +1258,14 @@ async function runPreview() {
 
 .adv summary {
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: #64748b;
 }
 
 .adv textarea {
   margin-top: 6px;
   font-family: Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .log {
@@ -1235,7 +1282,7 @@ async function runPreview() {
   flex-wrap: wrap;
   align-items: baseline;
   gap: 8px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   padding: 5px 0;
   border-top: 1px solid var(--line-soft);
 }
@@ -1252,7 +1299,7 @@ async function runPreview() {
 .log .note {
   color: #7a5a20;
   background: #fbf7ef;
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   padding: 0 5px;
 }
 

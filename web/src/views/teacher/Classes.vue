@@ -9,20 +9,25 @@
           保持同一套语言 —— 导出原来藏在导入弹窗里，等于「想导出得先点导入」，方向是反的。
         -->
         <template #right>
+          <!--
+            按钮文字压短了（「导出班级与名单」→「导出」）。
+            两个长按钮在 1440 宽下就把副标题挤成一行了，页头也跟着折行。
+            全称放 title，鼠标停一下就看得到，不用一直占着宽度。
+          -->
           <button
             class="btn mini"
             :disabled="!hasClasses"
             @click="ioExport"
             title="把本课程所有班级与名单打成一个 zip（换机器 / 交给同事）"
           >
-            ⤓ 导出班级与名单
+            ⤓ 导出
           </button>
           <button
             class="btn mini"
             @click="openIO"
             title="从一个 zip 导入班级与名单（先给逐班报告，确认后才写）"
           >
-            ⤒ 导入班级与名单
+            ⤒ 导入
           </button>
           <button class="btn mini" @click="newClass">＋ 新建班级</button>
         </template>
@@ -143,8 +148,18 @@
           </template>
           <template v-else-if="column.key === 'total'"><b>{{ row.total }}</b></template>
           <template v-else-if="column.key === 'actions'">
-            <button class="btn mini" title="改姓名 / 学号" @click.stop="openStudent(row.student)">编辑</button>
-            <button class="btn mini danger" title="从名单里移除（记录保留）" @click.stop="removeStudent(row.student)">删除</button>
+            <!--
+              宽屏时两个按钮写全称；视口不够宽（< 1280）时缩成 ✎ / ✕。
+              不用「⋯ 菜单」是有原因的：表格容器自己 overflow: auto，
+              绝对定位的浮层会被裁掉一半，点在最后一两行时根本看不到菜单。
+              纯文字缩成图标没这个问题，title 里仍然有全称。
+            -->
+            <button class="btn mini" title="改姓名 / 学号" @click.stop="openStudent(row.student)">
+              <span class="t-long">编辑</span><span class="t-short">✎</span>
+            </button>
+            <button class="btn mini danger" title="从名单里移除（记录保留）" @click.stop="removeStudent(row.student)">
+              <span class="t-long">删除</span><span class="t-short">✕</span>
+            </button>
           </template>
           <template v-else>{{ column.value ? column.value(row) : row[column.key] }}</template>
         </template>
@@ -1326,7 +1341,7 @@ function onKey(e) {
 .import-plan {
   border: 1px solid var(--line);
   border-left: 3px solid #2f7d92;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: #f7fbfd;
   padding: 8px 10px;
 }
@@ -1341,7 +1356,7 @@ function onKey(e) {
 .ip-k {
   flex: 0 0 56px;
   color: #6b7785;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .import-plan .add {
@@ -1354,7 +1369,7 @@ function onKey(e) {
 
 .ip-tip {
   margin-top: 4px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
 }
 
 /* 名单导入：没被采纳的行 */
@@ -1379,16 +1394,16 @@ function onKey(e) {
 
 .fbar .select {
   padding: 4px 8px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .fbar .input {
   padding: 4px 8px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .fbar .dim {
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* 表头点了就排序：箭头常驻但浅，排序中的那列高亮 */
@@ -1409,7 +1424,7 @@ th.sortable.on {
 th .sortmark {
   margin-left: 3px;
   font-style: normal;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   color: #c2c8ce;
 }
 
@@ -1425,11 +1440,24 @@ th.on .sortmark {
   padding: 12px 16px;
 }
 
+/* 操作列：宽屏写全称，窄屏缩图标（见模板里那段注释） */
+.t-short {
+  display: none;
+}
+@media (max-width: 1280px) {
+  .t-long {
+    display: none;
+  }
+  .t-short {
+    display: inline;
+  }
+}
+
 .classbar .pill em {
   font-style: normal;
   color: var(--dim);
   margin-left: 6px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .classbar .pill.on em {
@@ -1450,11 +1478,11 @@ th.on .sortmark {
   background: #eef1f7;
   color: #475569;
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--fs-md);
 }
 
 .tab.on {
-  background: #fff;
+  background: var(--card);
   color: var(--brand-ink);
   font-weight: 600;
 }
@@ -1470,7 +1498,7 @@ th.on .sortmark {
 .log > li {
   padding: 10px 12px;
   border: 1px solid var(--line-soft);
-  border-radius: 4px;
+  border-radius: var(--r-md);
   margin-bottom: 8px;
 }
 
@@ -1487,17 +1515,17 @@ th.on .sortmark {
 }
 
 .when {
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: var(--dim);
   font-variant-numeric: tabular-nums;
 }
 
 .who {
-  font-size: 14px;
+  font-size: var(--fs-md);
 }
 
 .delta {
-  font-size: 14px;
+  font-size: var(--fs-md);
   color: var(--brand-ink);
 }
 
@@ -1509,7 +1537,7 @@ th.on .sortmark {
 .lf {
   display: flex;
   gap: 10px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: var(--dim);
 }
 
@@ -1546,7 +1574,7 @@ th.on .sortmark {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13.5px;
+  font-size: var(--fs-md);
   color: #475569;
 }
 /* 登录管理 */
@@ -1562,7 +1590,7 @@ th.on .sortmark {
   align-items: flex-start;
   padding: 10px 12px;
   border: 1px solid var(--line-soft);
-  border-radius: 8px;
+  border-radius: var(--r-lg);
   cursor: pointer;
   flex: 1 1 260px;
 }
@@ -1578,7 +1606,7 @@ th.on .sortmark {
   width: 100%;
   border-collapse: collapse;
   margin-top: 8px;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .lgtbl th,
 .lgtbl td {

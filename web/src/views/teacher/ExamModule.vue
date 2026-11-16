@@ -18,7 +18,7 @@
     </template>
     <p v-if="err" class="hint err">{{ err }}</p>
 
-    <div class="hwbar">
+    <div class="card hwbar">
       <button
       v-for="a in list"
       :key="a.id"
@@ -30,7 +30,7 @@
       {{ a.title }}
       <span class="dim">{{ a.status === 'open' ? '考试中' : a.started ? '已结束' : '未开始' }}</span>
     </button>
-    <span v-if="!list.length && !loading" class="dim" style="font-size: 13px">还没建过机试，点右上角「＋ 新建机试」。</span>
+    <span v-if="!list.length && !loading" class="dim" style="font-size: var(--fs-md)">还没建过机试，点右上角「＋ 新建机试」。</span>
     </div>
 
     <template v-if="d">
@@ -499,7 +499,7 @@ async function saveGrade() {
 }
 
 .scorebar b {
-  font-size: 15px;
+  font-size: var(--fs-lg);
   font-variant-numeric: tabular-nums;
 }
 
@@ -514,7 +514,7 @@ async function saveGrade() {
 
 .sec h4 {
   margin: 0 0 6px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: #374151;
 }
 
@@ -529,20 +529,20 @@ async function saveGrade() {
 
 .stem {
   margin: 0 0 4px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.7;
 }
 
 .opts {
   margin: 0 0 4px;
   padding-left: 18px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: #475569;
 }
 
 .ans {
   margin: 2px 0 0;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .spacer {

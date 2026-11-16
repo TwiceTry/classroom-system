@@ -38,7 +38,17 @@
           <span class="dim">{{ docPx }}</span>
           <button class="btn mini" @click="adjustDoc(1)">A+</button>
         </span>
-        <button class="btn mini tool-ico" title="刷新这一页（只重拉数据，不动你正在填的内容）" @click="doReload">
+        <!--
+          只有「这一页真的有数据要重拉」时才出现。
+          判断依据是页面有没有注册 @reload —— 讲义、课程材料这种只读内容页
+          没有可刷新的东西，放个按钮纯属噪音；考勤、作业列表这种会随学生行为变的才有。
+        -->
+        <button
+          v-if="$attrs.onReload"
+          class="btn mini tool-ico"
+          title="刷新这一页（只重拉数据，不动你正在填的内容）"
+          @click="doReload"
+        >
           ↻
         </button>
         <button class="btn mini tool-ico" :title="isFull ? '退出全屏' : '全屏（讲课 / 投屏时用）'" @click="toggleFull">

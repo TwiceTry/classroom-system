@@ -29,7 +29,7 @@
       <span v-if="showMissing" class="pb-miss dim">{{ missingText }}</span>
     </div>
 
-    <div class="hwbar">
+    <div class="card hwbar">
       <button
       v-for="a in list"
       :key="a.id"
@@ -42,7 +42,7 @@
       <span class="dim">{{ a.status === 'open' ? '收作业中' : a.started ? '已截止' : '未开始' }}</span>
       <span class="cnt">{{ a.studentCount }}</span>
     </button>
-    <span v-if="!list.length && !loading" class="dim" style="font-size: 13px">
+    <span v-if="!list.length && !loading" class="dim" style="font-size: var(--fs-md)">
       还没布置大作业，点右上角「新建大作业」。
     </span>
     </div>
@@ -859,7 +859,7 @@ function grab(s, name) {
   flex-wrap: wrap;
   gap: 6px;
   margin: 2px 0 8px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: #40505f;
 }
 
@@ -891,7 +891,7 @@ function grab(s, name) {
   border: 1px solid var(--line);
   border-radius: 6px;
   margin-bottom: 6px;
-  background: #fff;
+  background: var(--card);
 }
 
 .lib-main {
@@ -934,10 +934,10 @@ function grab(s, name) {
 
 .hwpill .cnt {
   padding: 0 5px;
-  border-radius: 8px;
+  border-radius: var(--r-lg);
   background: #eef1f3;
   color: #5a6570;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
 }
 
 .led {
@@ -978,7 +978,7 @@ function grab(s, name) {
 
 .ctrl-l p {
   margin: 2px 0;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   white-space: pre-wrap;
 }
 
@@ -1001,8 +1001,8 @@ function grab(s, name) {
 .st {
   padding: 10px 12px;
   border: 1px solid var(--line);
-  border-radius: 4px;
-  background: #fff;
+  border-radius: var(--r-md);
+  background: var(--card);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1028,7 +1028,7 @@ function grab(s, name) {
 }
 
 .stl {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--dim);
 }
 
@@ -1047,18 +1047,18 @@ function grab(s, name) {
 
 .missi {
   padding: 2px 8px;
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   background: #fbf4e9;
   border: 1px solid #dfcba8;
   color: #7a5a20;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .missi em {
   font-style: normal;
   margin-left: 5px;
   color: #a08a5e;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
 }
 
 /* 批阅弹层：左看材料 / 右打分 */
@@ -1077,7 +1077,7 @@ function grab(s, name) {
 
 .who h4 {
   margin: 12px 0 4px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: #4a525a;
 }
 
@@ -1087,7 +1087,7 @@ function grab(s, name) {
 
 .note {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.75;
   white-space: pre-wrap;
   color: #3b434b;
@@ -1095,7 +1095,7 @@ function grab(s, name) {
 
 .url {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   word-break: break-all;
 }
 
@@ -1118,7 +1118,7 @@ function grab(s, name) {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: #4a525a;
 }
 
@@ -1130,17 +1130,17 @@ function grab(s, name) {
 .drow input {
   width: 74px;
   padding: 4px 8px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .dtotal {
   margin: 2px 0 0;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: #4a525a;
 }
 
 .dtotal b {
-  font-size: 15px;
+  font-size: var(--fs-lg);
   color: var(--ink);
 }
 
@@ -1156,7 +1156,7 @@ function grab(s, name) {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: #4a525a;
 }
 
@@ -1175,9 +1175,9 @@ function grab(s, name) {
   gap: 8px;
   padding: 4px 8px;
   border: 1px solid var(--line-soft);
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   background: #fbfcff;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .ellip {
