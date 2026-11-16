@@ -263,7 +263,7 @@ function grab(s, name) {
 
 .brief .note {
   margin: 6px 0 8px;
-  font-size: 13.5px;
+  font-size: var(--fs-md);
   line-height: 1.75;
   color: #3b434b;
   white-space: pre-wrap;
@@ -282,7 +282,7 @@ function grab(s, name) {
 }
 
 .field > span {
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: #4a525a;
 }
 
@@ -307,9 +307,9 @@ function grab(s, name) {
   gap: 8px;
   padding: 4px 8px;
   border: 1px solid var(--line-soft);
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   background: #fbfcff;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .actions {
@@ -324,12 +324,12 @@ function grab(s, name) {
 
 .lock h3 {
   margin: 0 0 6px;
-  font-size: 15px;
+  font-size: var(--fs-lg);
 }
 
 .lock p {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.7;
 }
 
@@ -346,12 +346,12 @@ function grab(s, name) {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .subnote {
   margin: 6px 0 4px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.7;
   white-space: pre-wrap;
   color: #3b434b;
@@ -359,17 +359,17 @@ function grab(s, name) {
 
 .suburl {
   margin: 2px 0 6px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   word-break: break-all;
 }
 
 .subcmt {
   margin: 4px 0 6px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: #7a5a20;
   background: #fbf7ef;
   border: 1px solid #ece0c8;
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   padding: 6px 9px;
 }
 

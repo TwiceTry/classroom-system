@@ -216,7 +216,7 @@ async function loginTeacher() {
 .box {
   width: 100%;
   max-width: 392px;
-  background: #fff;
+  background: var(--card);
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 26px 26px 18px;
@@ -231,7 +231,7 @@ async function loginTeacher() {
 
 .head p {
   margin: 4px 0 0;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: var(--dim);
 }
 
@@ -249,7 +249,7 @@ async function loginTeacher() {
   background: none;
   color: var(--sub);
   cursor: pointer;
-  font-size: 13.5px;
+  font-size: var(--fs-md);
   margin-bottom: -1px;
 }
 
@@ -272,7 +272,7 @@ async function loginTeacher() {
 
 .note {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   line-height: 1.65;
   color: var(--dim);
 }
@@ -289,7 +289,7 @@ async function loginTeacher() {
   margin-top: 18px;
   padding-top: 10px;
   border-top: 1px solid var(--line-soft);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: #a8afb6;
   min-height: 18px;
 }

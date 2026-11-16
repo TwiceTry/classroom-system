@@ -312,9 +312,9 @@ async function peek(s) {
   margin-bottom: 10px;
   padding: 7px 11px;
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: #f8fafc;
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: #3b434b;
 }
 
@@ -325,7 +325,7 @@ async function peek(s) {
 
 .score {
   color: var(--ok);
-  font-size: 14px;
+  font-size: var(--fs-md);
 }
 
 .lock {
@@ -334,12 +334,12 @@ async function peek(s) {
 
 .lock h3 {
   margin: 0 0 6px;
-  font-size: 15px;
+  font-size: var(--fs-lg);
 }
 
 .lock p {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.7;
 }
 
@@ -365,13 +365,13 @@ tr.pick {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .empty {
   padding: 20px;
   text-align: center;
   color: var(--dim);
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 </style>

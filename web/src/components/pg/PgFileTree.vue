@@ -229,7 +229,7 @@ function shortPage(p) {
   align-items: center;
   gap: 3px;
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: #5b7b86;
   cursor: pointer;
   white-space: nowrap;
@@ -245,7 +245,7 @@ function shortPage(p) {
   gap: 5px;
   padding: 6px 10px;
   border-top: 1px solid #e8eef2;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: #5b7b86;
 }
 .files-foot .dot.off {
@@ -259,7 +259,7 @@ function shortPage(p) {
   background: none;
   padding: 0 0 0 4px;
   color: #2f7d92;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -277,8 +277,8 @@ function shortPage(p) {
   border: 0;
   background: none;
   padding: 4px 5px;
-  border-radius: 4px;
-  font-size: 12.5px;
+  border-radius: var(--r-md);
+  font-size: var(--fs-sm);
   color: #33505c;
   text-align: left;
   cursor: pointer;
@@ -298,7 +298,7 @@ function shortPage(p) {
   flex: 0 0 12px;
   width: 12px;
   color: #8aa2ac;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   line-height: 1;
 }
 .caret.none {
@@ -312,8 +312,8 @@ function shortPage(p) {
   border: 0;
   background: none;
   padding: 3px 5px 3px 22px;
-  border-radius: 4px;
-  font-size: 12.5px;
+  border-radius: var(--r-md);
+  font-size: var(--fs-sm);
   color: #3d5763;
   text-align: left;
   cursor: pointer;
@@ -343,10 +343,10 @@ function shortPage(p) {
   padding: 0;
   line-height: 1;
   border: 1px solid #d5dbe2;
-  background: #fff;
-  border-radius: 5px;
+  background: var(--card);
+  border-radius: var(--r-sm);
   color: #5b7b86;
-  font-size: 14px;
+  font-size: var(--fs-md);
   cursor: pointer;
 }
 .addbtn:hover:not(:disabled) {
@@ -368,8 +368,8 @@ function shortPage(p) {
   min-width: 0;
   padding: 4px 7px;
   border: 1px solid #d5dbe2;
-  border-radius: 5px;
-  font-size: 12px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
   font-family: inherit;
 }
 .addok,
@@ -377,9 +377,9 @@ function shortPage(p) {
   flex: none;
   padding: 2px 8px;
   border: 1px solid #d5dbe2;
-  background: #fff;
-  border-radius: 5px;
-  font-size: 12px;
+  background: var(--card);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
   cursor: pointer;
 }
 .addok {
@@ -388,7 +388,7 @@ function shortPage(p) {
 }
 .adderr {
   margin: 4px 10px 6px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.4;
   color: #c0392b;
 }
@@ -396,10 +396,10 @@ function shortPage(p) {
   flex: none;
   margin-left: 4px;
   padding: 0 3px;
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   background: #eef6ff;
   color: #2b6cb0;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   line-height: 14px;
 }
 .item .del {
@@ -407,7 +407,7 @@ function shortPage(p) {
   margin-left: 4px;
   padding: 0 3px;
   color: #b0b9c2;
-  font-size: 13px;
+  font-size: var(--fs-md);
   cursor: pointer;
 }
 .item .del:hover {

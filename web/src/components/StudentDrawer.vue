@@ -157,7 +157,7 @@ function dimSum(e) {
 .item {
   padding: 11px 13px;
   border: 1px solid var(--line-soft);
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: #fbfcff;
 }
 
@@ -173,12 +173,12 @@ function dimSum(e) {
 
 .iname {
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--fs-md);
 }
 
 .inum {
   margin-left: auto;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: var(--sub);
   font-variant-numeric: tabular-nums;
 }
@@ -191,7 +191,7 @@ function dimSum(e) {
 .bar {
   height: 6px;
   margin: 9px 0 8px;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: #eaeefb;
   overflow: hidden;
 }
@@ -199,7 +199,7 @@ function dimSum(e) {
 .bar i {
   display: block;
   height: 100%;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: #6f8fa6;
 }
 
@@ -210,13 +210,13 @@ function dimSum(e) {
 }
 
 .ihint {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--dim);
 }
 
 .log-title {
   margin: 0 0 10px;
-  font-size: 14.5px;
+  font-size: var(--fs-lg);
   color: #475569;
 }
 
@@ -229,9 +229,9 @@ function dimSum(e) {
 .list > li {
   padding: 10px 12px;
   border: 1px solid var(--line-soft);
-  border-radius: 4px;
+  border-radius: var(--r-md);
   margin-bottom: 8px;
-  background: #fff;
+  background: var(--card);
 }
 
 .list > li.voided {
@@ -247,13 +247,13 @@ function dimSum(e) {
 }
 
 .when {
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: var(--dim);
   font-variant-numeric: tabular-nums;
 }
 
 .delta {
-  font-size: 14px;
+  font-size: var(--fs-md);
   color: var(--brand-ink);
 }
 
@@ -301,9 +301,9 @@ function dimSum(e) {
 }
 
 .evi-link {
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   padding: 1px 8px;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: #f1f5f9;
 }
 </style>

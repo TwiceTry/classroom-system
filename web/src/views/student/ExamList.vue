@@ -105,13 +105,13 @@ async function load() {
 }
 
 .hwtop b {
-  font-size: 14.5px;
+  font-size: var(--fs-lg);
   min-width: 0;
 }
 
 .note {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.6;
   white-space: pre-wrap;
   color: #3b434b;
@@ -125,7 +125,7 @@ async function load() {
   margin-top: auto;
   padding-top: 6px;
   border-top: 1px solid var(--line-soft);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .score {

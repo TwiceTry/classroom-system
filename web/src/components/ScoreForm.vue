@@ -97,7 +97,7 @@
         <!-- 证据（可选）：作业截图、试卷、项目压缩包 -->
         <div v-if="item.key !== 'attend' && item.key !== 'interact' && item.key !== 'bonus'" class="evi">
           <div class="row">
-            <b style="font-size: 13px">证据（可选）</b>
+            <b style="font-size: var(--fs-md)">证据（可选）</b>
             <input ref="fileInput" type="file" style="display: none" @change="upload" />
             <button class="btn mini" :disabled="uploading" @click="fileInput.click()">
               {{ uploading ? '上传中…' : '上传文件' }}
@@ -273,7 +273,7 @@ async function submit() {
 .presets .pill .pv {
   margin-left: 4px;
   font-style: normal;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   opacity: 0.62;
   font-variant-numeric: tabular-nums;
 }
@@ -289,13 +289,13 @@ async function submit() {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 14px;
+  font-size: var(--fs-md);
   color: #475569;
   margin-bottom: 6px;
 }
 
 .calc {
-  font-size: 14px;
+  font-size: var(--fs-md);
   color: var(--sub);
 }
 
@@ -317,17 +317,17 @@ async function submit() {
 .req {
   font-style: normal;
   padding: 0 6px;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: #fee2e2;
   color: var(--err);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
 }
 
 .evi {
   margin-top: 14px;
   padding: 11px 12px;
   border: 1px dashed #cbd5e1;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: #fbfcff;
 }
 
@@ -338,7 +338,7 @@ async function submit() {
   display: flex;
   flex-direction: column;
   gap: 5px;
-  font-size: 13.5px;
+  font-size: var(--fs-md);
 }
 
 .files li {

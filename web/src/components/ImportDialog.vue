@@ -137,7 +137,7 @@ function onFile(e) {
   padding-left: 18px;
   max-height: 160px;
   overflow: auto;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
   color: #b91c1c;
 }

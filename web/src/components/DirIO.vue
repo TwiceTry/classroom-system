@@ -222,7 +222,7 @@ async function doApply() {
 
 .dio-line {
   margin: 0 0 4px;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .dio-extra {

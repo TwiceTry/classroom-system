@@ -336,7 +336,7 @@ async function onLogout() {
   height: 22px;
   padding: 0;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--r-sm);
   background: none;
   color: #8b98a6;
   cursor: pointer;
@@ -379,12 +379,12 @@ async function onLogout() {
   padding: 6px 8px;
   margin-bottom: 8px;
   border: 1px solid var(--line-soft);
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: #fbfcff;
 }
 
 .course-l {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--dim);
   flex: 0 0 auto;
 }
@@ -394,7 +394,7 @@ async function onLogout() {
   min-width: 0;
   border: none;
   background: transparent;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: var(--ink);
   padding: 2px 0;
   outline: none;
@@ -412,7 +412,7 @@ async function onLogout() {
 }
 
 .course.sub .course-sel {
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .cast {
@@ -428,11 +428,11 @@ async function onLogout() {
   justify-content: center;
   gap: 7px;
   padding: 8px 10px;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   border: 1px solid #4a515c;
   background: #2b3037;
   color: #fff;
-  font-size: 13.5px;
+  font-size: var(--fs-md);
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s;
@@ -475,7 +475,7 @@ async function onLogout() {
 }
 
 .cast .dot.live {
-  background: #fff;
+  background: var(--card);
   box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.25);
   animation: pulse 1.6s ease-in-out infinite;
 }
@@ -492,7 +492,7 @@ async function onLogout() {
 
 .cast-meta {
   margin: 6px 0 4px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--side-dim);
   line-height: 1.5;
   word-break: break-all;
@@ -503,7 +503,7 @@ async function onLogout() {
 }
 
 .cast-link {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: #a8b6c2;
 }
 

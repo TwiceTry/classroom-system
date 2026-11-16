@@ -265,7 +265,7 @@ async function submit(auto) {
 
 .stem {
   margin: 0 0 8px;
-  font-size: 13.5px;
+  font-size: var(--fs-md);
   line-height: 1.7;
 }
 
@@ -281,10 +281,10 @@ async function submit(auto) {
   gap: 6px;
   padding: 5px 10px;
   border: 1px solid var(--line);
-  border-radius: 4px;
-  font-size: 13px;
+  border-radius: var(--r-md);
+  font-size: var(--fs-md);
   cursor: pointer;
-  background: #fff;
+  background: var(--card);
 }
 
 .opt.on {
@@ -294,6 +294,6 @@ async function submit(auto) {
 
 .result {
   margin-bottom: 12px;
-  font-size: 13.5px;
+  font-size: var(--fs-md);
 }
 </style>

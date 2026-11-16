@@ -99,7 +99,7 @@ watch(
 .cvl {
   background: #fbfcff;
   border: 1px solid var(--line-soft);
-  border-radius: 4px;
+  border-radius: var(--r-md);
   overflow: auto;
   padding: 4px 0;
 }
@@ -113,7 +113,7 @@ watch(
   border: none;
   background: none;
   text-align: left;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: var(--text);
   cursor: pointer;
 }
@@ -133,9 +133,9 @@ watch(
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: #fff;
+  background: var(--card);
   border: 1px solid var(--line-soft);
-  border-radius: 4px;
+  border-radius: var(--r-md);
   overflow: hidden;
 }
 

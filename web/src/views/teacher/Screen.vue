@@ -286,13 +286,13 @@ async function savePwd() {
 
 .metric {
   background: #f7f8fc;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   padding: 10px 13px;
 }
 
 .metric span {
   display: block;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--dim);
 }
 
@@ -305,7 +305,7 @@ async function savePwd() {
 
 .metric i {
   font-style: normal;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--dim);
   margin-left: 3px;
 }
@@ -315,9 +315,9 @@ async function savePwd() {
   min-width: 240px;
   padding: 7px 11px;
   background: #f4f6fb;
-  border-radius: 8px;
+  border-radius: var(--r-lg);
   font-family: Consolas, monospace;
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: #334155;
   overflow: auto;
   white-space: nowrap;
@@ -327,7 +327,7 @@ code {
   font-family: Consolas, monospace;
   background: #f1f4f9;
   padding: 1px 5px;
-  border-radius: 5px;
-  font-size: 12.5px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
 }
 </style>

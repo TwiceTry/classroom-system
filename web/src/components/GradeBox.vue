@@ -104,7 +104,7 @@ const dimsTotal = computed(() => dimsTotalOf(props.item, v.dims))
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: #4a525a;
 }
 
@@ -116,17 +116,17 @@ const dimsTotal = computed(() => dimsTotalOf(props.item, v.dims))
 .drow input {
   width: 74px;
   padding: 4px 8px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .dtotal {
   margin: 2px 0 0;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: #4a525a;
 }
 
 .dtotal b {
-  font-size: 15px;
+  font-size: var(--fs-lg);
   color: var(--ink);
 }
 
@@ -134,7 +134,7 @@ const dimsTotal = computed(() => dimsTotalOf(props.item, v.dims))
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: #4a525a;
 }
 </style>

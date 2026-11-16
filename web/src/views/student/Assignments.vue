@@ -154,18 +154,18 @@ function tagOf(a) {
 }
 
 .hwtop b {
-  font-size: 14.5px;
+  font-size: var(--fs-lg);
   min-width: 0;
 }
 
 .meta {
   margin: -4px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .note {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.6;
   color: #3b434b;
   white-space: pre-wrap;
@@ -179,7 +179,7 @@ function tagOf(a) {
   margin-top: auto;
   padding-top: 6px;
   border-top: 1px solid var(--line-soft);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .hwfoot .btn {
@@ -189,6 +189,6 @@ function tagOf(a) {
 
 .score {
   color: var(--ok);
-  font-size: 13.5px;
+  font-size: var(--fs-md);
 }
 </style>

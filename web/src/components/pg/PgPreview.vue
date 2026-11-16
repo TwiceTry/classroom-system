@@ -114,14 +114,14 @@ defineExpose({ frameEl })
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  background: #fff;
+  background: var(--card);
 }
 .frame {
   flex: 1 1 auto;
   width: 100%;
   min-height: 0;
   border: 0;
-  background: #fff;
+  background: var(--card);
 }
 .npmcard {
   margin: 14px;
@@ -130,7 +130,7 @@ defineExpose({ frameEl })
   border-radius: 6px;
   background: #fdfaf1;
   color: #5b4c22;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.7;
 }
 .npmicon {
@@ -140,7 +140,7 @@ defineExpose({ frameEl })
 }
 .npmcard h3 {
   margin: 0 0 6px;
-  font-size: 14px;
+  font-size: var(--fs-md);
   color: #4a3d16;
 }
 .npmcard p {
@@ -165,7 +165,7 @@ defineExpose({ frameEl })
   gap: 6px;
   padding: 6px 9px;
   border-bottom: 1px solid #f6e2de;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: #8a3a2c;
   position: sticky;
   top: 0;
@@ -177,16 +177,16 @@ defineExpose({ frameEl })
 }
 .perr-head .dim {
   color: #a8786f;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .perr-badge {
   min-width: 18px;
   height: 18px;
   padding: 0 5px;
-  border-radius: 9px;
+  border-radius: var(--r-lg);
   background: #c0392b;
   color: #fff;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 18px;
   text-align: center;
 }
@@ -196,10 +196,10 @@ defineExpose({ frameEl })
 .perr-mini,
 .perr-x {
   border: 1px solid #e6c8c2;
-  background: #fff;
-  border-radius: 4px;
+  background: var(--card);
+  border-radius: var(--r-md);
   padding: 1px 7px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: #8a3a2c;
   cursor: pointer;
 }
@@ -210,7 +210,7 @@ defineExpose({ frameEl })
 .perr-list {
   margin: 0;
   padding: 4px 9px 8px 26px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: #5a3b34;
 }
 .perr-list li {
@@ -228,10 +228,10 @@ defineExpose({ frameEl })
 .perr-tag {
   flex: 0 0 auto;
   padding: 0 5px;
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   background: #f3e2de;
   color: #8a3a2c;
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .perr-list .k-reject .perr-tag {
   background: #e8e0f5;
@@ -264,7 +264,7 @@ defineExpose({ frameEl })
   background: none;
   padding: 0;
   color: #2f7d92;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   cursor: pointer;
   text-decoration: underline;
 }
@@ -273,16 +273,16 @@ defineExpose({ frameEl })
 }
 .perr-loc {
   color: #8a6a62;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   margin-left: 2px;
 }
 .perr-stack {
   margin: 4px 0 0;
   padding: 6px 8px;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: #fbf3f1;
   color: #6b4a43;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
   overflow: auto;
 }
@@ -294,6 +294,6 @@ defineExpose({ frameEl })
 }
 .perr-list .res-sum .dim {
   color: #8b7a75;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 </style>

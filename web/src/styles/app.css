@@ -25,6 +25,33 @@
   --radius: 6px;
   --shadow: none;
 
+  /*
+   * ── 设计标尺 ─────────────────────────────────────────────
+   * 加这一段的理由：全站实际用到的字号有 18 种、圆角 8 种、背景色 29 种。
+   * 差别往往只有 0.5px —— 人眼分不出来，但每一处的行高、对齐都跟着变，
+   * 结果就是"看着差不多又不太一样"的毛糙感。下面把每一类收敛成固定几档。
+   *
+   * 只加变量还不够，要真的用起来：全局控件（按钮/输入框/卡片/表头）先换掉，
+   * 各页 scoped 里那些硬编码再逐步并过来。
+   */
+  /* 字号：5 档，相邻至少差 1px 才看得出层级 */
+  --fs-xs: 11.5px; /* 角标、辅助说明 */
+  --fs-sm: 12.5px; /* 表格、次要文字 */
+  --fs-md: 13.5px; /* 正文、按钮 */
+  --fs-lg: 15px; /* 区块标题 */
+  --fs-xl: 20px; /* 大数字 */
+
+  /* 圆角：3 档，按块的大小分，不按心情 */
+  --r-sm: 4px; /* 标签、小格子 */
+  --r-md: 6px; /* 按钮、输入框 */
+  --r-lg: 10px; /* 弹窗（卡片仍用 --radius 6） */
+
+  /* 背景：只表达层级，不表达风格 */
+  --bg-sub: #f3f5f7; /* 表头、提示条、次级块 */
+
+  /* 线：2 档够用 */
+  --line-strong: #cfd6de; /* 输入框这类"需要看见的边界"，比 --line 深一点 */
+
   /* 侧栏：深灰，不用深紫 */
   --side-bg: #23272c;
   --side-line: #313640;
@@ -64,7 +91,7 @@
 ::-webkit-scrollbar-thumb {
   background-color: var(--sb-thumb);
   border: 2px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--r-lg);
   background-clip: content-box;
 }
 
@@ -85,7 +112,7 @@
 .side::-webkit-scrollbar-thumb {
   background-color: var(--sb-thumb-side);
   border: 2px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--r-lg);
   background-clip: content-box;
 }
 
@@ -136,9 +163,26 @@ textarea {
 
 /* ---------------- 骨架 ---------------- */
 
+/*
+ * 高度从根开始锁死，滚动交给最内层。
+ *
+ * 原来 .shell 是 min-height: 100vh —— 结果整页跟着内容长，滚动条在 <body> 上：
+ *   · 页头虽然 sticky，但一滚就压在内容上，观感是"页面在动"
+ *   · 分栏页的左右两栏没法各滚各的，目录会跟着正文一起滚走
+ *
+ * 现在是 height: 100vh + 每层 min-height: 0，谁要滚谁自己 overflow: auto。
+ */
+html,
+body,
+#app {
+  height: 100%;
+}
+
 .shell {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* 侧栏三段：品牌行（含时钟）+ 导航（唯一可滚动）+ 脚部，全部固定高度分布 */
@@ -167,7 +211,7 @@ textarea {
 .side .logo {
   width: 26px;
   height: 26px;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   display: grid;
   place-items: center;
   border: 1px solid #4a515c;
@@ -181,7 +225,7 @@ textarea {
 
 .side .brand h1 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-md);
   font-weight: 600;
   letter-spacing: 0.2px;
   color: #e6e9ec;
@@ -189,7 +233,7 @@ textarea {
 
 .side .brand p {
   margin: 1px 0 0;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--side-dim);
 }
 
@@ -207,7 +251,7 @@ textarea {
 
 .side .nav .group {
   padding: 12px 8px 4px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   letter-spacing: 0.6px;
   color: var(--side-dim);
 }
@@ -217,9 +261,9 @@ textarea {
   align-items: center;
   gap: 8px;
   padding: 7px 10px;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   color: var(--side-ink);
-  font-size: 13.5px;
+  font-size: var(--fs-md);
   border-left: 2px solid transparent;
 }
 
@@ -242,13 +286,13 @@ textarea {
   display: grid;
   place-items: center;
   opacity: 0.85;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* 作息：品牌行下面那一行短时钟 */
 .side .now-line {
   margin: 2px 0 0;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1.35;
   color: #8fa3b3;
   font-variant-numeric: tabular-nums;
@@ -275,7 +319,7 @@ textarea {
   place-items: center;
   padding: 0;
   border: 1px solid #414852;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: transparent;
   color: #c3c8ce;
   cursor: pointer;
@@ -294,7 +338,7 @@ textarea {
   display: grid;
   place-items: center;
   border: 1px solid #414852;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: transparent;
   color: #c3c8ce;
   cursor: pointer;
@@ -374,7 +418,7 @@ textarea {
   margin-top: 0;
   padding: 12px 14px 14px;
   border-top: 1px solid var(--side-line);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--side-dim);
   line-height: 1.65;
 }
@@ -382,7 +426,7 @@ textarea {
 .side .foot b {
   display: block;
   color: #d8dce0;
-  font-size: 13px;
+  font-size: var(--fs-md);
   font-weight: 600;
 }
 
@@ -390,12 +434,12 @@ textarea {
   margin-top: 8px;
   width: 100%;
   padding: 6px;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   border: 1px solid #414852;
   background: transparent;
   color: #c3c8ce;
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .side .foot button:hover {
@@ -405,6 +449,9 @@ textarea {
 .main {
   flex: 1;
   min-width: 0;
+  /* min-height: 0 是关键：flex 子元素默认 min-height: auto，
+     会把高度撑到内容高，后面所有 overflow 都失效 */
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -415,22 +462,26 @@ textarea {
   gap: 12px;
   flex-wrap: wrap;
   padding: 12px 20px;
-  background: #fff;
+  background: var(--card);
   border-bottom: 1px solid var(--line);
   position: sticky;
   top: 0;
   z-index: 20;
+  /* 给一个下限：副标题只有一句的页（课堂作业、大作业…）也不至于比别的页矮一截，
+     切页时顶部不会忽高忽低。76 = 标题 22 + 副标题一行 19 + 上下 padding 24 + 余量 */
+  min-height: 76px;
+  box-sizing: border-box;
 }
 
 .pagehead h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--fs-lg);
   font-weight: 600;
   letter-spacing: 0.2px;
 }
 
 .pagehead .sub {
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: var(--dim);
   margin: 0;
 }
@@ -452,6 +503,17 @@ textarea {
   flex: 1 1 auto;
   min-width: 0;
   line-height: 1.5;
+  /*
+   * 说明文字最多两行，超了省略。
+   *
+   * 各页的副标题长短差很多（考核方案三行、课堂作业一行），
+   * 不限行的话页头高度 53~127 都有，切页时顶部会跳 70px。
+   * 限两行之后，除「代码练习」（工具栏按钮折行）之外都在 76~91 之间。
+   */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .pagehead .right {
@@ -486,7 +548,7 @@ textarea {
 .pagehead .tool-ico {
   min-width: 26px;
   padding: 0 6px;
-  font-size: 14px;
+  font-size: var(--fs-md);
   line-height: 1.6;
 }
 
@@ -497,29 +559,211 @@ textarea {
   flex-wrap: wrap;
 }
 
+/* ── 页头右侧所有控件同高 ─────────────────────────────────────
+   这里是「一排按钮」，高度不一样在视觉上就是没对齐：
+   A−/A+ 是 .btn.mini（26px）、↻⛶↑ 是 .tool-ico（28px）、
+   主操作是 .btn.primary（40px）—— 三种混在一行很难看。
+   统一成 28px，主次靠颜色区分，不靠尺寸。 */
+.pagehead .right .btn,
+.pagehead .right .input,
+.pagehead .right select {
+  height: 28px;
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 26px;
+  box-sizing: border-box;
+}
+/* 主按钮只换颜色，不加高 */
+.pagehead .right .btn.primary {
+  min-height: 28px;
+}
+
+/* ── 页头里的「点名中」状态胶囊 ──────────────────────────────
+   为什么是胶囊而不是页面里加一条 bar：
+   页面里插 bar 会把下面的内容整体推下去（布局跳动 CLS），关掉又弹回来，
+   老师正在看的名单会「跳一下」。放在页头就没有这个问题 —— 它只是
+   把「随机点名」那个按钮换了个样子，高度不变、位置不变。
+
+   顺便把入口和状态合成一个东西：没点名时是按钮，点名中是这个胶囊，
+   点它打开弹窗。不需要再记「哪个按钮是看状态、哪个是结束」。 */
+.spot-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid #f2cbc2;
+  border-radius: 6px;
+  background: #fff5f2;
+  color: #c0392b;
+  font-size: var(--fs-md);
+  line-height: 26px;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+.spot-chip:hover {
+  background: #ffece6;
+  border-color: #e8b1a2;
+}
+.spot-chip .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #e05a3a;
+  flex: none;
+}
+
+/* ── 收纳菜单（「⋯」/「显示 ▾」）─────────────────────────────
+   页头那一行放不下时，把「一周用不到一次」的操作收进来。
+   用原生 <details>：不用 JS、点外面自动关（配合下面那条 blur 的替代方案：直接点 summary）。
+
+   用法：
+     <details class="menu">
+       <summary class="btn mini">⋯</summary>
+       <div class="menu-body">…</div>
+     </details>
+   横排用 .menu-body，竖排加 .col。 */
+.menu {
+  position: relative;
+}
+.menu > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+.menu > summary::-webkit-details-marker {
+  display: none;
+}
+.menu[open] > summary {
+  border-color: #9dbcc8;
+  background: #eef6ff;
+}
+.menu-body {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background: var(--card);
+  border: 1px solid #e2e8ed;
+  border-radius: var(--r-lg);
+  box-shadow: 0 8px 24px rgba(20, 40, 60, 0.12);
+  white-space: nowrap;
+}
+.menu-body.col {
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 128px;
+}
+.menu-body .btn {
+  text-align: left;
+}
+
+/* ── 页面顶部那条「选择 / 切换」卡片 ──────────────────────────
+   全站一共有三种写法，内容不同但外观必须一样，否则切页时边框和留白会跳：
+     .card.bar       考勤点名、课堂互动   （班级 + 日期节次 + 工具）
+     .card.hwbar     课堂作业、大作业、机试（作业切换 pills）
+     .card.classbar  班级管理            （班级 pills）
+   内边距统一 12/16，比 .card 默认的 14 稍紧 —— 这类条里全是小控件，14 显空。 */
+.card.bar,
+.card.hwbar,
+.card.classbar {
+  padding: 12px 16px;
+}
+
+/* ── 页面顶部那条班级栏（考勤 / 课堂互动 / 其他模块页共用 .card.bar）──
+   里面混着班级 pill(26)、日期 input(36)、节次 select(36)、视图切换，
+   高度差 10px 就明显不齐。统一到 26，和 pill 一样高。 */
+.card.bar .input,
+.card.bar .select,
+.card.bar .btn,
+.card.bar .segbtn {
+  height: 26px;
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 24px;
+  box-sizing: border-box;
+}
+/* 「网格 / 列表」这种分段按钮外面还套一层，容器也得跟着压 */
+.card.bar .seg {
+  height: 26px;
+}
+
 /* 页面外壳（components/PageShell.vue）：头部 + 内容区两段。
    .page 只是给 .main 一个可撑满的 flex 列，避免各页各写一层裸 div。 */
 .page {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
+/*
+ * 内容区是**兜底的滚动容器**：普通页（作业列表、课程管理…）内容比一屏短或长，
+ * 就在这一层滚，页头不动。
+ *
+ * 需要「上下分区」的页（分栏的讲义、带名单表格的考勤/互动）会覆盖这条：
+ * 外层不滚，让里面某一块自己滚 —— 见 .content.split 和那两个页自己的样式。
+ */
 .content {
-  padding: 16px 20px 44px;
+  padding: 16px 20px 0;
   max-width: 1520px;
   width: 100%;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  box-sizing: border-box;
+}
+
+/*
+ * 「上下分区」的页用 body-class="fit"：
+ *   外层不滚，交给里面的某一块自己滚（名单表格 / 分栏正文）。
+ * 这样页头、筛选条、当前抽到谁这些永远不会被滚走。
+ *
+ * 用了 fit 的页要把「该滚的那块」写成 flex: 1 + min-height: 0 + overflow: auto，
+ * 只加 fit 而不指定，会让内容被裁掉（overflow: hidden）。
+ */
+.content.fit {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.content.fit > * {
+  flex: none;
 }
 
 /* ---------------- 卡片 / 通用 ---------------- */
 
+/*
+ * 卡片：边框退淡、改用极浅阴影托起来。
+ *
+ * 原来满屏都是「白底 + 1px 灰边」，每一块分量完全一样 ——
+ * 页面看着平，不是因为配色难看，是因为**从头到尾没有一层浮起来**。
+ * 边框退到 --line-soft（几乎看不见），加一层 4% 的阴影，
+ * 卡片才有"放在页面上"的感觉，而不是"画在纸上的框"。
+ */
 .card {
   background: var(--card);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-soft);
   border-radius: var(--radius);
   padding: 14px 16px;
   margin-bottom: 12px;
+  box-shadow: 0 1px 2px rgba(20, 40, 60, 0.045);
+}
+
+/*
+ * 顶上那条「选择 / 切换」bar 不要阴影：
+ * 它贴着页头，是工具栏的一部分，浮起来反而和后文脱节。
+ */
+.card.bar,
+.card.hwbar,
+.card.classbar {
+  box-shadow: none;
+  border-color: var(--line);
 }
 
 .card-head {
@@ -532,7 +776,7 @@ textarea {
 
 .card-head h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-lg);
   font-weight: 600;
 }
 
@@ -546,7 +790,7 @@ textarea {
 
 .dim {
   color: var(--dim);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .sub {
@@ -566,11 +810,11 @@ textarea {
 
 .hint {
   padding: 8px 10px;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   border-left: 3px solid #9fb3c2;
   background: var(--brand-wash);
   color: #3c566b;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.6;
 }
 
@@ -590,7 +834,7 @@ textarea {
   padding: 32px 16px;
   text-align: center;
   color: var(--dim);
-  font-size: 13.5px;
+  font-size: var(--fs-md);
 }
 
 /* ---------------- 按钮 ---------------- */
@@ -598,11 +842,12 @@ textarea {
 .btn {
   padding: 7px 14px;
   border: 1px solid transparent;
-  border-radius: 4px;
+  /* 原来 4px，和卡片的 6px 不是一套；统一到 --r-md */
+  border-radius: var(--r-md);
   background: var(--brand);
   color: #fff;
   cursor: pointer;
-  font-size: 13.5px;
+  font-size: var(--fs-md);
   line-height: 1.4;
   transition: background 0.12s;
 }
@@ -627,7 +872,7 @@ textarea {
 }
 
 .btn.line {
-  background: #fff;
+  background: var(--card);
   color: var(--brand-ink);
   border-color: #c3d0da;
 }
@@ -637,7 +882,7 @@ textarea {
 }
 
 .btn.danger {
-  background: #fff;
+  background: var(--card);
   color: var(--err);
   border-color: #e2bdb9;
 }
@@ -649,15 +894,15 @@ textarea {
 .btn.primary {
   background: var(--brand);
   padding: 9px 24px;
-  font-size: 14.5px;
+  font-size: var(--fs-lg);
   font-weight: 600;
 }
 
 .btn.mini {
   padding: 3px 9px;
-  font-size: 12.5px;
-  border-radius: 4px;
-  background: #fff;
+  font-size: var(--fs-sm);
+  border-radius: var(--r-md);
+  background: var(--card);
   color: #404850;
   border: 1px solid var(--line);
 }
@@ -684,7 +929,7 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: var(--sub);
 }
 
@@ -692,10 +937,11 @@ textarea {
 .select,
 .textarea {
   padding: 7px 10px;
-  border: 1px solid #cfd2cd;
-  border-radius: 4px;
-  background: #fff;
-  font-size: 14px;
+  /* 输入框的边比卡片深一档 —— 它要"看得见"，否则白底白框会消失 */
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--card);
+  font-size: var(--fs-md);
   color: var(--ink);
   outline: none;
   transition: border-color 0.12s;
@@ -719,29 +965,43 @@ textarea {
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: #fff;
+  background: var(--card);
 }
 
 table.grid {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13.5px;
+  font-size: var(--fs-md);
 }
 
 table.grid th,
 table.grid td {
-  padding: 7px 10px;
+  /* 7 → 9：60 行的表，行高太密时眼睛找不到横向的"轨道" */
+  padding: 9px 10px;
   text-align: left;
   border-bottom: 1px solid var(--line-soft);
   white-space: nowrap;
+}
+
+/*
+ * 隔行极浅底色。
+ * 长表格里每行长得一样，视线会滑、会串行；隔行一个 2% 的底色
+ * 就够当"轨道"用了，比画竖线干净。
+ */
+table.grid tbody tr:nth-child(even) {
+  background: #fbfcfd;
+}
+table.grid tbody tr:nth-child(even):hover {
+  background: #f4f7fa;
 }
 
 table.grid thead th {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: #f7f7f5;
-  font-size: 12.5px;
+  /* 表头是"次级块"，用 --bg-sub；原来 #f7f7f5 和卡片白、页面底各自一档，分不清层 */
+  background: var(--bg-sub);
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: #4a525a;
   border-bottom: 1px solid var(--line);
@@ -752,11 +1012,11 @@ table.grid thead em {
   font-style: normal;
   font-weight: 400;
   color: var(--dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 table.grid tbody tr:hover {
-  background: #fafaf8;
+  background: var(--bg-sub);
 }
 
 table.grid tbody tr.clickable {
@@ -771,7 +1031,7 @@ td.num {
 td.num.big {
   font-weight: 600;
   color: var(--ink);
-  font-size: 14.5px;
+  font-size: var(--fs-lg);
 }
 
 td.num.none {
@@ -791,11 +1051,11 @@ td.num.bad {
 .tag {
   display: inline-block;
   padding: 0 6px;
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   border: 1px solid #ccd3d8;
   background: #f2f4f5;
   color: #4a555f;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   line-height: 1.7;
 }
 
@@ -825,11 +1085,11 @@ td.num.bad {
 
 .pill {
   padding: 4px 11px;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--card);
   color: #3b434b;
-  font-size: 13px;
+  font-size: var(--fs-md);
   cursor: pointer;
 }
 
@@ -859,9 +1119,9 @@ td.num.bad {
   max-height: 94vh;
   display: flex;
   flex-direction: column;
-  background: #fff;
+  background: var(--card);
   border: 1px solid #cfd2cd;
-  border-radius: 8px;
+  border-radius: var(--r-lg);
   overflow: hidden;
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.3);
 }
@@ -889,7 +1149,7 @@ td.num.bad {
 
 .modal-head h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-lg);
   font-weight: 600;
 }
 
@@ -905,10 +1165,10 @@ td.num.bad {
   transform: translateX(-50%);
   z-index: 90;
   padding: 8px 16px;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: #23272c;
   color: #f2f3f0;
-  font-size: 13px;
+  font-size: var(--fs-md);
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
 }
 
@@ -954,7 +1214,7 @@ td.num.bad {
 
 .md h5,
 .md h6 {
-  font-size: 14.5px;
+  font-size: var(--fs-lg);
   margin: 14px 0 6px;
   color: #4a525a;
 }
@@ -996,7 +1256,7 @@ td.num.bad {
   margin: 12px 0;
   padding: 9px 14px;
   border-left: 3px solid #ccd3d8;
-  background: #f8f8f6;
+  background: var(--bg-sub);
   color: #4a525a;
 }
 
@@ -1012,19 +1272,19 @@ td.num.bad {
   font-family: Consolas, 'Cascadia Mono', Menlo, monospace;
   font-size: 0.9em;
   padding: 1px 5px;
-  border-radius: 3px;
-  background: #f1f2ef;
+  border-radius: var(--r-sm);
+  background: var(--bg-sub);
   color: #8c3b32;
 }
 
 .md pre {
   margin: 12px 0;
   padding: 12px 14px;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: #22262b;
   color: #dfe3e6;
   overflow: auto;
-  font-size: 13.5px;
+  font-size: var(--fs-md);
   line-height: 1.65;
   position: relative;
 }
@@ -1040,8 +1300,8 @@ td.num.bad {
   width: 100%;
   border-collapse: collapse;
   margin: 12px 0;
-  font-size: 14px;
-  background: #fff;
+  font-size: var(--fs-md);
+  background: var(--card);
   border: 1px solid var(--line);
 }
 
@@ -1054,7 +1314,7 @@ td.num.bad {
 }
 
 .md th {
-  background: #f7f7f5;
+  background: var(--bg-sub);
   font-weight: 600;
   color: #333b43;
   white-space: nowrap;
@@ -1066,7 +1326,7 @@ td.num.bad {
 
 .md img {
   max-width: 100%;
-  border-radius: 3px;
+  border-radius: var(--r-sm);
 }
 
 .md .mermaid {
@@ -1074,20 +1334,20 @@ td.num.bad {
   text-align: center;
   background: #fbfbf9;
   border: 1px dashed var(--line);
-  border-radius: 4px;
+  border-radius: var(--r-md);
   padding: 10px;
   overflow: auto;
 }
 
 .md .mermaid-error {
   color: var(--err);
-  font-size: 13px;
+  font-size: var(--fs-md);
   white-space: pre-wrap;
 }
 
 /* 跟随讲义时，跳到的那一节闪一下，让学生知道「跳哪了」 */
 .md h2.flash {
-  border-radius: 2px;
+  border-radius: var(--r-sm);
   animation: secFlash 1.8s ease-out;
 }
 
@@ -1106,21 +1366,102 @@ td.num.bad {
   }
 }
 
-/* ---------------- 讲义页的双栏 ---------------- */
+/* ── 三栏工作区（PageShell body-class="ws"）────────────────────
+   左（目录/文件列表/菜单）· 中（正文，必须有）· 右（状态/历史，可选）· 脚（可选）
+   三块各自滚：中栏是主内容，长；左右两栏高度跟着内容区，内部溢出自己滚。
 
+   为什么不是"整块一起滚、左右 sticky"：sticky 在滚动容器内会有边界问题
+   （滚到底时左栏会突然跟着走），而 grid + 各自 overflow 是稳定的。
+   列宽用变量，页面自己覆盖。 */
+.content.ws {
+  --ws-left: 232px;
+  --ws-right: 320px;
+  display: grid;
+  gap: 14px;
+  overflow: hidden;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.content.ws.has-left {
+  grid-template-columns: var(--ws-left) minmax(0, 1fr);
+}
+.content.ws.has-right {
+  grid-template-columns: minmax(0, 1fr) var(--ws-right);
+}
+.content.ws.has-left.has-right {
+  grid-template-columns: var(--ws-left) minmax(0, 1fr) var(--ws-right);
+}
+.content.ws.has-foot {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.content.ws .ws-left,
+.content.ws .ws-right,
+.content.ws .ws-main {
+  min-height: 0;
+  overflow: auto;
+}
+
+/*
+ * 不是工作区的页：.ws-main 只是 PageShell 里的一层包装，
+ * 用 display: contents 让它"消失"——子元素直接成为 .content 的子元素，
+ * 布局和加这层之前完全一致（尤其是 body-class="fit" 的页，
+ * 那类页靠 .content 的 flex 列分配高度，多一层 div 会把高度算错、内容被裁）。
+ */
+.content:not(.ws) > .ws-main {
+  display: contents;
+}
+
+/*
+ * 中栏再分「固定区 + 滚动区」：中栏上面常常有几块要一直看得见的东西
+ * （筛选条、当前抽到谁），只有最下面那块该滚。
+ *   <PageShell body-class="ws fixed-top">
+ *     …固定的几块…
+ *     <div class="scroll-body"> …要滚的… </div>
+ *   </PageShell>
+ */
+.content.ws.fixed-top .ws-main {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.content.ws.fixed-top .ws-main > * {
+  flex: none;
+}
+.content.ws.fixed-top .ws-main > .scroll-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.content.ws .ws-foot {
+  grid-column: 1 / -1;
+}
+
+/* ---------------- 讲义页的双栏（老的写法，逐步迁到 .ws）----------------
+   两层都要能各自滚：左边目录滚目录的，右边正文滚正文的，互不影响。
+   所以外层 overflow: hidden（自己不滚），两栏 stretch 等高、各自 overflow: auto。 */
 .split {
   display: grid;
   grid-template-columns: 232px minmax(0, 1fr);
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.split > * {
+  min-height: 0;
+  overflow: auto;
+  margin-bottom: 0;
 }
 
 .lesson-list {
-  position: sticky;
-  top: 70px;
-  max-height: calc(100vh - 96px);
+  /* 以前靠 sticky + max-height 假装不滚；现在它就在 grid 自己那一格里，
+     由 .split > * 统一给了 overflow: auto，不需要 sticky 了 */
   overflow: auto;
-  background: #fff;
+  background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 6px;
@@ -1132,10 +1473,10 @@ td.num.bad {
   text-align: left;
   padding: 7px 9px;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   background: none;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: #333b43;
   line-height: 1.45;
 }
@@ -1155,12 +1496,12 @@ td.num.bad {
   min-width: 26px;
   color: var(--dim);
   font-variant-numeric: tabular-nums;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .lesson-list .sep {
   margin: 8px 9px 4px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   letter-spacing: 0.6px;
   color: #a3a9b0;
 }

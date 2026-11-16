@@ -572,7 +572,7 @@ onUnmounted(() => {
 .scroller::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.22);
   border: 3px solid #111;
-  border-radius: 4px;
+  border-radius: var(--r-md);
 }
 
 .scroller::-webkit-scrollbar-thumb:hover {
@@ -610,7 +610,7 @@ canvas {
   align-items: center;
   gap: 2px;
   padding: 4px 6px;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: rgba(0, 0, 0, 0.62);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
   opacity: 0.55;
@@ -624,10 +624,10 @@ canvas {
 .hud button {
   border: 0;
   padding: 7px 9px;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: transparent;
   color: #e5e7eb;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1;
   cursor: pointer;
 }
@@ -643,7 +643,7 @@ canvas {
 }
 
 .hud .wide {
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .hud .wide.on {
@@ -679,7 +679,7 @@ canvas {
 }
 
 .overlay .sub {
-  font-size: 14px;
+  font-size: var(--fs-md);
   color: #8a8a8a;
   max-width: 76vw;
   line-height: 1.7;
@@ -705,10 +705,10 @@ canvas {
   bottom: 62px;
   transform: translateX(-50%);
   padding: 8px 16px;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: rgba(0, 0, 0, 0.66);
   color: #ffd9a0;
-  font-size: 14px;
+  font-size: var(--fs-md);
   white-space: nowrap;
 }
 </style>

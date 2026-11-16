@@ -315,11 +315,11 @@ function onLogin() {
 .vis-notice {
   margin: 0 0 10px;
   padding: 6px 12px;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: #fff8e6;
   border-left: 3px solid #e0a300;
   color: #6b5320;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 /* ---------------- 折叠态 ---------------- */
 /* 学生端品牌行里那块信息叫 .who（教师端叫 .brand-txt），折叠时一起收掉 */
@@ -361,7 +361,7 @@ function onLogin() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.35;
 }
 /* 贴在底部：不压住顶部的搜索框 / 字号按钮，也不影响页面布局，点「先不看」就消失 */
@@ -377,10 +377,10 @@ function onLogin() {
   width: max-content; /* 否则 left:50% 会把可用宽度压到半屏，文案被提前省略 */
   max-width: min(920px, calc(100vw - 28px));
   padding: 9px 12px 9px 14px;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: #23272c;
   color: #f8fafc;
-  font-size: 13px;
+  font-size: var(--fs-md);
   box-shadow: 0 8px 22px rgba(20, 24, 28, 0.28);
   animation: castrise 0.22s ease-out;
 }
@@ -401,7 +401,7 @@ function onLogin() {
 
 .hint {
   color: #cbd5e1;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -410,11 +410,11 @@ function onLogin() {
 .go {
   flex: 0 0 auto;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   padding: 5px 11px;
   background: #d9a03c;
   color: #23272c;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
 }
@@ -429,7 +429,7 @@ function onLogin() {
   padding: 6px 4px;
   background: transparent;
   color: #94a3b8;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   cursor: pointer;
 }
 
@@ -471,7 +471,7 @@ function onLogin() {
   align-items: center;
   gap: 6px;
   margin: 8px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: #6ee7b7;
 }
 

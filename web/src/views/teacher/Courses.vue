@@ -842,7 +842,7 @@ async function exportPack(c, parts) {
 /* 导出弹层里「必带」的那一行（不是复选框，避免看起来像没勾上） */
 .peer-line {
   margin: 0 0 6px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: #40505f;
 }
 
@@ -857,12 +857,12 @@ async function exportPack(c, parts) {
   align-items: baseline;
   gap: 8px;
   margin: 12px 2px 6px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: #40505f;
 }
 
 .sgroup-h b {
-  font-size: 13.5px;
+  font-size: var(--fs-md);
 }
 
 .sgroup:first-child .sgroup-h {
@@ -893,7 +893,7 @@ async function exportPack(c, parts) {
 .up-track {
   flex: 1 1 auto;
   height: 6px;
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   background: #e8edf3;
   overflow: hidden;
 }

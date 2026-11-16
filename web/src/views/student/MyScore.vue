@@ -135,7 +135,7 @@ function fmt(iso) {
 
 .hero .rank i {
   font-style: normal;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: var(--dim);
   margin-left: 4px;
 }
@@ -161,7 +161,7 @@ function fmt(iso) {
   display: flex;
   gap: 14px;
   align-items: center;
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: var(--sub);
   flex-wrap: wrap;
 }
@@ -199,7 +199,7 @@ function fmt(iso) {
 
 .inum {
   margin-left: auto;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: var(--sub);
   font-variant-numeric: tabular-nums;
 }
@@ -224,7 +224,7 @@ function fmt(iso) {
 
 .hint-text {
   margin: 0 0 10px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: var(--dim);
   line-height: 1.6;
 }
@@ -241,7 +241,7 @@ function fmt(iso) {
 .events li {
   padding: 6px 0;
   border-bottom: 1px dashed var(--line-soft);
-  font-size: 13.5px;
+  font-size: var(--fs-md);
 }
 
 .events li.voided {
@@ -254,7 +254,7 @@ function fmt(iso) {
 }
 
 .when {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--dim);
   margin-right: 8px;
   font-variant-numeric: tabular-nums;
@@ -267,7 +267,7 @@ function fmt(iso) {
 
 .reason {
   margin: 2px 0 0;
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: #475569;
 }
 </style>

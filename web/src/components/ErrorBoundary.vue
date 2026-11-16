@@ -57,12 +57,12 @@ function reset() {
 
 .eb h3 {
   margin: 0 0 8px;
-  font-size: 16px;
+  font-size: var(--fs-lg);
 }
 
 .eb .dim {
   margin: 0 0 10px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.8;
   color: #4b5563;
 }
@@ -72,7 +72,7 @@ function reset() {
   padding: 10px 12px;
   background: #fef2f2;
   border: 1px solid #fecaca;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   color: #b91c1c;
   font: 12px/1.6 Consolas, monospace;
   white-space: pre-wrap;
