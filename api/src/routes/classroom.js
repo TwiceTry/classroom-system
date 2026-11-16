@@ -171,9 +171,11 @@ export default async function classroomRoutes(app) {
     const cls = repo.getClass(req.params.id)
     if (!cls) throw notFound('班级不存在')
     const roster = repo.rosterOf(cls.id)
-    const st = repo.rollState(cls.id)
+    /* ?kind=attend 看考勤那一份；默认 interact */
+    const kind = req.query && req.query.kind === 'attend' ? 'attend' : 'interact'
+    const st = repo.rollState(cls.id, kind)
     const picked = st.picked.map((sid) => roster.find((s) => s.sid === sid)).filter(Boolean).map((s) => ({ sid: s.sid, name: s.name }))
-    return { roster, picked, remaining: roster.length - picked.length, round: st.round }
+    return { roster, picked, remaining: roster.length - picked.length, round: st.round, kind }
   })
 
   /** 抽人：count 个；exclude=true 时不重复抽已经抽过的 */
@@ -186,6 +188,17 @@ export default async function classroomRoutes(app) {
           count: { type: 'number' },
           exclude: { type: 'boolean' },
           lock: { type: 'boolean' },
+          /*
+           * 候选名单（可选）。考勤点名要「只从未标记考勤的人里抽」和「按顺序抽」，
+           * 这两件事只有前端知道（它手上才有当天的考勤状态和排序），
+           * 所以让它把候选 sid 传上来，服务端只在里面挑。
+           * 不传就是全班 —— 课堂互动的行为不变。
+           */
+          sids: { type: 'array', items: { type: 'string' }, maxItems: 500 },
+          /** 'random'（默认）| 'seq' 按 sids 给的顺序取第一个 */
+          order: { type: 'string' },
+          /** 'interact'（默认）| 'attend' —— 决定学生端弹窗的样式 */
+          kind: { type: 'string' },
         },
       },
     },
@@ -197,24 +210,46 @@ export default async function classroomRoutes(app) {
       const st = repo.rollState(cls.id)
       const count = Math.max(1, Math.min(12, Number(req.body.count) || 1))
       const exclude = req.body.exclude !== false
+      const order = req.body.order === 'seq' ? 'seq' : 'random'
+      const kind = req.body.kind === 'attend' ? 'attend' : 'interact'
       const pickedSet = new Set(st.picked)
-      const pool = roster.filter((s) => (exclude ? !pickedSet.has(s.sid) : true))
-      if (!pool.length) throw badRequest('所有人都抽过了，请先「重置抽取」')
+      const allow =
+        Array.isArray(req.body.sids) && req.body.sids.length ? new Set(req.body.sids) : null
+
+      /*
+       * 两个条件同时生效：
+       *   没被抽过（exclude）  —— 这是「本轮不重复」的唯一依据，两个页共用，
+       *                          所以考勤抽过的人，切到课堂互动也不会再抽到
+       *   在候选名单里（allow）—— 考勤的「未标记 / 只看在线」这类筛选
+       */
+      const pool = roster.filter((s) => {
+        if (exclude && pickedSet.has(s.sid)) return false
+        if (allow && !allow.has(s.sid)) return false
+        return true
+      })
+      if (!pool.length) {
+        throw badRequest(
+          allow ? '筛选出来的候选人都抽过了，换个范围或点「从头开始」' : '所有人都抽过了，请先「重置抽取」',
+        )
+      }
 
       const n = Math.min(count, pool.length)
       const chosen = []
       for (let i = 0; i < n; i++) {
-        const idx = Math.floor(Math.random() * pool.length)
+        const idx = order === 'seq' ? 0 : Math.floor(Math.random() * pool.length)
         chosen.push(pool.splice(idx, 1)[0])
       }
-      let state = repo.rollState(cls.id)
-      for (const s of chosen) state = repo.pickRollcall(cls.id, s.sid)
+      /* kind 一路传下去：考勤和互动的「本轮已抽」是两份，互不干扰 */
+      let state = repo.rollState(cls.id, kind)
+      for (const s of chosen) state = repo.pickRollcall(cls.id, s.sid, kind)
 
       // 抽一个人时同步到学生端（多人批量抽不播，屏幕上也显示不过来）
       if (chosen.length === 1) {
         announceSpotlight(cls.id, {
-          kind: 'interact',
+          kind,
           sid: chosen[0].sid,
+          /* name 必须带：学生端 Spotlight.vue 读 msg.name，缺了一行空白 */
+          name: chosen[0].name || '',
           lock: req.body.lock !== false,
           label: '',
           seq: state.picked.length,
@@ -237,22 +272,39 @@ export default async function classroomRoutes(app) {
   /** 从「已抽过」里去掉某人（抽错了） */
   app.post('/api/classes/:id/rollcall/remove', {
     preHandler: requireAuth('teacher'),
-    schema: { body: { type: 'object', required: ['sid'], properties: { sid: { type: 'string' } } } },
+    schema: {
+      body: {
+        type: 'object',
+        required: ['sid'],
+        properties: { sid: { type: 'string' }, kind: { type: 'string' } },
+      },
+    },
     handler: async (req) => {
       const cls = repo.getClass(req.params.id)
       if (!cls) throw notFound('班级不存在')
-      repo.removeRollcall(cls.id, String(req.body.sid))
-      const st = repo.rollState(cls.id)
+      const kind = req.body.kind === 'attend' ? 'attend' : 'interact'
+      repo.removeRollcall(cls.id, String(req.body.sid), kind)
+      const st = repo.rollState(cls.id, kind)
       return { picked: st.picked, remaining: repo.rosterOf(cls.id).length - st.picked.length, round: st.round }
     },
   })
 
-  /** 重置抽取（round +1，整轮重新开始） */
-  app.post('/api/classes/:id/rollcall/reset', { preHandler: requireAuth('teacher') }, async (req) => {
-    const cls = repo.getClass(req.params.id)
-    if (!cls) throw notFound('班级不存在')
-    const st = repo.resetRollcall(cls.id)
-    return { picked: [], remaining: repo.rosterOf(cls.id).length, round: st.round }
+  /**
+   * 重置抽取（这一轮的「已抽过」清空，重新开始）。
+   *
+   * kind 决定清哪一份：考勤点名传 attend、课堂互动传 interact，互不影响。
+   * 不传就是 interact（老调用方）。
+   */
+  app.post('/api/classes/:id/rollcall/reset', {
+    preHandler: requireAuth('teacher'),
+    schema: { body: { type: 'object', properties: { kind: { type: 'string' } } } },
+    handler: async (req) => {
+      const cls = repo.getClass(req.params.id)
+      if (!cls) throw notFound('班级不存在')
+      const kind = (req.body && req.body.kind) === 'attend' ? 'attend' : 'interact'
+      const st = repo.resetRollcall(cls.id, kind)
+      return { picked: [], remaining: repo.rosterOf(cls.id).length, round: st.round, kind }
+    },
   })
 
   /* ---------------- 聚焦（全班看某个人 / 某块屏幕） ---------------- */

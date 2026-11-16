@@ -333,32 +333,55 @@ export function restoreEvent(classId, eid) {
 
 /* ------------------------------ 点名 ------------------------------ */
 
-export function rollState(classId) {
-  const round = (getClass(classId) || {}).rollcallRound || 1
-  const picked = db()
-    .prepare(`SELECT sid, picked_at FROM rollcall WHERE class_id = ? ORDER BY picked_at`)
-    .all(String(classId))
-    .map((r) => ({ sid: r.sid, pickedAt: r.picked_at }))
-  return { round, picked: picked.map((p) => p.sid), detail: picked }
+/*
+ * 点名「本轮已抽」按 kind 分开存：attend（考勤点名）和 interact（课堂互动）互不影响。
+ *
+ * 原来是一份（rollcall 表，主键 class_id + sid）。
+ * 后来发现两个场景本来就不该掺在一起：
+ *   · 考勤点完一轮是为了记出勤，记完就该能重新抽
+ *   · 课堂互动是提问，刚才点过的人完全可以再叫一次
+ * 共用一份的结果是「考勤点过的人，互动里再也抽不到」，反而别扭。
+ *
+ * 怎么存：state 表（key → JSON），键带 kind，不动 rollcall 表 ——
+ * 改主键要重建表，而这些数据本来就是"这一轮抽过谁"，丢了也无所谓。
+ * rollcall 表留着不动，老数据不影响任何逻辑。
+ */
+function rollKind(kind) {
+  return kind === 'attend' ? 'attend' : 'interact'
 }
 
-export function pickRollcall(classId, sid) {
-  db()
-    .prepare(`INSERT INTO rollcall (class_id, sid, picked_at) VALUES (?, ?, ?) ON CONFLICT(class_id, sid) DO UPDATE SET picked_at = excluded.picked_at`)
-    .run(String(classId), String(sid), new Date().toISOString())
-  return rollState(classId)
+function rollKey(classId, kind) {
+  return 'roll:' + String(classId) + ':' + rollKind(kind)
+}
+
+export function rollState(classId, kind) {
+  const raw = getState(rollKey(classId, kind), [])
+  const picked = Array.isArray(raw) ? raw.filter((x) => typeof x === 'string') : []
+  return { round: 1, picked, detail: picked.map((sid) => ({ sid })) }
+}
+
+export function pickRollcall(classId, sid, kind) {
+  const st = rollState(classId, kind)
+  const s = String(sid)
+  if (!st.picked.includes(s)) {
+    st.picked.push(s)
+    setState(rollKey(classId, kind), st.picked)
+  }
+  return rollState(classId, kind)
 }
 
 /** 把某人从「已抽过」里去掉（抽错了） */
-export function removeRollcall(classId, sid) {
-  return db().prepare(`DELETE FROM rollcall WHERE class_id = ? AND sid = ?`).run(String(classId), String(sid)).changes > 0
+export function removeRollcall(classId, sid, kind) {
+  const st = rollState(classId, kind)
+  const next = st.picked.filter((x) => x !== String(sid))
+  if (next.length === st.picked.length) return false
+  setState(rollKey(classId, kind), next)
+  return true
 }
 
-export function resetRollcall(classId) {
-  const cur = getClass(classId) || {}
-  db().prepare(`DELETE FROM rollcall WHERE class_id = ?`).run(String(classId))
-  db().prepare(`UPDATE classes SET rollcall_round = ? WHERE id = ?`).run(Number(cur.rollcallRound || 1) + 1, String(classId))
-  return rollState(classId)
+export function resetRollcall(classId, kind) {
+  setState(rollKey(classId, kind), [])
+  return rollState(classId, kind)
 }
 
 /* ------------------------------ 作业 / 提交 ------------------------------ */

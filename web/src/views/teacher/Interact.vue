@@ -1,38 +1,32 @@
 <template>
-  <PageShell>
+  <!-- ws：中栏名单 + 右栏记录；fixed-top：bar 和 picker 固定，只有名单滚 -->
+  <PageShell body-class="ws fixed-top">
     <template #head>
       <PageHead @reload="() => reload(true)">
         <template #title>课堂互动</template>
         <template #sub>抽人 → 提问 → 记分：点快捷按钮会自动抽一个本轮没抽过的学生并记分，
           抽到谁学生端同步弹「课堂点名」；也能在名单里直接加减分，实时写进「{{ itemName }}」。</template>
         <!-- 专属区：点名相关。刷新走通用区的「↻」（重新抽一轮不影响当前抽到的人） -->
+        <!--
+          点名入口与状态合一：没点名时是「随机点名」按钮，点名中是「● 点名中 · 张三」胶囊。
+          两者占同一个位置、同一个高度，所以页面不会因为点名而跳动。
+          点胶囊打开弹窗；旁边的「结束」直接收掉。
+        -->
         <template #right>
           <span class="tag mute">{{ itemName }} · 满分 {{ full }}</span>
-          <button class="btn mini" :disabled="!activeId" @click="resetRoll">重置抽取</button>
-          <label class="check" title="锁定时学生点不掉弹窗，必须等你重置或换人">
-            <input
-              type="checkbox"
-              :checked="spotLock"
-              @change="setSpotLock($event.target.checked)"
-            />
-            学生端锁定
-          </label>
-          <!--
-            :disabled 原来写的是 !activeId —— activeId 是「当前选的班级」，
-            只要选了班就一直可点，哪怕根本没在点名。改成按「有没有正在点名的人」判断，
-            并且进行中时变红，一眼看得出「现在有个点名没结束」。
-          -->
+          <button v-if="current" class="spot-chip" title="点开看这次点名" @click="spotOpen = true">
+            <i class="dot"></i>点名中 · {{ current.name }}
+          </button>
+          <button v-else class="btn primary" :disabled="!activeId || drawing" @click="openSpot">
+            {{ drawing ? '抽取中…' : '随机点名' }}
+          </button>
           <button
-            class="btn mini"
-            :class="{ danger: !!current }"
-            :disabled="!current"
-            :title="current ? '收起学生端的点名提示（你自己这边的名单不动）' : '现在没有进行中的点名'"
+            v-if="current"
+            class="btn mini danger"
+            title="收起学生端的点名提示（你自己这边的名单不动）"
             @click="endSpot"
           >
-            结束点名
-          </button>
-          <button class="btn primary" :disabled="!activeId || drawing" @click="openSpot">
-            {{ drawing ? '抽取中…' : '随机点名' }}
+            结束
           </button>
         </template>
       </PageHead>
@@ -53,55 +47,14 @@
     </div>
 
     <!--
-      点名状态条。
-      老师上课时会切到名单 / 记录那边去，回头就忘了「学生端那个弹窗还开着吗、
-      要不要收」—— 之前没有任何标记，只能凭记忆。这里给一条显眼的提示 + 结束按钮。
+      这里原来有一张 .card.picker：抽到谁 + 一排快捷加分 + 自定义分值，占 107px。
+      但「抽到谁」弹窗里有大字、「快捷加分」名单表每行都有、
+      自定义分值刚搬进弹窗了 —— 三处都在说同一件事，删掉。
+      现在抽到的人只在页头那颗「点名中 · 张三」胶囊上，点开就是弹窗。
     -->
-    <div v-if="current" class="spotbar">
-      <i class="dot on pulse"></i>
-      <b>点名中</b>
-      <span class="sb-who">{{ current.name }} · {{ current.sid }}</span>
-      <span class="dim mini">{{ spotLock ? '学生端已锁定，等你结束' : '学生端显示中' }}</span>
-      <span class="spacer"></span>
-      <button class="btn mini" @click="spotOpen = true">看点名</button>
-      <button class="btn mini danger" @click="endSpot">结束点名</button>
-    </div>
 
-    <!-- 抽到的人 + 快捷加减分 -->
-    <div class="card picker">
-      <div class="who" :class="{ none: !current }">
-        <template v-if="current">
-          <i class="dot" :class="{ on: current.online }"></i>
-          <b>{{ current.name }}</b>
-          <span class="sid">{{ current.sid }}</span>
-          <span class="tag ok">互动 {{ current.score }} / {{ full }}</span>
-        </template>
-        <template v-else>
-          <span class="dim">点下面任一按钮 → 自动抽一个没抽过的学生并记分；也可以先点「随机点名」再决定给多少分。</span>
-        </template>
-      </div>
-      <div class="presets">
-        <button
-        v-for="p in presets"
-        :key="p.label"
-        class="pill big"
-        :class="{ minus: (p.delta || 0) < 0 }"
-        :disabled="busy"
-        @click="quick(p)"
-        >
-        {{ p.label }}
-      </button>
-      <span class="custom">
-        <input v-model.number="customDelta" type="number" step="1" class="input" style="width: 74px" />
-        <button class="btn mini" :disabled="busy || !customDelta" @click="quick({ label: '自定义', delta: customDelta })">
-          记这次
-        </button>
-      </span>
-    </div>
-    </div>
-
-    <div class="split">
-    <!-- 名单 -->
+    <!-- 中栏：名单（主滚动区）。上面那条 bar 固定不动 -->
+    <div class="scroll-body">
     <section class="card">
       <CardHead>
         <template #title>名单 · {{ students.length }}</template>
@@ -126,8 +79,10 @@
         </template>
       </DataTable>
     </section>
+    </div>
 
-    <!-- 最近记录 -->
+    <!-- 右栏：本次课记录。抄在名单右边，永远看得见，不用滚回去找 -->
+    <template #right>
     <section class="card">
       <CardHead>
         <template #title>本次课记录</template>
@@ -144,7 +99,7 @@
         <li v-if="!recent.length" class="dim">还没有记录。</li>
       </ul>
     </section>
-    </div>
+    </template>
 
 
     <!--
@@ -154,76 +109,61 @@
       关掉弹窗 ≠ 结束点名：关掉只是自己这边不挡视线，学生端还开着，
       顶部那条「点名中」还在 —— 想真结束必须点弹窗头上或状态条里的「结束点名」。
     -->
-    <div v-if="spotOpen" class="mask" @click.self="spotOpen = false">
-      <div class="modal spotbox">
-        <div class="modal-head">
-          <h3>
-            课堂点名 <span class="dim">{{ itemName }} · 学生端同步显示</span>
-          </h3>
+    <RollCallModal
+      v-model="spotOpen"
+      title="课堂点名"
+      :subtitle="itemName + ' · 学生端同步显示'"
+      :who="spotWho"
+      :picked="roll.pickedCount"
+      :total="students.length"
+      :remaining="roll.remaining"
+      :online="onlineCount"
+      :locked="spotLock"
+      :busy="busy"
+      :drawing="drawing"
+      :can-reset="!!activeId"
+      end-title="收起学生端点名提示，本轮已抽过的人保留"
+      empty-text="还没抽人。点右下「下一个」随机抽一个本轮没抽过的学生。"
+      @update:locked="setSpotLock"
+      @end="endSpot"
+      @next="nextSpot"
+      @reset="resetRoll"
+    >
+      <!--
+        业务按钮：这一页是「加分」，考勤那页是「判考勤」。
+        原来页面上还有一张 picker 卡片放同样的按钮 + 自定义分值 ——
+        和这里的按钮、和名单表每行的 +1 +2 −1 三重重复，还占 107px 高度。
+        卡片删了，把只有它才有的「自定义分值」搬进来。
+      -->
+      <template #actions>
+        <button
+          v-for="p in presets"
+          :key="p.label"
+          class="kbtn"
+          :class="{ minus: (p.delta || 0) < 0 }"
+          :disabled="busy"
+          @click="quick(p)"
+        >
+          {{ p.label }}
+        </button>
+        <span class="custom-act">
+          <input
+            v-model.number="customDelta"
+            type="number"
+            step="1"
+            class="input"
+            title="自定义分值，正负都行"
+          />
           <button
-            class="btn mini"
-            style="margin-left: auto"
-            title="收起学生端点名提示，本轮已抽过的人保留"
-            @click="endSpot"
+            class="kbtn"
+            :disabled="busy || !customDelta"
+            @click="quick({ label: '自定义', delta: customDelta })"
           >
-            结束点名
+            记
           </button>
-        </div>
-        <div class="modal-body">
-          <p v-if="!current" class="empty">还没抽人。点右下「下一个」随机抽一个本轮没抽过的学生。</p>
-          <template v-else>
-            <div class="spotwho">
-              <b class="wname">{{ current.name }}</b>
-              <span class="wsid">{{ current.sid }}</span>
-              <span class="tag" :class="current.online ? 'ok' : 'mute'">
-                <i class="dot" :class="{ on: current.online }"></i>
-                {{ current.online ? '在线' : '离线' }}
-              </span>
-              <span class="dim">互动 {{ current.score }} / {{ full }}</span>
-            </div>
-            <div class="drawbtns">
-              <button
-                v-for="p in presets"
-                :key="p.label"
-                class="kbtn"
-                :class="{ minus: (p.delta || 0) < 0 }"
-                :disabled="busy"
-                @click="quick(p)"
-              >
-                {{ p.label }}
-              </button>
-            </div>
-          </template>
-
-          <div class="drawfoot">
-            <div class="df-row">
-              <span class="dim">
-                本轮已抽 {{ roll.pickedCount }} 人 · 还剩 {{ roll.remaining }} 人 · 在线 {{ onlineCount }}
-              </span>
-              <span class="spacer"></span>
-              <label class="check" title="锁定时学生点不掉弹窗，必须等你点「结束」">
-                <input
-                  type="checkbox"
-                  :checked="spotLock"
-                  @change="setSpotLock($event.target.checked)"
-                />
-                学生端锁定
-              </label>
-            </div>
-            <div class="df-row">
-              <button class="btn mini" :disabled="!activeId" @click="resetRoll">从头开始</button>
-              <span class="spacer"></span>
-              <button class="btn mini" title="只收起弹窗，学生端的点名提示还开着" @click="spotOpen = false">
-                先放着
-              </button>
-              <button class="btn primary" :disabled="!activeId || drawing" @click="nextSpot">
-                {{ drawing ? '抽取中…' : '下一个 ›' }}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+        </span>
+      </template>
+    </RollCallModal>
 
     <Toast :text="toast" />
   </PageShell>
@@ -239,6 +179,7 @@ import PageHead from '../../components/PageHead.vue'
 import DataTable from '../../components/DataTable.vue'
 import CardHead from '../../components/CardHead.vue'
 import PageShell from '../../components/PageShell.vue'
+import RollCallModal from '../../components/RollCallModal.vue'
 
 /** 方案里没配预设时的兜底按钮（还能用下面的自定义分值） */
 const FALLBACK_PRESETS = [
@@ -263,6 +204,22 @@ const current = ref(null)
 const search = ref('')
 const customDelta = ref(1)
 const busy = ref(false)
+
+/*
+ * 给 RollCallModal 的归一化数据。
+ * 考勤页那边「分数」是考勤状态、这边是互动分，组件不猜业务含义，
+ * 只显示调用方拼好的 scoreText。
+ */
+const spotWho = computed(() => {
+  const c = current.value
+  if (!c) return null
+  return {
+    name: c.name || '',
+    sid: c.sid || '',
+    online: !!c.online,
+    scoreText: '互动 ' + (c.score === undefined ? 0 : c.score) + ' / ' + full.value,
+  }
+})
 
 /* 名单表 */
 const listCols = [
@@ -483,7 +440,8 @@ async function restoreSpot() {
 
 async function resetRoll() {
   try {
-    await api.post(url('/rollcall/reset'), {})
+    /* kind=interact：只清课堂互动这一份「已抽过」，不动考勤的 */
+    await api.post(url('/rollcall/reset'), { kind: 'interact' })
     current.value = null
     await reload()
     show('已重置抽取（全班重新参与）')
@@ -522,61 +480,64 @@ onMounted(async () => {
   flex: 1;
 }
 
-.picker {
-  margin-bottom: 10px;
-}
-
-.who {
+/*
+ * 抽到谁 + 快捷加分这一块是全页的**主动作**，但它和下面那张白底名单表
+ * 长得一模一样 —— 一片白、一片灰线，眼睛没有落点。
+ * 给一块浅浅的底色把它托起来：这是"现在正在做的事"，
+ * 下面的表格是"参考数据"，两者本来就该分层。
+ */
+/*
+ * 弹窗里那组「自定义分值 + 记」。
+ * 它作为一个整体占 .rcm-actions 的一格（那里是等宽 grid），
+ * 所以内部用 flex 排，别让 input 把格子撑开。
+ */
+.custom-act {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 15px;
-  min-height: 34px;
-  margin-bottom: 10px;
+  gap: 4px;
+  min-width: 0;
+}
+.custom-act .input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 6px;
+  text-align: center;
+}
+.custom-act .kbtn {
+  flex: none;
+  width: 38px;
+  padding: 0;
 }
 
-.who b {
-  font-size: 20px;
-}
-
-.who .sid {
-  font-size: 12px;
-  color: #94a3b8;
-}
-
-.who.none {
-  font-size: 13px;
-}
-
-.presets {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.pill.big {
-  padding: 6px 14px;
-  font-size: 13.5px;
-}
-
-.pill.minus {
-  border-color: #fecaca;
-  color: #b91c1c;
-}
-
-.custom {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: 6px;
-}
-
+/*
+ * 名单区自己滚，页面不滚。
+ *
+ * 60 人的表有 2400px 高，以前整页滚 —— 老师滚下去找人，页头的点名胶囊、
+ * 上面「抽到谁 + 快捷加分」全跑出屏幕，点一个人要来回滚两趟。
+ * 现在只有这块滚，上面永远在。
+ * 300px = 页头 + bar + picker + 内边距（实测）。
+ */
+/*
+ * 名单区吃掉剩下的高度，自己滚（页面本身不滚，body-class="fit"）。
+ * 左边表格和右边信息栏各自 overflow，互不影响。
+ * 不要写 max-height：按视口硬算，页头一变高就错位。
+ */
 .split {
   display: grid;
   grid-template-columns: 1fr 320px;
   gap: 12px;
-  align-items: start;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding-right: 2px;
+  padding-bottom: 16px;
+}
+
+.split > * {
+  min-height: 0;
+  overflow: auto;
 }
 
 .card-head {
@@ -620,7 +581,7 @@ onMounted(async () => {
   gap: 6px;
   padding: 5px 2px;
   border-bottom: 1px dashed #eef1f5;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .recent li.voided {
@@ -654,8 +615,8 @@ onMounted(async () => {
   border: 1px solid #f0c9c4;
   border-left: 4px solid #c0392b;
   background: #fdf4f3;
-  border-radius: 8px;
-  font-size: 13.5px;
+  border-radius: var(--r-lg);
+  font-size: var(--fs-md);
 }
 .spotbar b {
   color: #c0392b;
@@ -691,7 +652,7 @@ onMounted(async () => {
   line-height: 1.1;
 }
 .spotwho .wsid {
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: var(--dim);
   font-variant-numeric: tabular-nums;
 }
@@ -709,8 +670,8 @@ onMounted(async () => {
   border: 1px solid #cfe6cf;
   background: #f6fbf6;
   color: #2e7d32;
-  border-radius: 8px;
-  font-size: 14px;
+  border-radius: var(--r-lg);
+  font-size: var(--fs-md);
   cursor: pointer;
 }
 .kbtn:hover:not(:disabled) {

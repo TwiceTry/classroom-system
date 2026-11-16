@@ -1,80 +1,117 @@
 <template>
-  <PageShell>
+  <!-- ws：中栏网格 + 右栏异常；fixed-top：bar 固定，只有网格滚 -->
+  <PageShell body-class="ws fixed-top">
     <template #head>
-      <PageHead>
+      <PageHead @reload="reload">
         <template #title>考勤点名</template>
         <template #sub>点一下就存：网格点格子循环，列表点行内按钮；只记异常，回到「出勤」= 撤销。
           随机点名可随机 / 顺序，也能按状态筛；抽到谁，学生端会同步弹大字提示。</template>
+        <!--
+          刷新走通用区那个「↻」（这一页最需要它：在线人数和名单一直在变）。
+
+          点名入口与状态合一：没点名时是「随机点名」按钮，点名中是「● 点名中 · 张三」胶囊，
+          两者占同一个位置、同一个高度 —— 页面不会因为点名而多出一块东西。
+        -->
         <template #right>
           <span class="tag mute" v-if="full">{{ itemName }} · 满分 {{ full }}</span>
-          <button class="btn mini" :disabled="loading" @click="reload">刷新</button>
+          <button v-if="current" class="spot-chip" title="点开接着点" @click="drawing = true">
+            <i class="dot"></i>点名中 · {{ current.name }}
+          </button>
+          <button v-else class="btn primary" :disabled="!students.length" @click="openDraw">
+            随机点名
+          </button>
+          <button
+            v-if="current"
+            class="btn mini danger"
+            title="收起学生端的点名提示，本轮进度保留"
+            @click="closeDraw"
+          >
+            结束
+          </button>
         </template>
       </PageHead>
     </template>
     <p v-if="error" class="hint err">{{ error }}</p>
 
+    <!--
+      一条 bar 分两行：
+        第一行「选哪一批数据」—— 班级 / 日期 / 节次 / 显示方式 / 清空
+        第二行「这批数据怎么样」—— 各状态计数 / 在线数 / 今天有几节
+      原来统计单独占一张卡片（55px），和 bar 说的是同一件事却分两处，
+      合并后省一张卡，也省一次「上面的数字和下面的名单对不上」的困惑。
+
+      视图和排序收进「显示」菜单：它们改的是"怎么看"，一天改一次，
+      不该和日期、节次抢同一行的醒目位置。
+    -->
     <div class="card bar">
-      <div class="classes">
-        <button v-for="c in classes" :key="c.id" class="pill" :class="{ on: c.id === activeId }" @click="pick(c.id)">
-          {{ c.name }}<span class="dim"> {{ c.studentCount ?? c.count ?? '' }} 人</span>
-        </button>
-        <span v-if="!classes.length" class="dim">还没有班级，先去「班级管理」建一个。</span>
-      </div>
-      <div class="tools">
+      <div class="bar-row">
+        <div class="classes">
+          <button v-for="c in classes" :key="c.id" class="pill" :class="{ on: c.id === activeId }" @click="pick(c.id)">
+            {{ c.name }}<span class="dim"> {{ c.studentCount ?? c.count ?? '' }} 人</span>
+          </button>
+          <span v-if="!classes.length" class="dim">还没有班级，先去「班级管理」建一个。</span>
+        </div>
+        <span class="spacer"></span>
         <label class="field inline">
           <span>日期</span>
           <input v-model="day" type="date" class="input" @change="reload" />
         </label>
         <label class="field inline">
           <span>节次</span>
-          <select v-model="slot" class="select" style="width: 116px" @change="reload">
+          <select v-model="slot" class="select" style="width: 108px" @change="reload">
             <option v-for="x in slotOptions" :key="x" :value="x">{{ x }}</option>
           </select>
         </label>
-        <div class="seg">
-          <button class="segbtn" :class="{ on: view === 'grid' }" @click="view = 'grid'">网格</button>
-          <button class="segbtn" :class="{ on: view === 'list' }" @click="view = 'list'">列表</button>
-        </div>
-        <label class="field inline">
-          <span>排序</span>
-          <select v-model="sortBy" class="select" style="width: 122px">
-            <option value="sid">学号</option>
-            <option value="online">在线优先</option>
-            <option value="status">异常优先</option>
-            <option value="score">考勤分低优先</option>
-          </select>
-        </label>
-        <button class="btn mini" :disabled="!students.length" title="随机抽一个人，当场判考勤" @click="openDraw">
-          随机点名
-        </button>
+
+        <details class="menu">
+          <summary class="btn mini">显示 · {{ view === 'grid' ? '网格' : '列表' }}</summary>
+          <div class="menu-body">
+            <div class="seg">
+              <button class="segbtn" :class="{ on: view === 'grid' }" @click="view = 'grid'">网格</button>
+              <button class="segbtn" :class="{ on: view === 'list' }" @click="view = 'list'">列表</button>
+            </div>
+            <label class="field inline">
+              <span>排序</span>
+              <select v-model="sortBy" class="select" style="width: 118px">
+                <option value="sid">学号</option>
+                <option value="online">在线优先</option>
+                <option value="status">异常优先</option>
+                <option value="score">考勤分低优先</option>
+              </select>
+            </label>
+          </div>
+        </details>
+
         <button class="btn mini danger" :disabled="!abnormalCount" @click="clearSlot">
-          清空本节异常（{{ abnormalCount }}）
+          清空异常（{{ abnormalCount }}）
         </button>
+      </div>
+
+      <div class="bar-row stats-row">
+        <span v-for="k in kinds" :key="k.kind" class="stat" :class="'k-' + k.kind">
+          {{ k.kind }} <b>{{ countOf(k.kind) }}</b>
+        </span>
+        <span class="online"><i class="live"></i>在线 <b>{{ onlineCount }}</b> / {{ students.length }}</span>
+        <span class="spacer"></span>
+        <span class="slotchips">
+          <button
+            v-for="x in slotStats"
+            :key="x.slot"
+            class="slotchip"
+            :class="{ on: x.slot === slot }"
+            @click="switchSlot(x.slot)"
+          >
+            {{ x.slot }} · {{ x.count }}
+          </button>
+          <span v-if="!slotStats.length" class="dim mini">今天这一节还没有记录</span>
+        </span>
       </div>
     </div>
 
-    <div class="card stats">
-      <span v-for="k in kinds" :key="k.kind" class="stat" :class="'k-' + k.kind">
-        {{ k.kind }} <b>{{ countOf(k.kind) }}</b>
-        <em v-if="k.delta">（{{ k.delta }} 分/次）</em>
-      </span>
-      <span class="online"><i class="live"></i>在线 <b>{{ onlineCount }}</b> / {{ students.length }}</span>
-      <span class="spacer"></span>
-      <span class="slotchips">
-        <button
-        v-for="x in slotStats"
-        :key="x.slot"
-        class="slotchip"
-        :class="{ on: x.slot === slot }"
-        @click="switchSlot(x.slot)"
-        >
-        {{ x.slot }} · {{ x.count }}
-      </button>
-      <span v-if="!slotStats.length" class="dim mini">今天这一节还没有记录</span>
-    </span>
-    </div>
-
     <div v-if="!students.length && !loading" class="card empty">这个班还没有名单，先去「班级管理」导入。</div>
+
+    <!-- 中栏：网格 / 列表（主滚动区）。上面那条 bar 固定不动 -->
+    <div class="scroll-body">
 
     <!-- 网格 -->
     <div v-show="view === 'grid' && students.length" class="roster">
@@ -128,79 +165,79 @@
     记录都能在「班级管理 → 全班流水」里看到。排序只改显示顺序（学号 / 在线优先 / 异常优先 / 考勤分低优先），标记不会丢。
     </p>
 
+    </div>
+
+    <!--
+      右栏：本节异常。
+      60 人的网格里，迟到/缺勤那几个混在一片出勤色里要靠肉眼找；
+      这里单列一遍，上课时一眼知道"这节课谁没到"。
+    -->
+    <template #right>
+      <section class="card">
+        <CardHead>
+          <template #title>本节异常</template>
+          <template #meta>
+            <span class="dim mini">{{ abnormalList.length }} 人</span>
+          </template>
+        </CardHead>
+        <ul class="abn">
+          <li v-for="s in abnormalList" :key="s.sid">
+            <b>{{ s.name }}</b>
+            <span class="tag" :class="kindTag(kindOf(s.sid))">{{ kindOf(s.sid) }}</span>
+            <span class="spacer"></span>
+            <span class="dim mini">{{ s.sid }}</span>
+          </li>
+          <li v-if="!abnormalList.length" class="dim">
+            {{ students.length ? '全部出勤，没有异常。' : '还没有名单。' }}
+          </li>
+        </ul>
+      </section>
+    </template>
+
 
     <!-- 随机点名：抽一个人，当场判考勤（判完自动抽下一个） -->
-    <div v-if="drawing" class="mask" @click.self="closeDraw">
-      <div class="modal drawbox">
-        <div class="modal-head">
-          <h3>
-            点名核对 <span class="dim">{{ slot }} · {{ day }} · 学生端同步显示</span>
-          </h3>
-          <button class="btn mini" style="margin-left: auto" title="收起学生端点名提示，本轮进度保留" @click="closeDraw">
-            结束点名
-          </button>
-        </div>
-        <div class="modal-body">
-          <p v-if="!current" class="empty">{{ drawHint }}</p>
-          <template v-else>
-            <div class="who">
-              <b class="wname">{{ current.name }}</b>
-              <span class="wsid">{{ current.sid }}</span>
-              <span class="tag" :class="onlineMap[current.sid] ? 'ok' : 'mute'">
-                <i class="dot" :class="{ on: onlineMap[current.sid] }"></i>
-                {{ onlineMap[current.sid] ? '在线' : '离线' }}
-              </span>
-              <span class="dim">考勤 {{ scoreMap[current.sid] === undefined ? '—' : scoreMap[current.sid] }} / {{ full }}</span>
-            </div>
-            <div class="drawbtns">
-              <button
-                v-for="k in kinds"
-                :key="k.kind"
-                class="kbtn"
-                :class="['k-' + k.kind, { on: kindOf(current.sid) === k.kind }]"
-                :disabled="busySet.has(current.sid)"
-                @click="judge(k.kind)"
-              >
-                {{ k.kind }}<em v-if="k.delta">{{ k.delta }}</em>
-              </button>
-            </div>
-          </template>
-          <div class="drawfoot">
-            <div class="df-row">
-              <span class="dim">本轮已抽 {{ drawn.size }} 人 · 还剩 {{ candidates.length }} 人</span>
-              <span class="spacer"></span>
-              <label class="field inline">
-                <span>抽谁</span>
-                <select v-model="scope" class="select" style="width: 122px">
-                  <option v-for="o in scopeOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
-                </select>
-              </label>
-            </div>
-            <div class="df-row">
-              <label class="check" title="锁定时学生点不掉弹窗，必须等你点「结束」">
-                <input
-                  type="checkbox"
-                  :checked="spotLock"
-                  @change="setSpotLock($event.target.checked)"
-                />
-                学生端锁定
-              </label>
-              <button
-                class="btn mini"
-                :class="{ on: inOrder }"
-                :title="inOrder ? '按学号顺序一个个来' : '随机抽'"
-                @click="inOrder = !inOrder"
-              >
-                {{ inOrder ? '顺序点名' : '随机点名' }}
-              </button>
-              <button class="btn mini" @click="resetRound">从头开始</button>
-              <span class="spacer"></span>
-              <button class="btn mini" :disabled="!candidates.length" @click="drawOne">下一个 ›</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <RollCallModal
+      v-model="drawing"
+      title="考勤点名"
+      :subtitle="slot + ' · ' + day + ' · 学生端同步显示'"
+      :who="attendWho"
+      :picked="drawn.size"
+      :total="students.length"
+      :remaining="candidates.length"
+      :online="null"
+      :scopes="scopeOptions"
+      :scope="scope"
+      orderable
+      :order="inOrder ? 'seq' : 'random'"
+      :locked="spotLock"
+      :busy="!!current && busySet.has(current.sid)"
+      :can-reset="!!activeId"
+      :empty-text="drawHint"
+      end-title="收起学生端点名提示，本轮进度保留"
+      @update:locked="setSpotLock"
+      @update:scope="scope = $event"
+      @update:order="(v) => (inOrder = v === 'seq')"
+      @end="closeDraw"
+      @next="drawOne"
+      @reset="resetRound"
+    >
+      <!-- 业务按钮：这一页是「判考勤」，课堂互动那页是「加分」 -->
+      <template #actions>
+        <button
+          v-for="k in kinds"
+          :key="k.kind"
+          class="kbtn"
+          :class="['k-' + k.kind, { on: kindOf(current.sid) === k.kind }]"
+          :disabled="busySet.has(current.sid)"
+          @click="judge(k.kind)"
+        >
+          {{ k.kind }}<em v-if="k.delta">{{ k.delta }}</em>
+        </button>
+      </template>
+
+      <!-- 「抽谁 / 顺序还是随机」现在是组件的 props（scopes / orderable），
+           不再走插槽 —— 那样控件尺寸和父组件样式各管一半，对不齐。 -->
+    </RollCallModal>
 
     <Toast :text="toast" />
   </PageShell>
@@ -216,6 +253,7 @@ import { spotLock, setSpotLock } from '../../utils/spotlight'
 import PageHead from '../../components/PageHead.vue'
 import DataTable from '../../components/DataTable.vue'
 import PageShell from '../../components/PageShell.vue'
+import RollCallModal from '../../components/RollCallModal.vue'
 
 const props = defineProps({
   itemKey: { type: String, default: '' },
@@ -505,6 +543,44 @@ const scopeOptions = [
 /* 顺序点名：按学号一条条来，适合对名单 / 挨个问 */
 const inOrder = ref(false)
 
+/*
+ * 给 RollCallModal 的归一化数据（和课堂互动那边同一个形状）。
+ * 分数这一栏两边含义不同：这里是考勤状态，那边是互动分，
+ * 所以只传拼好的文案，组件不猜。
+ */
+/**
+ * 本节有异常的人（迟到 / 缺勤 / 请假 / 早退）。
+ *
+ * 60 人的网格里，异常的那几个混在一片"出勤"里要靠颜色找。
+ * 右栏单独列一遍，点名时一眼知道"这节课谁没到"。
+ */
+const abnormalList = computed(() =>
+  students.value.filter((s) => {
+    const k = kindOf(s.sid)
+    return k && k !== '出勤'
+  }),
+)
+
+/** 考勤状态 → 标签配色（右栏异常列表用） */
+function kindTag(k) {
+  if (k === '迟到' || k === '早退') return 'warn'
+  if (k === '缺勤') return 'err'
+  if (k === '请假') return 'mute'
+  return 'ok'
+}
+
+const attendWho = computed(() => {
+  const c = current.value
+  if (!c) return null
+  const sc = scoreMap[c.sid]
+  return {
+    name: c.name || '',
+    sid: c.sid || '',
+    online: !!onlineMap[c.sid],
+    scoreText: '考勤 ' + (sc === undefined ? '—' : sc) + ' / ' + full.value,
+  }
+})
+
 const candidates = computed(() =>
   students.value
     .filter((s) => {
@@ -554,29 +630,48 @@ function saveAttendState() {
     .catch(() => {})
 }
 
-function drawOne() {
+/**
+ * 抽一个还没标过考勤的人。
+ *
+ * 以前这里**在浏览器本地随机**挑，抽过的人记在本地 `drawn`。
+ * 课堂互动那边却是调 `/rollcall/draw`、记在服务端的 `picked` ——
+ * 两本账，同一节课里考勤点过的人，切到互动还能再抽到。
+ *
+ * 现在统一走服务端：
+ *   · 候选名单用 sids 传上去（「未标记 / 只看在线」这类筛选只有前端知道）
+ *   · exclude 由服务端按 picked 判断 —— 两个页共用同一份「本轮已抽」
+ *   · order 决定顺序还是随机
+ * 拿回来的 picked 直接当本地 drawn 用，两边永远一致。
+ */
+async function drawOne() {
   const pool = candidates.value
   if (!pool.length) {
     current.value = null
     return
   }
-  const idx = inOrder.value ? 0 : Math.floor(Math.random() * pool.length)
-  const hit = pool[idx]
-  drawn.add(hit.sid)
-  current.value = hit
-  /*
-   * name 必须带上：服务端只是原样广播 payload（classroom.js announceSpotlight），
-   * 学生端 Spotlight.vue 是 `name.value = msg.name || ''`。
-   * 少了它，学生端弹窗在、高度也在，但名字一片空白。
-   */
-  announce({
-    sid: hit.sid,
-    name: hit.name || '',
-    seq: drawn.size,
-    total: students.value.length,
-    lock: spotLock.value,
-  })
-  saveAttendState()
+  try {
+    const res = await api.post(base('/rollcall/draw'), {
+      count: 1,
+      exclude: true,
+      lock: spotLock.value,
+      sids: pool.map((s) => s.sid),
+      order: inOrder.value ? 'seq' : 'random',
+      kind: 'attend',
+    })
+    const who = (res.drawn || [])[0]
+    if (!who) {
+      current.value = null
+      return
+    }
+    current.value = students.value.find((s) => s.sid === who.sid) || { sid: who.sid, name: who.name || '' }
+    /* 服务端回来的 picked 就是权威的「本轮已抽」，同步成镜像 */
+    drawn.clear()
+    for (const sid of res.picked || []) drawn.add(sid)
+    saveAttendState()
+  } catch (e) {
+    error.value = e.message
+    current.value = null
+  }
 }
 
 function openDraw() {
@@ -585,8 +680,20 @@ function openDraw() {
   if (!current.value) drawOne()
 }
 
+/**
+ * 结束点名（和课堂互动同一套语义）。
+ *
+ *   关掉弹窗 ≠ 结束点名：点「先放着」/ 点遮罩只是自己这边不挡视线，
+ *   学生端还显示着，页头那颗「点名中 · 张三」也还在，随时能点回来。
+ *
+ *   只有这个函数会真结束：清学生端提示 + 清教师端「当前抽到谁」。
+ *
+ * 原来这里只清了学生端（announce），漏了 current —— 于是学生端的浮层收了、
+ * 页头那颗胶囊还挂着「点名中」，看着像没结束。两件事必须一起做。
+ */
 function closeDraw() {
   drawing.value = false
+  current.value = null
   announce({ clear: true })
 }
 
@@ -599,10 +706,24 @@ async function judge(kind) {
   else current.value = null
 }
 
-function resetRound() {
+/**
+ * 重置抽取：清空本轮「已抽过」，所有人重新可抽。
+ *
+ * 必须在**服务端**清一次。抽人已经改成走 /rollcall/draw、由服务端记 picked，
+ * 只清本地 drawn 的话，下一次 draw 服务端还是会把整班当成"都抽过了"——
+ * 表现就是点了没反应（这正是之前的毛病）。
+ *
+ * kind=attend：只清考勤这一份，不动课堂互动的。
+ */
+async function resetRound() {
   drawn.clear()
   current.value = null
-  drawOne()
+  try {
+    await api.post(base('/rollcall/reset'), { kind: 'attend' })
+  } catch (e) {
+    /* 清不掉也照样往下走，至少本轮界面是新的 */
+  }
+  await drawOne()
 }
 
 /** 打开页面 / 换班时：把上次的点名进度接回来（含还开着的点名弹层） */
@@ -684,7 +805,7 @@ onUnmounted(() => {
 }
 
 .who .wsid {
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: var(--dim);
   font-variant-numeric: tabular-nums;
 }
@@ -702,7 +823,7 @@ onUnmounted(() => {
 .drawbtns .kbtn {
   min-width: 88px;
   padding: 9px 10px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   text-align: center;
 }
 
@@ -710,7 +831,7 @@ onUnmounted(() => {
   display: block;
   margin-top: 2px;
   font-style: normal;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   opacity: 0.66;
 }
 
@@ -731,13 +852,27 @@ onUnmounted(() => {
   margin-top: 10px;
 }
 
+/* 两行：第一行选数据（班级/日期/节次），第二行看结果（各状态计数） */
 .bar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.bar-row {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  margin-bottom: 10px;
 }
+
+.stats-row {
+  padding-top: 10px;
+  border-top: 1px dashed #eef1f4;
+}
+
+/* 「显示」菜单的样式已经提到 app.css（考核方案页也要用，一处维护） */
 
 .classes {
   display: flex;
@@ -763,21 +898,21 @@ onUnmounted(() => {
 
 .field.inline > span {
   white-space: nowrap;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: #475569;
 }
 
 .seg {
   display: flex;
   border: 1px solid #d8dee6;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   overflow: hidden;
 }
 
 .segbtn {
   padding: 3px 10px;
-  font-size: 12px;
-  background: #fff;
+  font-size: var(--fs-sm);
+  background: var(--card);
   border: none;
   cursor: pointer;
   color: #475569;
@@ -794,19 +929,19 @@ onUnmounted(() => {
   gap: 12px;
   flex-wrap: wrap;
   margin-bottom: 10px;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .stat {
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: #f4f6f8;
 }
 
 .stat em {
   font-style: normal;
   color: #94a3b8;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   margin-left: 2px;
 }
 
@@ -824,7 +959,7 @@ onUnmounted(() => {
 }
 
 .online {
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: #15803d;
 }
 
@@ -852,8 +987,8 @@ onUnmounted(() => {
   padding: 1px 8px;
   border: 1px solid #d8dee6;
   border-radius: 10px;
-  background: #fff;
-  font-size: 11.5px;
+  background: var(--card);
+  font-size: var(--fs-xs);
   color: #475569;
   cursor: pointer;
 }
@@ -864,10 +999,44 @@ onUnmounted(() => {
   color: var(--brand-ink);
 }
 
+/*
+ * 名单区自己滚，页面不滚 —— 这样页头（点名胶囊、随机点名）和上面那条统计
+ * 永远在屏幕上。60 人的班一屏放不下，以前整页滚，点完一个人要滚回顶上去看统计。
+ * 300px 是「页头 + 两行 bar + 内边距」的实测高度，留了些余量。
+ */
+/*
+ * 名单区吃掉剩下的高度，自己滚。页面本身不滚（body-class="fit"），
+ * 所以页头、点名胶囊、上面那条统计永远不会被滚走。
+ * 不要再写 max-height：那是按视口硬算的，页头一变高就错。
+ */
+/* 网格本身不再管滚动 —— 外层 .scroll-body 才是滚动容器（见 .content.ws.fixed-top） */
 .roster {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
   gap: 8px;
+  padding-bottom: 8px;
+}
+
+/* 右栏：本节异常 */
+.abn {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.abn li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: var(--fs-sm);
+  border-bottom: 1px solid var(--line-soft);
+}
+.abn li:last-child {
+  border-bottom: none;
+}
+.abn li b {
+  font-weight: 500;
+  color: var(--ink);
 }
 
 .stu {
@@ -878,8 +1047,8 @@ onUnmounted(() => {
   padding: 8px 10px;
   border: 1px solid #d8dee6;
   border-left-width: 4px;
-  border-radius: 5px;
-  background: #fff;
+  border-radius: var(--r-sm);
+  background: var(--card);
   cursor: pointer;
   text-align: left;
   transition: background 0.12s;
@@ -894,23 +1063,23 @@ onUnmounted(() => {
 }
 
 .stu b {
-  font-size: 13.5px;
+  font-size: var(--fs-md);
   color: #1f2937;
 }
 
 .stu .sid {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: #94a3b8;
   font-variant-numeric: tabular-nums;
 }
 
 .stu .mark {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: #475569;
 }
 
 .stu .score {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: #94a3b8;
   font-variant-numeric: tabular-nums;
 }
@@ -977,9 +1146,9 @@ tr.st-早退 {
 .kbtn {
   padding: 2px 9px;
   border: 1px solid #d8dee6;
-  border-radius: 4px;
-  background: #fff;
-  font-size: 12px;
+  border-radius: var(--r-md);
+  background: var(--card);
+  font-size: var(--fs-sm);
   color: #475569;
   cursor: pointer;
 }
@@ -1008,6 +1177,6 @@ tr.st-早退 {
 .empty {
   padding: 16px;
   color: #64748b;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 </style>
