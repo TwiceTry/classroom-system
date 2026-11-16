@@ -131,6 +131,16 @@ export function markNonce(source, ts) {
  */
 export function applySnapshot(source, entries, verifyToken) {
   const prev = snapshots.get(source) || { online: new Set(), casting: new Set() }
+  /*
+   * 上一轮快照里每个人属于哪个班。
+   *
+   * 为什么需要它：下面「谁从这一轮里消失了」的清除逻辑，原来靠 who.get(sid) ——
+   * 而 who 只从**本次** entries 构建。人一旦不在本次快照里，who.get 就是 undefined，
+   * 于是「该给他置离线」的分支被跳过，他要么靠 TTL 慢慢过期（在线），
+   * 要么永远留着（投屏 —— castSnap 没有 TTL）。
+   * 表现就是：代理停了之后，几个测试学生一直挂"在线"、一个一直挂"在看投屏"。
+   */
+  const prevPeople = prev.people instanceof Map ? prev.people : new Map()
   const nextOnline = new Set()
   const nextCasting = new Set()
   const who = new Map()
@@ -149,7 +159,7 @@ export function applySnapshot(source, entries, verifyToken) {
   }
   for (const sid of prev.online) {
     if (nextOnline.has(sid)) continue
-    const w = who.get(sid)
+    const w = who.get(sid) || prevPeople.get(sid)
     if (w) leave(w.classId, sid)
   }
   for (const sid of nextCasting) {
@@ -158,7 +168,7 @@ export function applySnapshot(source, entries, verifyToken) {
   }
   for (const sid of prev.casting) {
     if (nextCasting.has(sid)) continue
-    const w = who.get(sid)
+    const w = who.get(sid) || prevPeople.get(sid)
     if (w) castSnap.delete(keyOf(w.classId, sid))
   }
 
@@ -173,7 +183,13 @@ export function applySnapshot(source, entries, verifyToken) {
     }
     if (oldest !== null) snapshots.delete(oldest)
   }
-  snapshots.set(source, { online: nextOnline, casting: nextCasting, lastAt: Date.now() })
+  /* people 存下来给下一轮用（见函数开头那段注释） */
+  snapshots.set(source, {
+    online: nextOnline,
+    casting: nextCasting,
+    people: who,
+    lastAt: Date.now(),
+  })
   return { online: nextOnline.size, casting: nextCasting.size }
 }
 
