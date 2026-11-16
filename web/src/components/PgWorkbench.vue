@@ -792,7 +792,7 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, resetTo
   padding: 7px 10px;
   border: 1px solid #2f7d92;
   border-left-width: 3px;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: #eef7fa;
   color: #1d5568;
 }
@@ -801,7 +801,7 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, resetTo
 
 .syncbar .mono {
   font-family: Consolas, 'Cascadia Mono', monospace;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 
@@ -825,11 +825,23 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, resetTo
  * 注意只看 :not(.pg-tall) —— 上下排（.pg-tall）保持原设计：
  * 两块各 78vh，故意把页面撑大，靠整页滚动上下浏览。那个行为不要动。
  */
+/*
+ * 工作台是「目录 + 正文」的内部布局：文件树一栏自己滚，代码和预览各占一块。
+ *
+ * 高度用 100% 而不是 100dvh：外层 .shell 已经锁了 100vh（见 app.css 的骨架），
+ * 这里再按视口算一次就会多出一整条页头的高度 —— 底部被裁掉，
+ * 表现为「预览区下半截看不见、也没有滚动条」。
+ *
+ * 更不能写成 height: auto：那样里面的 flex:1 全部失效，代码区会塌成 0 高。
+ */
 .pg:not(.pg-tall) {
-  height: 100dvh;
+  flex: 1;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
+
+
 
 .pg:not(.pg-tall) > .content {
   flex: 1 1 auto;
@@ -886,10 +898,12 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, resetTo
 
 
 
-/* 竖排：一屏放不下两块。高度仍锁 100dvh，滚动交给内容区自己 ——
-   这样不会出现 body 滚动条把整页挤窄、头部跟着回缩的情况。 */
+/* 竖排（layout === 'col'）：两块上下放，一屏肯定放不下。
+   高度跟父容器走（不再 100dvh，外层 .shell 已经锁 100vh），
+   滚动交给内容区自己 —— 这样不会出现 body 滚动条把整页挤窄。 */
 .pg-tall {
-  height: 100dvh;
+  flex: 1;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
@@ -1024,7 +1038,7 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, resetTo
   flex: 0 0 10px;
   align-self: stretch;
   cursor: col-resize;
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   background: linear-gradient(to right, transparent 4px, var(--line) 4px, var(--line) 6px, transparent 6px);
 }
 
@@ -1119,7 +1133,7 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, resetTo
   padding: 8px 12px;
   border-bottom: 1px solid var(--line-soft);
   background: #fbfcff;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: var(--sub);
   min-height: 38px;
 }
@@ -1239,7 +1253,7 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, resetTo
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: #475569;
   white-space: nowrap;
 }
@@ -1250,8 +1264,8 @@ code {
   font-family: Consolas, monospace;
   background: #f1f4f9;
   padding: 1px 5px;
-  border-radius: 5px;
-  font-size: 12.5px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
 }
 
 

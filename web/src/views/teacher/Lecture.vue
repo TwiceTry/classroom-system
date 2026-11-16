@@ -1,7 +1,8 @@
 <template>
-  <PageShell body-class="split">
+  <PageShell body-class="ws">
     <template #head>
-      <PageHead @reload="reload">
+      <!-- 只读内容页：没有「要重拉的数据」，所以不注册 @reload，页头也就不会有「↻」 -->
+      <PageHead>
         <template #title>讲义</template>
         <template #sub>讲义与课程材料是同一批小节 · 切换视图不打断「跟随」，学生端仍按小节跳</template>
         <template #right>
@@ -42,6 +43,8 @@
         </template>
       </PageHead>
     </template>
+    <!-- 左栏：目录。自己滚，正文滚多远它都不动 -->
+    <template #left>
     <aside class="lesson-list">
     <template v-for="(l, i) in lessons" :key="l.id">
     <div v-if="l.kind !== 'lesson' && (i === 0 || lessons[i - 1].kind === 'lesson')" class="sep">补充资料</div>
@@ -53,7 +56,9 @@
     </template>
     <p v-if="!lessons.length" class="empty">没有读到内容，请检查 materials/ 与 lecture/ 目录</p>
     </aside>
+    </template>
 
+    <!-- 中栏：正文（默认槽，主滚动区） -->
     <section ref="articleRef" class="card">
     <CardHead>
     <template #title>{{ headTitle }}</template>
@@ -296,7 +301,7 @@ function pushFollow() {
   gap: 4px;
   padding: 3px;
   background: #f1f3f9;
-  border-radius: 9px;
+  border-radius: var(--r-lg);
 }
 
 .sep {

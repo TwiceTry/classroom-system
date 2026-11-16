@@ -1,7 +1,8 @@
 <template>
-  <PageShell body-class="split">
+  <PageShell body-class="ws">
     <template #head>
-      <PageHead @reload="() => activeId && open(activeId, { keepScroll: true })">
+      <!-- 只读内容页：没有「要重拉的数据」，所以不注册 @reload，页头也就不会有「↻」 -->
+      <PageHead>
         <template #title>课程材料</template>
         <template #sub>每课一份，随时回看</template>
         <!-- 专属区：搜课名 + 跟随状态。刷新走通用区的「↻」（重新拉当前这一课） -->
@@ -13,6 +14,8 @@
         </template>
       </PageHead>
     </template>
+    <!-- 左栏：目录，自己滚 -->
+    <template #left>
     <aside class="lesson-list">
       <button v-for="l in filtered" :key="l.id" :class="{ on: l.id === activeId }" @click="open(l.id)">
         <span class="no">{{ l.kind === 'lesson' ? '第' + String(l.no).padStart(2, '0') + '课' : '' }}</span>
@@ -20,7 +23,9 @@
       </button>
       <p v-if="!filtered.length" class="empty">没有匹配的课程</p>
     </aside>
+    </template>
 
+    <!-- 中栏：正文（默认槽，主滚动区） -->
     <section class="card">
       <CardHead>
         <template #title>{{ doc.title || '—' }}</template>
@@ -186,10 +191,10 @@ async function open(id, opts) {
   transform: translateX(-50%);
   z-index: 80;
   padding: 9px 18px;
-  border-radius: 4px;
+  border-radius: var(--r-md);
   background: rgba(17, 24, 39, 0.9);
   color: #fff;
-  font-size: 13.5px;
+  font-size: var(--fs-md);
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
 }
 
