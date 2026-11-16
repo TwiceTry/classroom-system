@@ -1,5 +1,6 @@
 <template>
-  <PageShell>
+  <!-- ws：中栏名单 + 右栏全班流水；fixed-top：班级条和 tabs 固定，只有名单滚 -->
+  <PageShell body-class="ws fixed-top">
     <template #head>
       <PageHead @reload="load">
         <template #title>班级管理 · 名单与分数</template>
@@ -59,14 +60,14 @@
 
     <div class="tabs">
       <button class="tab" :class="{ on: tab === 'board' }" @click="tab = 'board'">班级名单</button>
-      <button class="tab" :class="{ on: tab === 'log' }" @click="tab = 'log'">
-        全班流水 <span class="dim">{{ events.length }}</span>
-      </button>
       <button class="tab" :class="{ on: tab === 'login' }" @click="openLogin">
         登录管理
         <span v-if="login.blockedCount" class="dim">{{ login.blockedCount }} 人禁登</span>
       </button>
     </div>
+
+    <!-- 中栏：名单 / 登录管理（主滚动区）。上面的班级条和 tabs 固定不动 -->
+    <div class="scroll-body">
 
     <section v-show="tab === 'board'" class="card">
       <CardHead>
@@ -164,42 +165,6 @@
           <template v-else>{{ column.value ? column.value(row) : row[column.key] }}</template>
         </template>
       </DataTable>
-    </section>
-
-    <section v-show="tab === 'log'" class="card">
-    <CardHead>
-    <template #title>全班流水</template>
-    <template #right>
-      <select v-model="logItem" class="select">
-        <option value="">全部计分项</option>
-        <option v-for="it in items" :key="it.key" :value="it.key">{{ it.name }}</option>
-      </select>
-      <input v-model.trim="logQ" class="input" placeholder="搜姓名 / 学号 / 原因" style="width: 200px" />
-      <button class="btn mini" :disabled="!active" @click="exportSheet('events')" title="导出本班记分记录（xlsx，Excel 直接打开）">
-        导出流水
-      </button>
-      <span class="dim">有效 {{ liveCount }} 条</span>
-    </template>
-    </CardHead>
-
-    <ul class="log">
-    <li v-for="e in filteredEvents" :key="e.id" :class="{ voided: e.voided }">
-      <div class="lhead">
-        <span class="when">{{ fmt(e.createdAt) }}</span>
-        <b class="who">{{ nameOf(e.sid) }}</b>
-        <span class="tag" :class="'tag-' + e.item">{{ itemName(e.item) }}</span>
-        <b class="delta">{{ summary(e) }}</b>
-        <span v-if="e.voided" class="tag mute">已撤销</span>
-        <span class="spacer"></span>
-      </div>
-      <p class="reason">{{ e.reason }}</p>
-      <div class="lf">
-        <span class="dim">{{ e.operator }}</span>
-        <a v-for="f in e.evidence || []" :key="f.url" :href="f.url" target="_blank" rel="noopener">{{ f.name }}</a>
-      </div>
-    </li>
-    <li v-if="!filteredEvents.length" class="empty">没有符合条件记录</li>
-    </ul>
     </section>
 
     <!--
@@ -313,11 +278,66 @@
       </table>
     </section>
 
-    <!-- 点名：并进这里，不再单开一个页面 -->
+    </div>
     </template>
 
+    <!--
+      右栏：全班流水。
+      原来是三个 tab 之一 —— 想看一眼"刚才给谁加了分"就得切走名单，看完再切回来。
+      记分是这一页的主线（左边名单上的分都是这里记出来的），放右栏常驻，
+      改完分立刻能看到新记录，不用来回切。
+      右栏只有 320px，所以筛选收成两行：一行计分项、一行搜索。
+    -->
+    <template #right>
+      <section class="card">
+        <CardHead>
+          <template #title>全班流水</template>
+          <template #meta>
+            <!-- 「42 / 0 条」看着莫名其妙（42 条记录、0 条有效），所以分开说 -->
+            <span class="dim mini">
+              {{ filteredEvents.length }} 条{{ liveCount ? ' · 有效 ' + liveCount : ' · 全部已撤销' }}
+            </span>
+            <button
+              class="btn mini"
+              :disabled="!active"
+              title="导出本班记分记录（xlsx，Excel 直接打开）"
+              @click="exportSheet('events')"
+            >
+              ⤓
+            </button>
+          </template>
+        </CardHead>
 
-    <!-- 学生明细 -->
+        <div class="log-tools">
+          <select v-model="logItem" class="select">
+            <option value="">全部计分项</option>
+            <option v-for="it in items" :key="it.key" :value="it.key">{{ it.name }}</option>
+          </select>
+          <input v-model.trim="logQ" class="input" placeholder="搜姓名 / 学号 / 原因" />
+        </div>
+
+        <ul class="log">
+          <li v-for="e in filteredEvents" :key="e.id" :class="{ voided: e.voided }">
+            <div class="lhead">
+              <b class="who">{{ nameOf(e.sid) }}</b>
+              <span class="tag" :class="'tag-' + e.item">{{ itemName(e.item) }}</span>
+              <b class="delta">{{ summary(e) }}</b>
+              <span v-if="e.voided" class="tag mute">已撤销</span>
+              <span class="spacer"></span>
+              <span class="when">{{ fmt(e.createdAt) }}</span>
+            </div>
+            <p class="reason">{{ e.reason }}</p>
+            <div class="lf">
+              <span class="dim">{{ e.operator }}</span>
+              <a v-for="f in e.evidence || []" :key="f.url" :href="f.url" target="_blank" rel="noopener">{{ f.name }}</a>
+            </div>
+          </li>
+          <li v-if="!filteredEvents.length" class="empty">没有符合条件记录</li>
+        </ul>
+      </section>
+    </template>
+
+    <!-- 学生明细（点名 / 改分都并进这个抽屉，不再单开一个页面） -->
     <StudentDrawer
     v-if="pickedRow"
     :student="pickedRow.student"
@@ -1438,6 +1458,24 @@ th.on .sortmark {
   gap: 8px;
   flex-wrap: wrap;
   padding: 12px 16px;
+}
+
+/* 右栏流水的筛选：只有 320px 宽，两个控件竖着摆比并排好按 */
+.log-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.log-tools .select,
+.log-tools .input {
+  width: 100%;
+}
+
+/* 右栏窄，一条记录的头改成「谁 + 分 + 时间」压一行，原因和操作人各占一行 */
+.log .lhead {
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 /* 操作列：宽屏写全称，窄屏缩图标（见模板里那段注释） */
