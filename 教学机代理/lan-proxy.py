@@ -385,10 +385,25 @@ def cache_policy(path):
     p = (path or '').split('?')[0]
 
     # ---- 可以缓存的静态资源 ----
-    if p.startswith('/assets/') or p.startswith('/api/assets/'):
-        # /assets/     构建产物，文件名带内容哈希
-        # /api/assets/ 课程素材（免登录），由内容目录提供，极少变
+    if p.startswith('/assets/'):
+        # 构建产物（index-BP3irKo0.js 这种）：文件名里带内容哈希。
+        # 内容一变文件名就变，旧文件永远不再被请求 —— 这类才配 1 年。
         return TTL_ASSETS, TTL_ASSETS
+
+    if p.startswith('/api/assets/'):
+        # 课程素材（讲义配图、示例用的第三方库）。
+        #
+        # ⚠ 和 /assets/ **不是一回事**：这里的文件名是固定的（logo.png、vue.global.js），
+        #   内容却可能变 —— 老师换了同一张图、升级了库，名字都不变。
+        #   给 1 年 = 换完整个学期都看不到新图（缓存和浏览器两头都不回源）。
+        #   所以按「变得有多勤」分两档：
+        #     /api/assets/lib/*  运行时库，只有升级系统才换 → 7 天
+        #     其它素材           老师随时可能换图         → 1 天
+        #   浏览器那头更短（见 browser_ttl）：换图后学生刷新就能看到，
+        #   不必等代理缓存过期或者去重启代理。
+        if '/lib/' in p:
+            return 7 * 24 * 3600, 24 * 3600
+        return TTL_STATIC, 3600
     if p.startswith('/vendor/') or p == '/favicon.svg':
         return TTL_STATIC, TTL_STATIC
     if p.startswith('/lib/'):
@@ -919,11 +934,23 @@ EDGE = EdgeState()
 EDGE_PRESENCE_WS = []
 
 
+# 上一次上报里有几个人。用来决定「空了还要不要报一次」。
+_LAST_REPORTED_COUNT = -1
+
+
 def edge_report():
     """把本地状态聚合成一个快照上报云端（一个请求带 N 个人 → 省流）。"""
+    global _LAST_REPORTED_COUNT
     entries = EDGE.snapshot()
-    if not entries:
+    if not entries and _LAST_REPORTED_COUNT == 0:
+        # 一直是空的，不用每 5 秒重复报一次空包
         return
+    # 空了**也要报一次**：服务端是拿「这一轮比上一轮少了谁」来判离线的。
+    # 原来这里直接 return，于是最后一个学生走了、代理这一侧清了标志，
+    # 云端却永远收不到「人都走了」—— 在线名单只能等 TTL 慢慢过期，
+    # 而投屏那个标记根本没有 TTL，会一直挂着（就是「测试学生一直在线 / 一直在看投屏」）。
+    if not entries:
+        verbose('本地已无人在场，上报一次空快照让云端清掉')
     if not EDGE_KEY:
         verbose('边缘端上报跳过：proxy.conf 里没填 edge.key（服务端会拒绝）。'
                 '教师端 GET /api/teacher/edge-key 可以取到当前密钥。')
@@ -966,6 +993,7 @@ def edge_report():
         if status != 200:
             verbose('边缘端上报异常：HTTP %s · %s' % (status, payload[:160].decode('utf-8', 'replace')))
             return
+        _LAST_REPORTED_COUNT = len(entries)
         verbose('快照已上报：%d 人（在线 %d · 看投屏 %d）' % (
             len(entries), sum(1 for e in entries if e['online']),
             sum(1 for e in entries if e['casting'])))
@@ -1222,7 +1250,19 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---------- 缓存 ----------
     def cache_key(self):
-        return self.command + ' ' + self.path
+        """缓存键。
+
+        **静态资源要把 query 去掉**：页面常给它们挂 `?v=时间戳`、`?token=…`，
+        带上 query 就等于「每个学生、每次刷新都是一个新文件」——缓存里堆一堆同样的内容，
+        而真正复用的那次永远不会命中（实测 hitRate 只有 2%：137 条 7.8MB，命中 3 次）。
+
+        内容接口（/api/content/doc?id=… 这类）query 是有意义的，保持原样。
+        """
+        p = self.path or ''
+        bare = p.split('?')[0]
+        if bare.startswith(('/assets/', '/lib/', '/vendor/', '/examples/', '/api/assets/')):
+            p = bare
+        return self.command + ' ' + p
 
     def cacheable(self):
         """能不能缓存：看路径是不是「公开内容」

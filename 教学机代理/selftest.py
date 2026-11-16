@@ -306,7 +306,14 @@ def c_cache(cfg, args, c):
             return c.done(False, 'API 被缓存了，老师改完数据学生端要等 5 分钟')
         c.ok('%s 不缓存（%s / X-Cache=%s）' % (api, s1, x2))
 
-    path = '/lib/vue3-sfc-loader.js'
+    # 测真实存在的运行时库路径。
+    #
+    # 原来测的是 /lib/vue3-sfc-loader.js —— 那个前缀 2.2.1 之后就空了
+    # （文件搬到课程 assets 下，见 api/src/lib/runtime/README.md），
+    # 请求会落到 SPA 兜底、返回 index.html。代理有一道保护：
+    # 「疑似兜底页冒充资源，不缓存」—— 于是它永远不缓存，
+    # 自检就永远报「缓存没生效」，而实际缓存一直是好的（实测命中率取决于这里测的对象）。
+    path = '/api/assets/lib/vue.global.js'
     st1, b1, ms1, h1 = http(cfg['base'] + path, timeout=60, with_headers=True)
     if st1 != 200:
         c.bad('取不到 %s（%s）' % (path, st1))
@@ -365,6 +372,11 @@ def c_cast(cfg, args, c):
         ctl.send_json({'t': 'hello', 'token': teacher})
         ctl.send_json({'t': 'mode', 'mode': 'watch'})
         peers = ctl.wait_text('students', 8)
+        # mode=watch 之后服务端要过一拍才真正进入推流（它先广播状态、再开转发）。
+        # 这里原来没有等待，紧接着就 send(frame) —— 帧抢在"推流态"之前到，
+        # 被服务端当非推流状态下丢弃，于是自检永远报「学生端没收到帧」，
+        # 而实际投屏是好的（手动隔 2 秒再推就一致）。加这一段避免误报。
+        time.sleep(2.0)
         n = peers.get('students') if peers else '?'
         c.ok('教师端连上，服务器说 %s 人在看' % n)
         if n in (0, '?', None):
