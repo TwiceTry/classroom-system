@@ -124,7 +124,12 @@
     @click="cycle(s.sid)"
     >
     <b>
-      <i class="dot" :class="{ on: s.online }"></i>
+      <!--
+        在线状态读 onlineMap，不读 s.online。
+        s.online 是 loadClasses 那一刻的快照，教学机代理后续上报的在线变化只写进 onlineMap，
+        s.online 永远停在打开页面时那一刻 —— 表现是"上面写着在线 6，格子上一个绿点都没有"。
+      -->
+      <i class="dot" :class="{ on: onlineMap[s.sid] }"></i>
       {{ s.name }}
     </b>
     <span class="sid">{{ s.sid }}</span>
