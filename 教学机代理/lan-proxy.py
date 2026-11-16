@@ -2988,7 +2988,10 @@ def print_banner():
         LISTEN_PORT, TARGET or '(空)', 'yes' if INSECURE else 'no',
         'yes' if CACHE_ENABLED else 'no', 'yes' if FANOUT_ENABLED else 'no'))
     if CACHE_ENABLED:
-        print('  缓存：开 · 上限 %s · 静态 %s / 示例 %s / 讲义 %s / 入口页 %s' % (
+        # 标签要跟下面的顺序对上：TTL_ASSETS 是「带 hash 的构建产物」，
+        # TTL_STATIC 才是「文件名固定的静态素材」。原来这两个标签写反了，
+        # 启动日志里会显示成「静态 365 天」，看着像是把 logo.png 缓存了一年。
+        print('  缓存：开 · 上限 %s · 构建产物 %s / 静态素材 %s / 课程内容 %s / 入口页 %s' % (
             fmt_bytes(CACHE_MAX_BYTES), fmt_ttl(TTL_ASSETS), fmt_ttl(TTL_STATIC),
             fmt_ttl(TTL_CONTENT), fmt_ttl(TTL_HTML)))
     if is_https(UP):
