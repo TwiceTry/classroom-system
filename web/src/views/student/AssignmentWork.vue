@@ -300,9 +300,29 @@ async function peek(s) {
 </script>
 
 <style scoped>
+/*
+ * 高度链必须接通，否则工作台整个失效。
+ *
+ * .aw 是 router-view 的直接子元素（父是 .main 的 flex 列），但它自己不设高度 ——
+ * 于是里面的 .pg 写 height: 100% 时「百分比高度没有参照」，退化成 auto，
+ * 被代码内容撑到 1669px；而 .pg 又是 overflow: hidden，
+ * 结果下半截既看不见也滚不动（代码区滚不了、竖排也够不到下面的渲染块）。
+ *
+ * 教师端「代码练习」没这个毛病：那里 PgWorkbench 直接当页面根节点，
+ * 父级就是 .main，height: 100% 有参照。学生端中间多包了这一层。
+ */
 .aw {
   /* 工作台的高度是按「视口 - 顶栏」算的，这里多了一条状态栏，把它扣掉 */
   --pg-extra: 48px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 顶部那条「提交 / 状态」不参与压缩，剩余的给工作台 */
+.aw > .bar {
+  flex: none;
 }
 
 .bar {
