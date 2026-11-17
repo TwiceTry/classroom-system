@@ -1,5 +1,6 @@
 <template>
-  <PageShell>
+  <!-- ws：中栏课程列表，右栏「怎么往里放内容」（has-right 由 PageShell 按插槽自动加） -->
+  <PageShell body-class="ws">
     <template #head>
       <PageHead @reload="load">
         <template #title>课程管理</template>
@@ -70,17 +71,25 @@
     </div>
 
 
-    <div class="card tips">
-      <CardHead>
-        <template #title>怎么往里放内容</template>
-      </CardHead>
-      <p class="dim mini">
-        「内容」那一行是这个课程目录下的四个文件夹：<code>lecture/</code>（讲义）、<code>materials/</code>（学生材料）、
-        <code>代码示例/</code>（代码练习与课堂作业用）、<code>exams/</code>（试卷库）。
-        新建课程时系统已经把空目录建好，把文件拷进对应文件夹，刷新即可。
-        要整门课打包带走/分发，用「导出课程包」得到一个 zip（course / scheme / classes / content 分开，见「课程包格式规范」），到别的机器上「导入课程包」。
-      </p>
-    </div>
+    <!--
+      右栏：怎么往里放内容。
+      原来是压在课程列表下面的一整块 —— 「看有哪些课」和「怎么放文件」
+      是两种不同的信息，堆在一起会让列表显得很长，而且每次翻课程都要先滚过一段说明。
+      挪到右栏当常驻 aside，跟文档站的侧边说明一个位置。
+    -->
+    <template #right>
+      <section class="card tips">
+        <CardHead>
+          <template #title>怎么往里放内容</template>
+        </CardHead>
+        <p class="dim mini">
+          「内容」那一行是这个课程目录下的四个文件夹：<code>lecture/</code>（讲义）、<code>materials/</code>（学生材料）、
+          <code>代码示例/</code>（代码练习与课堂作业用）、<code>exams/</code>（试卷库）。
+          新建课程时系统已经把空目录建好，把文件拷进对应文件夹，刷新即可。
+          要整门课打包带走/分发，用「导出课程包」得到一个 zip（course / scheme / classes / content 分开，见「课程包格式规范」），到别的机器上「导入课程包」。
+        </p>
+      </section>
+    </template>
 
 
     <!-- 新建 / 编辑 -->
@@ -839,6 +848,16 @@ async function exportPack(c, parts) {
 </script>
 
 <style scoped>
+/*
+ * 右栏这块是「说明」，不是列表 —— 不撑满整栏。
+ * app.css 里 .content.ws .ws-right > * 默认 flex: 1（为了让流水/记录这类列表
+ * 和左栏底边齐平），但这里是四五段文字，撑满了下面会留一大片空白。
+ */
+.ws-right .card.tips {
+  flex: none;
+  align-self: start;
+}
+
 /* 导出弹层里「必带」的那一行（不是复选框，避免看起来像没勾上） */
 .peer-line {
   margin: 0 0 6px;

@@ -227,7 +227,7 @@
 
         <div class="lgcreds">
           <span class="dim mini">
-            已记住 <b>{{ login.rememberedCount }}</b> 个学生的密码（存的是不可逆的派生值，不是明文）。
+            已记住 <b>{{ login.rememberedCount }}</b> 个学生的密码（加密保存，表格里点眼睛可以看原文）。
           </span>
           <button class="btn mini" :disabled="!login.rememberedCount" @click="clearCreds">
             清空全部记住的密码
@@ -240,6 +240,11 @@
           <tr>
             <th>学号</th>
             <th>姓名</th>
+            <!--
+              只有「账号 + 密码」模式才会记住密码；「学号 + 姓名」模式下这一列永远是 —，
+              既占宽度又让人以为是坏了。跟着模式一起藏。
+            -->
+            <th v-if="login.mode === 'kg'">记住的密码</th>
             <th class="num">本系统失败</th>
             <th class="num">平台自报输错</th>
             <th>状态</th>
@@ -250,6 +255,31 @@
           <tr v-for="s in loginRows" :key="s.sid">
             <td class="mono">{{ s.sid }}</td>
             <td>{{ s.name }}</td>
+            <!--
+              记住的密码：默认打码，点眼睛才显示。
+              学生忘了自己当初填的是什么、或者要核对是不是和青果一致时用。
+              上一版存的是 scrypt 派生值（还原不出来），那些显示「旧记录」。
+            -->
+            <td v-if="login.mode === 'kg'" class="pwdcol">
+              <span v-if="!credOf(s.sid)" class="dim">—</span>
+              <span
+                v-else-if="credOf(s.sid).legacy"
+                class="dim mini"
+                title="上一版存的是不可逆的派生值，看不到原文；学生用青果再验一次就会升级"
+              >旧记录</span>
+              <span v-else class="pwdshow">
+                <code :title="shownPwd.has(s.sid) ? '再点一次隐藏' : '点击右侧眼睛显示'">
+                  {{ shownPwd.has(s.sid) ? credOf(s.sid).password : '••••••' }}
+                </code>
+                <button
+                  class="eye"
+                  :title="shownPwd.has(s.sid) ? '隐藏' : '显示明文'"
+                  @click="togglePwd(s.sid)"
+                >
+                  {{ shownPwd.has(s.sid) ? '🙈' : '👁' }}
+                </button>
+              </span>
+            </td>
             <td class="num">{{ s.failCount || '—' }}</td>
             <td class="num">
               <span v-if="s.remoteCount">{{ s.remoteCount }}</span>
@@ -272,7 +302,7 @@
             </td>
           </tr>
           <tr v-if="!loginRows.length">
-            <td colspan="6" class="empty">这个班没有学生</td>
+            <td :colspan="login.mode === 'kg' ? 7 : 6" class="empty">这个班没有学生</td>
           </tr>
         </tbody>
       </table>
@@ -316,7 +346,8 @@
           <input v-model.trim="logQ" class="input" placeholder="搜姓名 / 学号 / 原因" />
         </div>
 
-        <ul class="log">
+        <!-- 卡片撑满右栏后，列表自己滚，卡片头（标题 + 筛选）常驻 -->
+        <ul class="log log-scroll">
           <li v-for="e in filteredEvents" :key="e.id" :class="{ voided: e.voided }">
             <div class="lhead">
               <b class="who">{{ nameOf(e.sid) }}</b>
@@ -638,6 +669,26 @@ async function clearCreds() {
   }
 }
 
+/**
+ * 记住的密码：sid → { password, legacy }
+ *
+ * 单独拉一个接口而不是塞进 login-admin：
+ * 那是明文，只在展开「登录管理」时才需要。
+ * 默认打码（shownPwd 为空 = 全部 *），点眼睛才显示某一行。
+ */
+const credsMap = ref(new Map())
+const shownPwd = ref(new Set())
+
+function credOf(sid) {
+  return credsMap.value.get(sid) || null
+}
+function togglePwd(sid) {
+  const next = new Set(shownPwd.value)
+  if (next.has(sid)) next.delete(sid)
+  else next.add(sid)
+  shownPwd.value = next
+}
+
 /** 有问题的排前面：老师打开这一页就是要看谁出事了 */
 const loginRows = computed(() => {
   const list = (login.students || []).slice()
@@ -669,6 +720,22 @@ async function loadLogin() {
     login.rememberedCount = Number(r.rememberedCount || 0)
     login.blockedCount = Number(r.blockedCount || 0)
     login.students = Array.isArray(r.students) ? r.students : []
+
+    /* 记住的密码（明文，按本班过滤）。只有账号密码模式才有这列，别的模式不用拉 */
+    if (login.mode === 'kg') {
+      try {
+        const c = await api.get('/api/settings/student-auth/creds?classId=' + activeId.value)
+        const m = new Map()
+        for (const it of c.items || []) m.set(it.sid, it)
+        credsMap.value = m
+      } catch (e) {
+        credsMap.value = new Map()
+      }
+    } else {
+      credsMap.value = new Map()
+    }
+    /* 重新拉数据时全部回到打码状态 —— 别让上一次展开的行一直亮着 */
+    shownPwd.value = new Set()
   } catch (e) {
     toast.value = '读不到登录管理数据：' + e.message
   }
@@ -834,12 +901,26 @@ const liveCount = computed(() => events.value.filter((e) => !e.voided).length)
 
 const logItem = ref('')
 const logQ = ref('')
+/**
+ * 全班流水（按时间倒序）。
+ *
+ * 服务端 eventsOf 是**升序**（分页游标按 created_at > 翻，所以只能升着给）。
+ * 但流水这种"刚刚发生了什么"的列表，最新一条必须在最上面 ——
+ * 老师上完一节课去看，要看的是最后那几条，不是这节课最早的那条。
+ *
+ * 同一秒可能有多条（批量记分），所以时间相同时用 id 兜底，
+ * 保证两次刷新顺序不会跳。
+ */
 const filteredEvents = computed(() => {
   const kw = logQ.value.trim()
-  return events.value.filter((e) => {
+  const list = events.value.filter((e) => {
     if (logItem.value && e.item !== logItem.value) return false
     if (!kw) return true
     return nameOf(e.sid).indexOf(kw) >= 0 || e.sid.indexOf(kw) >= 0 || (e.reason || '').indexOf(kw) >= 0
+  })
+  return list.sort((a, b) => {
+    const d = String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
+    return d !== 0 ? d : String(b.id || '').localeCompare(String(a.id || ''))
   })
 })
 
@@ -1460,6 +1541,14 @@ th.on .sortmark {
   padding: 12px 16px;
 }
 
+/* 卡片撑满右栏，列表吃掉剩余高度自己滚 —— 否则流水一多就把卡片撑破，一少底边又对不齐 */
+.log-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+}
+
 /* 右栏流水的筛选：只有 320px 宽，两个控件竖着摆比并排好按 */
 .log-tools {
   display: flex;
@@ -1502,28 +1591,55 @@ th.on .sortmark {
   color: var(--brand);
 }
 
+/*
+ * 内层 tab（班级名单 / 登录管理）：做成文件夹标签，和下面那张卡连成一片。
+ *
+ * 原来每个 tab 都是「整块灰底 + 全边框 + 11px 圆角」的独立方块，
+ * 下面再放一张白卡 —— 两块之间是断的，看着像两个不相干的控件。
+ * 现在：
+ *   · 一条横线贯穿整行，选中的 tab 用卡片色把横线「咬」开一个口子
+ *   · 卡片顶部去掉上边框和上圆角，于是 tab → 内容是一条连续的竖边
+ *   · 未选中的 tab 只是文字，hover 才出浅底，不抢注意力
+ */
 .tabs {
   display: flex;
-  gap: 8px;
-  margin: 4px 0 0;
+  gap: 2px;
+  margin: 6px 0 0;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--line);
 }
-
 .tab {
-  padding: 8px 18px;
-  border: 1px solid var(--line);
+  position: relative;
+  padding: 7px 16px;
+  border: 1px solid transparent;
   border-bottom: none;
-  border-radius: 11px 11px 0 0;
-  background: #eef1f7;
-  color: #475569;
+  border-radius: var(--r-md) var(--r-md) 0 0;
+  background: transparent;
+  color: #5b6673;
   cursor: pointer;
   font-size: var(--fs-md);
+  margin-bottom: -1px;
 }
-
+.tab:hover {
+  background: var(--bg-sub);
+  color: var(--ink);
+}
 .tab.on {
   background: var(--card);
   color: var(--brand-ink);
   font-weight: 600;
+  border-color: var(--line);
+  border-bottom-color: var(--card);
 }
+/* 贴着 tabs 的那张卡：去掉上边和上圆角，和 tab 拼成一个整体 */
+.scroll-body > .card {
+  border-top: none;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  margin-top: 0;
+}
+
+
 
 .log {
   list-style: none;
@@ -1699,6 +1815,38 @@ th.on .sortmark {
 .lgbase .input {
   width: 220px;
 }
+/*
+ * 记住的密码这一列：默认打码，点眼睛显示明文。
+ * 打码用 • 而不是 * —— 等宽字体下 • 更整齐，也不会和密码里的 * 混淆。
+ */
+.lgtbl .pwdcol {
+  width: 138px;
+}
+.lgtbl .pwdshow {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.lgtbl .pwdshow code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  color: #33414d;
+  min-width: 64px;
+  user-select: all; /* 点一下能整段选中，方便复制 */
+}
+.lgtbl .pwdshow .eye {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0 3px;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.5;
+}
+.lgtbl .pwdshow .eye:hover {
+  opacity: 1;
+}
+
 .lgcreds {
   display: flex;
   align-items: center;

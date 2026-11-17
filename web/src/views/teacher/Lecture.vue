@@ -1,5 +1,5 @@
 <template>
-  <PageShell body-class="ws">
+  <PageShell body-class="ws read">
     <template #head>
       <!-- 只读内容页：没有「要重拉的数据」，所以不注册 @reload，页头也就不会有「↻」 -->
       <PageHead>

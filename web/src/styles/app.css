@@ -709,14 +709,49 @@ body,
  * 需要「上下分区」的页（分栏的讲义、带名单表格的考勤/互动）会覆盖这条：
  * 外层不滚，让里面某一块自己滚 —— 见 .content.split 和那两个页自己的样式。
  */
+/*
+ * 内容区默认**占满**。
+ *
+ * 原来是 max-width: 1520px —— 在 1920 的屏上只占 79%，两侧各空 200px。
+ * 表格类页面（班级管理 13 列、考勤 60 格、互动 60 行）正是最需要宽度的，
+ * 却把地白白让出去，结果列挤在一起、还要横向滚动。
+ *
+ * 窄屏（<1600）时右边距会显得太空，所以统一收一点 padding。
+ */
 .content {
   padding: 16px 20px 0;
-  max-width: 1520px;
+  max-width: none;
   width: 100%;
   flex: 1;
   min-height: 0;
   overflow: auto;
   box-sizing: border-box;
+}
+
+/*
+ * 阅读类页面（讲义、课程材料）：正文一行别太长。
+ *
+ * 中文一行 40~50 字最舒服；1520 宽下一行能排 80+ 字，
+ * 眼睛扫到头再换行会很累。1000px ≈ 55 字，接近纸书的版心。
+ * 表格 / 工作台不受这个限制 —— 它们是要"多塞信息"的，不是"读"的。
+ */
+.content.read {
+  /*
+   * 1280：三栏里目录占 232，正文还剩约 980 ——
+   * 15.5px 字体下一行约 63 个汉字，比 1080 时（约 56 字）宽松，
+   * 又不至于像占满那样排到 90+ 字。
+   * 左对齐而不是居中：居中会和页头、侧栏错开一格。
+   */
+  max-width: 1280px;
+}
+
+/*
+ * 三栏的阅读页（讲义 / 课程材料）：外层是 ws，正文列吃 1fr 会被拉到 1400+。
+ * 给正文块限宽 —— 只限正文，左侧目录不动。
+ * 表格类的 ws 页（考勤、互动、班级管理）不带 read，继续占满。
+ */
+.content.ws.read .ws-main > * {
+  max-width: 1000px;
 }
 
 /*
@@ -1284,7 +1319,15 @@ td.num.bad {
   background: #22262b;
   color: #dfe3e6;
   overflow: auto;
-  font-size: var(--fs-md);
+  /*
+   * 用 em 而不是 var(--fs-md)。
+   *
+   * .md 的字号是 MdView 上的 inline style（跟着 A+/A− 走），
+   * 而 --fs-md 是固定的 13.5px —— 写死它的话，正文放大了、代码块纹丝不动，
+   * 一页里两种字号，比例全乱。0.87em 在默认 15.5 下约等于 13.5（和原来一致），
+   * 放大到 20 就自动变成 17.4。
+   */
+  font-size: 0.87em;
   line-height: 1.65;
   position: relative;
 }
@@ -1404,6 +1447,27 @@ td.num.bad {
 }
 
 /*
+ * 右栏里的卡片要**撑满整栏高度**，和左边的名单卡片底边齐平。
+ *
+ * 原来右栏只是 overflow: auto，卡片高度由内容决定 ——
+ * 流水只有十条时，右栏就比中栏矮一截，两条底边一高一低，很显眼。
+ * 现在右栏自己做成 flex 列，卡片 flex: 1 吃掉整栏高度；
+ * 卡片内部再把「该滚的那块」设成 flex:1 + overflow:auto（各页自己加）。
+ */
+.content.ws .ws-right {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.content.ws .ws-right > * {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0;
+}
+
+/*
  * 不是工作区的页：.ws-main 只是 PageShell 里的一层包装，
  * 用 display: contents 让它"消失"——子元素直接成为 .content 的子元素，
  * 布局和加这层之前完全一致（尤其是 body-class="fit" 的页，
@@ -1437,6 +1501,30 @@ td.num.bad {
 
 .content.ws .ws-foot {
   grid-column: 1 / -1;
+}
+
+/*
+ * 窄屏把右栏折到下面。
+ *
+ * 只针对「中栏是普通内容」的页（考核方案、课程管理），
+ * 不碰 fixed-top 的那几个（班级管理 / 考勤 / 互动）—— 那几页右栏是列表，
+ * 折下来反而更难看，而且它们本来就有响应式处理。
+ *
+ * 1500 是分界：1920 下中栏还有 1378，配置表单放得下；
+ * 1480 下只剩约 730，考核方案里「考核项 320 + 配置」就挤成一条了。
+ */
+@media (max-width: 1500px) {
+  .content.ws.has-right:not(.has-left):not(.fixed-top) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    overflow: auto;
+  }
+  .content.ws.has-right:not(.has-left):not(.fixed-top) .ws-main {
+    overflow: visible;
+  }
+  .content.ws.has-right:not(.has-left):not(.fixed-top) .ws-right {
+    max-height: 42vh;
+  }
 }
 
 /* ---------------- 讲义页的双栏（老的写法，逐步迁到 .ws）----------------

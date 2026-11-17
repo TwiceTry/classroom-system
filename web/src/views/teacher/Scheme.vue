@@ -1,5 +1,6 @@
 <template>
-  <PageShell>
+  <!-- ws：中栏是「考核项 + 配置」两栏，右栏是变更日志（has-right 由 PageShell 按插槽自动加） -->
+  <PageShell body-class="ws">
     <template #head>
       <PageHead @reload="reloadScheme">
         <template #title>考核方案</template>
@@ -309,21 +310,28 @@
     <section v-else class="card detail empty">左边选一个考核项来改。</section>
     </div>
 
-    <!-- 变更日志 -->
-    <div v-if="raw && raw.changes && raw.changes.length" class="card">
-    <CardHead>
-      <template #title>变更日志</template>
-      <template #meta><span class="dim mini">最近 {{ raw.changes.length }} 次（保存时自动记）</span></template>
-    </CardHead>
-    <ul class="log">
-      <li v-for="(c, i) in raw.changes.slice().reverse()" :key="i">
-        <span class="when">{{ when(c.at) }}</span>
-        <b>{{ c.by }}</b>
-        <span v-if="c.note" class="note">{{ c.note }}</span>
-        <span class="dim mini">{{ (c.summary || []).join('；') || '（无分值变化）' }}</span>
-      </li>
-    </ul>
-    </div>
+    <!--
+      右栏：变更日志。
+      原来贴在最底部 —— 配置表单本身就有一屏多高，要滚到底才看得到
+      「上一次谁改了什么」。而改配置的时候恰恰最想知道「这个值是怎么变成现在这样的」，
+      所以挪到右栏常驻：改一项、存一次，右边立刻多一条。
+    -->
+    <template #right>
+      <section v-if="raw && raw.changes && raw.changes.length" class="card">
+        <CardHead>
+          <template #title>变更日志</template>
+          <template #meta><span class="dim mini">{{ raw.changes.length }} 次</span></template>
+        </CardHead>
+        <ul class="log">
+          <li v-for="(c, i) in raw.changes.slice().reverse()" :key="i">
+            <span class="when">{{ when(c.at) }}</span>
+            <b>{{ c.by }}</b>
+            <span v-if="c.note" class="note">{{ c.note }}</span>
+            <span class="dim mini">{{ (c.summary || []).join('；') || '（无分值变化）' }}</span>
+          </li>
+        </ul>
+      </section>
+    </template>
 
 
     <!-- 试算对比 -->
@@ -1268,6 +1276,7 @@ async function runPreview() {
   font-size: var(--fs-sm);
 }
 
+/* 右栏里撑满卡片剩余高度自己滚（卡片由 .ws-right > * 撑满整栏） */
 .log {
   list-style: none;
   margin: 0;
@@ -1275,6 +1284,9 @@ async function runPreview() {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 .log li {

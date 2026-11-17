@@ -292,6 +292,35 @@ export default async function authRoutes(app) {
   )
 
   /**
+   * 教师看「已记住的密码」（明文）。
+   *
+   *   GET /api/settings/student-auth/creds?classId=xxx
+   *
+   * 只在「登录管理」面板里用 —— 学生忘了自己当初填的什么、或者要核对
+   * 是不是和青果一致时，老师能直接看到。前端默认打码，点小眼睛才显示。
+   *
+   * 三条约束，别放松：
+   *   · 必须教师身份（requireAuth('teacher')）
+   *   · 不许任何一层缓存（no-store）—— 这是明文，不能留在代理 / 浏览器里
+   *   · 按班过滤：只回这个班的学生，别把全校的凭据一次性倒出来
+   *
+   * 上一版存的是 scrypt 哈希（还原不出来），那些记录 password 为空、legacy=true，
+   * 界面显示「旧记录（不可查看）」。学生用青果再验一次就会升级成可查看的加密记录。
+   */
+  app.get('/api/settings/student-auth/creds', { preHandler: requireAuth('teacher') }, async (req, reply) => {
+    reply.header('Cache-Control', 'no-store, must-revalidate')
+    const classId = String(req.query.classId || '')
+    let sids = null
+    if (classId) {
+      const repo = await import('../lib/repo.js')
+      sids = (repo.rosterOf(classId) || []).map((s) => s.sid)
+    }
+    const creds = await import('../lib/student-creds.js')
+    const items = creds.listRemembered(sids)
+    return { items, total: items.length }
+  })
+
+  /**
    * 教师清空「记住的密码」。
    *   DELETE /api/settings/student-auth/creds       清全部
    *   DELETE /api/settings/student-auth/creds/:sid  清一个

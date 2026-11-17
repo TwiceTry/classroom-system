@@ -165,10 +165,7 @@
     </DataTable>
     </div>
 
-    <p class="dim mini" style="margin-top: 10px">
-    网格：点格子循环（{{ kinds.map((k) => k.kind).join(' → ') }} → 回「出勤」）。列表：点行内按钮直接落库、再点同一状态可取消。
-    记录都能在「班级管理 → 全班流水」里看到。排序只改显示顺序（学号 / 在线优先 / 异常优先 / 考勤分低优先），标记不会丢。
-    </p>
+
 
     </div>
 
@@ -196,6 +193,15 @@
             {{ students.length ? '全部出勤，没有异常。' : '还没有名单。' }}
           </li>
         </ul>
+
+        <!--
+          原来这三行说明贴在名单下面（占着正文的底边，一滚就跟着跑）。
+          它是"怎么操作"的说明，不是数据，放右栏底部更合适：一直在，又不挡名单。
+          右栏只有 320 宽，所以拆成短句 + title 里放全文。
+        -->
+        <p class="abn-tip dim mini" :title="'网格：点格子循环（' + kinds.map((k) => k.kind).join(' → ') + ' → 回「出勤」）。列表：点行内按钮直接落库、再点同一状态可取消。记录都能在「班级管理 → 全班流水」里看到。排序只改显示顺序，标记不会丢。'">
+          点格子循环切换状态；列表点行内按钮。记录见「班级管理 → 全班流水」。
+        </p>
       </section>
     </template>
 
@@ -1022,11 +1028,21 @@ onUnmounted(() => {
   padding-bottom: 8px;
 }
 
-/* 右栏：本节异常 */
+/* 右栏：本节异常。卡片撑满整栏，列表自己滚，底部说明钉住 */
 .abn {
   list-style: none;
   margin: 0;
   padding: 0;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.abn-tip {
+  flex: none;
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  line-height: 1.5;
 }
 .abn li {
   display: flex;

@@ -569,10 +569,14 @@ onMounted(async () => {
   box-shadow: 0 0 0 2px #dcfce7;
 }
 
+/* 卡片撑满右栏，记录列表自己滚 —— 和班级管理、考勤那边保持一致 */
 .recent {
   list-style: none;
   margin: 0;
   padding: 0;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 .recent li {
