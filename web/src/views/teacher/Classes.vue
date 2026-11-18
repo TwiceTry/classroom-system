@@ -269,22 +269,49 @@
             -->
             <td v-if="login.mode === 'kg'" class="pwdcol">
               <span v-if="!credOf(s.sid)" class="dim">—</span>
-              <span
-                v-else-if="credOf(s.sid).legacy"
-                class="dim mini"
-                title="上一版存的是不可逆的派生值，看不到原文；学生用青果再验一次就会升级"
-              >旧记录</span>
               <span v-else class="pwdshow">
-                <code :title="shownPwd.has(s.sid) ? '再点一次隐藏' : '点击右侧眼睛显示'">
+                <!-- 旧记录（scrypt 那版）看不到原文，但照样能删 -->
+                <code v-if="credOf(s.sid).legacy" class="pwd-legacy" title="上一版存的是不可逆的派生值，看不到原文；学生用青果再验一次就会升级">旧记录</code>
+                <!-- 明文超过格宽会被省略号截断，完整值放 title 里，悬停能看全 -->
+                <code v-else :title="shownPwd.has(s.sid) ? credOf(s.sid).password : '点击右侧眼睛显示'">
                   {{ shownPwd.has(s.sid) ? credOf(s.sid).password : '••••••' }}
                 </code>
-                <button
-                  class="eye"
-                  :title="shownPwd.has(s.sid) ? '隐藏' : '显示明文'"
-                  @click="togglePwd(s.sid)"
-                >
-                  {{ shownPwd.has(s.sid) ? '🙈' : '👁' }}
-                </button>
+
+                <span class="pwdops">
+                  <!-- 只有能解出原文的才给眼睛；旧记录给不了 -->
+                  <button
+                    v-if="!credOf(s.sid).legacy"
+                    class="pwdico"
+                    :class="{ on: shownPwd.has(s.sid) }"
+                    :aria-label="shownPwd.has(s.sid) ? '隐藏密码' : '显示密码'"
+                    :title="shownPwd.has(s.sid) ? '隐藏' : '显示明文'"
+                    @click="togglePwd(s.sid)"
+                  >
+                    <svg v-if="shownPwd.has(s.sid)" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                      <path d="M2 2l12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+                      <path d="M6.4 4.3A6.7 6.7 0 0 1 8 4.1c4 0 6.4 3.9 6.4 3.9a11 11 0 0 1-2.2 2.5M9.9 11.6a6.9 6.9 0 0 1-1.9.3c-4 0-6.4-3.9-6.4-3.9a11 11 0 0 1 2.4-2.6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+                    </svg>
+                    <svg v-else viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                      <path d="M1.6 8S4 4.1 8 4.1 14.4 8 14.4 8 12 11.9 8 11.9 1.6 8 1.6 8z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
+                      <circle cx="8" cy="8" r="1.9" fill="none" stroke="currentColor" stroke-width="1.3" />
+                    </svg>
+                  </button>
+
+                  <!--
+                    删掉这一条记下的密码：学生下次登录要重新输入一遍（走青果核验后又会被记住）。
+                    学生忘了密码、或者密码在青果那边改过导致这边一直对不上时用。
+                  -->
+                  <button
+                    class="pwdico del"
+                    aria-label="删掉记住的密码"
+                    title="删掉这条记住的密码（学生下次登录要重新输入）"
+                    @click="forgetOne(s)"
+                  >
+                    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                      <path d="M3.5 4.5h9M6.2 4.5V3.2h3.6v1.3M5 4.5l.6 8.2h4.8L11 4.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round" />
+                    </svg>
+                  </button>
+                </span>
               </span>
             </td>
             <td class="num">{{ s.failCount || '—' }}</td>
@@ -699,6 +726,35 @@ function togglePwd(sid) {
   if (next.has(sid)) next.delete(sid)
   else next.add(sid)
   shownPwd.value = next
+}
+
+/**
+ * 删掉某学生记住的密码。
+ *
+ * 什么时候用：学生忘了密码、或者他在青果那边改过密码导致这边一直对不上。
+ * 删掉之后下次登录要重新输入一遍，青果核验通过又会重新记住 —— 不是不可逆操作。
+ *
+ * 本地直接摘掉这一行，不整表重拉：重拉会把「哪几行正显示明文」的状态清空，
+ * 老师刚点开的其他行会突然合上。
+ */
+async function forgetOne(s) {
+  const name = s.name || s.sid
+  if (!window.confirm('删掉「' + name + '」记住的密码？\n\n学生下次登录要重新输入一遍（青果核验通过后会重新记住）。')) {
+    return
+  }
+  try {
+    await api.del('/api/settings/student-auth/creds/' + encodeURIComponent(s.sid))
+    const m = new Map(credsMap.value)
+    m.delete(s.sid)
+    credsMap.value = m
+    const sp = new Set(shownPwd.value)
+    sp.delete(s.sid)
+    shownPwd.value = sp
+    login.rememberedCount = Math.max(0, Number(login.rememberedCount || 0) - 1)
+    toast.value = '已删掉「' + name + '」记住的密码'
+  } catch (e) {
+    toast.value = '删除失败：' + e.message
+  }
 }
 
 /** 有问题的排前面：老师打开这一页就是要看谁出事了 */
@@ -1865,32 +1921,85 @@ th.on .sortmark {
  * 记住的密码这一列：默认打码，点眼睛显示明文。
  * 打码用 • 而不是 * —— 等宽字体下 • 更整齐，也不会和密码里的 * 混淆。
  */
+/* 160：够放「Pwd-Alpha-111」这种 13 字符的明文 + 两个 20px 图标 */
 .lgtbl .pwdcol {
-  width: 138px;
+  width: 160px;
 }
 .lgtbl .pwdshow {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--sp-2);
 }
 .lgtbl .pwdshow code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12.5px;
+  line-height: 1.2;
   color: #33414d;
   min-width: 64px;
+  /*
+   * 不许折行：密码一换行，行高就变，整列跟着参差（实测「Pwd-Alpha-111」
+   * 会断成两行）。放不下就省略号，完整值挪到 title 里。
+   */
+  max-width: 104px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   user-select: all; /* 点一下能整段选中，方便复制 */
 }
-.lgtbl .pwdshow .eye {
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  padding: 0 3px;
-  font-size: 13px;
-  line-height: 1;
-  opacity: 0.5;
+/* 旧记录（看不到原文）用弱一点的样式，和能看的区分开 */
+.lgtbl .pwdshow code.pwd-legacy {
+  color: var(--dim);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  user-select: none;
 }
-.lgtbl .pwdshow .eye:hover {
+
+/*
+ * 右侧两个图标按钮（眼睛 / 删除）。
+ *
+ * 原来眼睛是 13px 的 emoji（👁 / 🙈）—— emoji 在 Windows / macOS / 安卓上
+ * 字形和大小都不一样，同一个表格换个系统就变样；而且它自带彩色，
+ * 在一列纯灰文字里很跳。这里换成内联 SVG：跟着 currentColor 走，18px 的
+ * 点击区（视觉 14px），和其他行的 .btn.mini 高度也接近。
+ *
+ * 默认半透明、悬停才亮 —— 一行一个按钮还满色的话，13 列的表会花。
+ */
+.lgtbl .pwdops {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
+}
+.lgtbl .pwdico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: #6b7480;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
+}
+.lgtbl .pwdico:hover {
   opacity: 1;
+  background: var(--bg-sub);
+  color: var(--brand-ink);
+}
+/* 正在显示明文时眼睛保持亮着，表示「现在能看到」 */
+.lgtbl .pwdico.on {
+  opacity: 1;
+  color: var(--brand);
+}
+/* 删除用红色，但只在悬停时变红 —— 平时不抢注意力 */
+.lgtbl .pwdico.del:hover {
+  color: var(--err);
+  background: #fbeeec;
+  border-color: #e2bdb9;
 }
 
 .lgcreds {
