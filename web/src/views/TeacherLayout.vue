@@ -235,6 +235,11 @@ const navGroups = computed(() => {
         { to: '/teacher/courses', label: '课程管理', icon: 'graduation' },
         { to: '/teacher/scheme', label: '考核方案', icon: 'sliders' },
         { to: '/teacher/screen', label: '投屏设置', icon: 'cast' },
+        /*
+         * 系统日志：跨班级的全局信息（青果登录失败 / 异常 / 慢请求），
+         * 所以放「管理」组而不是塞进班级管理的 tab —— 那边会显得像「这个班的事」。
+         */
+        { to: '/teacher/logs', label: '系统日志', icon: 'clock' },
       ],
     },
   ]

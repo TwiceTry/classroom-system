@@ -8,6 +8,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import Fastify from 'fastify'
+import * as errlog from './lib/errlog.js'
 import fastifyStatic from '@fastify/static'
 import fastifyWebsocket from '@fastify/websocket'
 import { config } from './config.js'
@@ -112,6 +113,32 @@ export async function buildApp(opts = {}) {
     const isKnown = err instanceof ApiError || (rawStatus >= 400 && rawStatus < 500)
 
     if (!isKnown) req.log.error({ err }, '未捕获异常')
+    /*
+     * 落盘一份。
+     *
+     * req.log 打的是 stdout —— 这台服务是 Start-Process -WindowStyle Hidden 起的，
+     * stdout 进空处，等于没打。所以真正能事后查的是这一行。
+     *
+     * 只记 5xx 和「不认识的错误」（isKnown=false）：
+     * 4xx 是「用户填错了」，每个表单校验失败都记一条会把日志淹掉，
+     * 而那些本来就是给学生看提示用的。500 和未捕获异常才是要人管的。
+     */
+    if (!isKnown || status >= 500) {
+      errlog.write({
+        kind: 'uncaught',
+        level: 'error',
+        msg: (isKnown ? '服务端错误：' : '未捕获异常：') + (err.message || String(err)),
+        status,
+        code: err.code || '',
+        method: req.method,
+        url: String(req.url || '').slice(0, 200),
+        // 用户是谁（有就记，没有就是游客/未登录）
+        sid: (req.user && req.user.sid) || '',
+        role: (req.user && req.user.role) || '',
+        // 堆栈只留前 20 行：完整堆栈对排查没帮助，占空间倒是真的
+        stack: String(err.stack || '').split('\n').slice(0, 20).join('\n'),
+      })
+    }
     if (reply.sent) return
 
     /*
@@ -132,6 +159,55 @@ export async function buildApp(opts = {}) {
         ...(details !== undefined ? { details } : {}),
       },
     })
+  })
+
+  /*
+   * 慢请求 / 失败请求留痕。
+   *
+   * 刻意**不做全量访问日志**：40 个学生每 10 秒一次心跳 = 每分钟 240 条，
+   * 一学期下来几个 G，而其中 99% 是「GET /api/presence/ping 200 2ms」这种
+   * 一条价值都没有的行。真正有用的只有两种：
+   *   · 学生那边大概已经转圈了（超过 SLOW_MS）
+   *   · 服务端 5xx（多半已经被 setErrorHandler 记过，这里兜的是绕过它的路径）
+   *
+   * 心跳、在场查询、health 这些高频低价值路径直接跳过。
+   */
+  const SLOW_MS = Number(process.env.TS_SLOW_MS || 800)
+  const NOISE =
+    /^\/api\/(presence\/ping|presence\/snapshot|health|classes\/[^/]+\/presence|student\/focus|classes\/[^/]+\/focus|pgsync)$/
+
+  app.addHook('onResponse', (req, reply, done) => {
+    try {
+      const pathOnly = String(req.url || '').split('?')[0]
+      if (NOISE.test(pathOnly)) return done()
+      const ms = Math.round(reply.elapsedTime || 0)
+      const status = reply.statusCode
+      if (status >= 500 || ms >= SLOW_MS) {
+        errlog.write({
+          kind: status >= 500 ? 'fail' : 'slow',
+          level: status >= 500 ? 'error' : 'warn',
+          msg:
+            (status >= 500 ? '接口失败 ' : '慢请求 ') +
+            req.method +
+            ' ' +
+            pathOnly +
+            ' · ' +
+            status +
+            ' · ' +
+            ms +
+            'ms',
+          status,
+          ms,
+          method: req.method,
+          url: String(req.url || '').slice(0, 200),
+          sid: (req.user && req.user.sid) || '',
+          role: (req.user && req.user.role) || '',
+        })
+      }
+    } catch (e) {
+      /* 记日志不能影响响应 */
+    }
+    done()
   })
 
   /* ---------------- 业务路由 ---------------- */

@@ -16,6 +16,7 @@ import * as scheme from '../lib/scheme.js'
 import { scoring, withCourseScheme } from '../lib/scheme.js'
 import * as content from '../lib/content.js'
 import * as timetable from '../lib/timetable.js'
+import * as errlog from '../lib/errlog.js'
 import { contentRootOf } from './courses.js'
 
 const START = Date.now()
@@ -58,6 +59,35 @@ const publicClass = (c) => ({
 })
 
 export default async function miscRoutes(app) {
+  /* ---------------- 系统异常日志 ---------------- */
+
+  /**
+   * 查异常日志。
+   *
+   *   GET /api/logs?kind=kg-login&sid=2515xxxx&q=402&day=2026-11-18&limit=300
+   *
+   * 只给教师看 —— 里面有学号和目标主机地址。
+   * 默认扫最近 7 天：查日志是为了「刚才怎么了」，不会去翻三个月前。
+   */
+  app.get('/api/logs', { preHandler: requireAuth('teacher') }, async (req) => {
+    const q = req.query || {}
+    const limit = Math.min(1000, Math.max(20, Number(q.limit) || 300))
+    const items = errlog.query({
+      kind: String(q.kind || ''),
+      sid: String(q.sid || ''),
+      q: String(q.q || ''),
+      day: String(q.day || ''),
+      limit,
+    })
+    return { items, total: items.length, days: errlog.days().slice(0, 30), size: errlog.size() }
+  })
+
+  /** 日志总览：有哪些天、占多大、保留多久 */
+  app.get('/api/logs/summary', { preHandler: requireAuth('teacher') }, async () => ({
+    days: errlog.days(),
+    size: errlog.size(),
+  }))
+
   /** 健康检查（公开）：部署后先看这个 */
   app.get('/api/health', async () => ({
     ok: true,

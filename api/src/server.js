@@ -7,6 +7,7 @@ import { config } from './config.js'
 import { dbPath } from './db/index.js'
 import { closeDb, setEventHook } from './lib/repo.js'
 import { schedule as scheduleSheet } from './lib/scoresheet.js'
+import { prune as errlogPrune } from './lib/errlog.js'
 
 /*
  * 记分记录一变，就把该学生目录下的分数表（总评/明细/机试/证据清单）刷一次。
@@ -34,6 +35,17 @@ try {
    */
   await app.listen({ port: config.port, host: config.host, ipv6Only: false })
   app.log.info('api listening on ' + config.host + ':' + config.port)
+  /*
+   * 清掉超过保留天数的异常日志（默认 30 天）。
+   * 不主动清的话迟早把磁盘写满 —— 而那种事往往在学期中间发生，
+   * 且症状是「突然什么都存不进去了」，很难往日志上想。
+   */
+  try {
+    const pr = errlogPrune()
+    if (pr.removed) console.log('  异常日志：清掉 ' + pr.removed + ' 个过期文件（保留 ' + pr.keepDays + ' 天）')
+  } catch (e) {
+    /* 清不掉不影响启动 */
+  }
   console.log('')
   console.log('  课堂系统 · API（Fastify + SQLite）')
   console.log('  监听：' + config.host + ':' + config.port)

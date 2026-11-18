@@ -18,6 +18,7 @@
 
 import * as kg from './kglogin/kglogin.js'
 import { DEFAULT_KG_BASES } from '../config.js'
+import * as errlog from './errlog.js'
 
 /** 默认入口只在 config.js 定义一份，这里复用，免得两处对不上 */
 export const DEFAULT_BASES = DEFAULT_KG_BASES
@@ -61,29 +62,69 @@ export async function verifyStudent(sid, password, opts = {}) {
   if (!base) return { ok: false, message: '登录服务还没配好，请联系老师' }
 
   const timeoutMs = Number(opts.timeoutMs || 20000)
+  const t0 = Date.now()
+  const account = String(sid || '').trim()
+
+  /**
+   * 记一条「这次为什么没进来」，然后原样返回给学生。
+   *
+   * 为什么值得记：学生只会看到「账号或密码不对」这一句，
+   * 而老师需要知道的是**目标主机到底回了什么** ——
+   * 是密码错了（402 / counter=3）、还是账号被短信验证卡住（505）、
+   * 还是根本连不上（timeout/ECONNREFUSED）。这三种处理方式完全不同。
+   *
+   * 绝不记 password / captcha：errlog.write 里按字段名又兜了一道，
+   * 这里也压根不传。
+   */
+  const fail = (message, extra) => {
+    errlog.write(
+      Object.assign(
+        {
+          kind: 'kg-login',
+          msg: '青果登录失败：' + message,
+          sid: account,
+          target: base,
+          status: String((r && r.status) || ''),
+          remote: String((r && r.message) || ''),
+          counter: Number((r && r.counter) || 0),
+          tries: Number((r && r.tries) || 0),
+          needCaptcha: !!(r && r.needCaptcha),
+          ms: Date.now() - t0,
+        },
+        extra || {}
+      )
+    )
+    return { ok: false, message, ...(extra || {}) }
+  }
 
   let r
   try {
     r = await withTimeout(
       kg.login({
         base,
-        username: String(sid || '').trim(),
+        username: account,
         password: String(password || ''),
         captcha: '',
         maxTries: 1, // 关键：一次不过就停，绝不拿学生账号赌验证码识别
         forceCaptcha: false,
-        log: () => {}, // 不回显任何与凭据有关的过程信息
+        log: () => {}, // 仍然不回显过程（那条路会把凭据相关的东西带出来）；结果在 r 里，够用
       }),
       timeoutMs
     )
   } catch (e) {
     const isTimeout = e && e.message === 'timeout'
-    return {
-      ok: false,
-      message: isTimeout
-        ? '登录服务连接超时，请稍后再试'
-        : '登录服务暂时连不上，请稍后再试',
-    }
+    /*
+     * 网络层异常 —— 这一类最该记：
+     * 学生那边只有「连不上」，而真正的原因可能是 DNS、TLS、目标主机 502，
+     * 甚至是教学机到公网那段隧道断了。不记下来就只能靠猜。
+     */
+    return fail(isTimeout ? '登录服务连接超时，请稍后再试' : '登录服务暂时连不上，请稍后再试', {
+      status: 'NET',
+      remote: String((e && e.message) || e || '').slice(0, 300),
+      errorName: String((e && e.name) || ''),
+      code: String((e && e.code) || ''),
+      timeoutMs,
+    })
   }
 
   const status = String((r && r.status) || '')
@@ -105,27 +146,24 @@ export async function verifyStudent(sid, password, opts = {}) {
    */
   if (status === '402') {
     if (counter >= 5) {
-      return { ok: false, message: '今天输错次数已满，账号被锁定了，明天再试或找老师', counter }
+      return fail('今天输错次数已满，账号被锁定了，明天再试或找老师', { counter })
     }
-    return {
-      ok: false,
-      message: counter
-        ? '账号或密码不对（今天已错 ' + counter + ' 次，满 5 次会锁定）'
-        : '账号或密码不对',
-      counter,
-    }
+    return fail(
+      counter ? '账号或密码不对（今天已错 ' + counter + ' 次，满 5 次会锁定）' : '账号或密码不对',
+      { counter }
+    )
   }
   if (status === '505') {
-    return { ok: false, message: '这个账号需要短信验证，请先完成验证后再登录', counter }
+    return fail('这个账号需要短信验证，请先完成验证后再登录', { counter })
   }
   if (status === '401' || /验证码/.test(msg)) {
-    return { ok: false, message: '这次没验过，请再试一次', counter }
+    return fail('这次没验过，请再试一次', { counter })
   }
   if (/密码|账号/.test(msg)) {
-    return { ok: false, message: '账号或密码不对', counter }
+    return fail('账号或密码不对', { counter })
   }
   if (status === 'ERR') {
-    return { ok: false, message: '登录服务暂时不可用，请稍后再试', counter }
+    return fail('登录服务暂时不可用，请稍后再试', { counter })
   }
-  return { ok: false, message: '账号或密码不对', counter }
+  return fail('账号或密码不对', { counter })
 }

@@ -28,6 +28,8 @@ const routes = [
       { path: 'projects', redirect: '/teacher/modules/project' },
       { path: 'scheme', component: () => import('./views/teacher/Scheme.vue') },
       { path: 'playground', component: () => import('./views/Playground.vue') },
+      // 系统日志：青果登录失败 / 未捕获异常 / 慢请求
+      { path: 'logs', component: () => import('./views/teacher/Logs.vue') },
     ],
   },
   {
