@@ -208,7 +208,15 @@ const matArticleRef = ref(null)
  * 或者准备下节课的内容，学生端就被拽过去了。现在必须老师自己点「跟随中」才开始推，
  * 点过一次会记住（localStorage 存 '1'），下次进讲义页仍是开的。
  */
-const syncOn = ref(localStorage.getItem('lecture-sync') === '1')
+/*
+ * 跟随：**每次进讲义页都从「已暂停」开始**，不记上次的选择。
+ *
+ * 上一版是 `localStorage.getItem('lecture-sync') === '1'` —— 意思是「记住你上次开没开」。
+ * 结果老师某一节点过一次「跟随中」，此后每次打开讲义页都是开着的，
+ * 一进来就把全班拽到材料页，而老师只是想先翻一翻、或者备课。
+ * 「记住偏好」在这里是错的：打开讲义 ≠ 开始上课，跟随要老师当场决定。
+ */
+const syncOn = ref(false)
 const matKeys = ref(new Set()) // 材料里的同步节点 key（标题归一化后）
 const matList = ref([]) // 材料节点明细，用来算「最接近的那节」
 const currentSec = ref({ key: '', title: '', anchor: '', closest: '', level: 0 })
@@ -256,6 +264,12 @@ onUnmounted(() => {
   if (scrollHost) scrollHost.removeEventListener('scroll', onScroll)
   if (scrollTimer) clearTimeout(scrollTimer)
   if (alignTimer) clearTimeout(alignTimer)
+  /*
+   * 离开讲义页 = 这一节不讲了。
+   * 跟随要一起停 —— 否则人已经去了班级管理，学生端还挂着「跟随讲义中」，
+   * 而且这个占用（优先级 40）会挡住老师后面想推的东西。
+   */
+  if (syncOn.value) stopServerFollow()
 })
 
 function setView(v) {
@@ -369,11 +383,26 @@ function onResize() {
 
 function toggleSync() {
   syncOn.value = !syncOn.value
-  localStorage.setItem('lecture-sync', syncOn.value ? '1' : '0')
   if (syncOn.value) {
     lastPushed = ''
     nextTick(() => detectSection(true))
+    return
   }
+  /*
+   * 停下来要**告诉服务端**。
+   *
+   * 原来只翻本地这个 ref —— 服务端那条 follow 还立着，学生端就一直是
+   * 「跟随讲义中」，而且它是 40 的占用，会挡住老师后面想推的东西
+   * （表现是「我明明点了暂停，推代码学生还是不动」）。
+   */
+  stopServerFollow()
+}
+
+/** 把服务端的跟随清掉（学生端收到 stopped 就把提示条收了） */
+function stopServerFollow() {
+  api.del('/api/teacher/follow?classId=' + encodeURIComponent(currentClassId.value || '')).catch(() => {
+    /* 网络抖动不管：下一次推 / 停会重来 */
+  })
 }
 
 
