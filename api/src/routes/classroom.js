@@ -12,7 +12,7 @@ import { scoring, withCourseScheme } from '../lib/scheme.js'
 import * as sheetLib from '../lib/sheet.js'
 import { rowsToXlsx, stampedName } from '../lib/xlsx.js'
 import { broadcast } from './cast.js'
-import { standDown } from '../lib/focus.js'
+import { standDown, pushFocus, releaseFocus, describeFocus } from '../lib/focus.js'
 
 /** standDown 的依赖（参数传，避免 focus.js 反向 import 成环） */
 const FOCUS_DEPS = { repo, broadcast }
@@ -46,11 +46,15 @@ function announceSpotlight(classId, payload) {
     }
   }
   /*
-   * 立起点名之前，先把这个班的讲义跟随 / 代码同步停掉。
-   * 学生端同一时刻只该看一块东西 —— 否则「跟着讲义」的提示条和点名大字会叠在一起，
-   * 学生既不知道看哪儿，老师也以为点名把学生拽过来了、其实没有。
+   * 走统一仲裁：spotlight 优先级 80。
+   *   · 能压住 讲义跟随(40) / 代码同步(40) / 做作业(60) —— 这几种让位
+   *   · 压不住 正在考试(100) —— 学生正在答题，不该被点名大字盖住，
+   *     所以这里会返回 blocked，前端提示「有学生在考试，点名浮层没推下去」
    */
-  standDown(classId, 'spotlight', FOCUS_DEPS)
+  const r = pushFocus(classId, 'spotlight', spot, FOCUS_DEPS)
+  if (!r.ok) {
+    return { blocked: true, reason: r.reason || '', focus: r.current || null }
+  }
   repo.setState(SPOT_KEY(classId), spot)
   const delivered = broadcast(Object.assign({ t: 'spotlight' }, spot))
   return delivered
@@ -244,8 +248,9 @@ export default async function classroomRoutes(app) {
       for (const s of chosen) state = repo.pickRollcall(cls.id, s.sid, kind)
 
       // 抽一个人时同步到学生端（多人批量抽不播，屏幕上也显示不过来）
+      let spotResult = null
       if (chosen.length === 1) {
-        announceSpotlight(cls.id, {
+        spotResult = announceSpotlight(cls.id, {
           kind,
           sid: chosen[0].sid,
           /* name 必须带：学生端 Spotlight.vue 读 msg.name，缺了一行空白 */
@@ -265,6 +270,15 @@ export default async function classroomRoutes(app) {
         picked: chosen.length === 1 ? state.picked : st.picked.concat(chosen.map((s) => s.sid)),
         remaining: roster.length - (chosen.length === 1 ? state.picked.length : st.picked.length + chosen.length),
         round: state.round,
+        /*
+         * 浮层有没有真的推下去。
+         * 有学生正在考试（优先级 100 > 点名 80）时，这里会是
+         * { blocked: true, focus: {...} } —— 前端据此提示「点名没推到学生端」，
+         * 而不是让老师以为点了没反应。
+         */
+        pushed: !(spotResult && spotResult.blocked),
+        blocked: !!(spotResult && spotResult.blocked),
+        focus: (spotResult && spotResult.focus) || null,
       }
     },
   })
@@ -331,10 +345,19 @@ export default async function classroomRoutes(app) {
       if (req.body.clear) {
         repo.setState(SPOT_KEY(cls.id), null)
         broadcast({ t: 'spotlight', clear: true })
+        /*
+         * 光清 spotlight 记录不够 —— 焦点记录还写着「这个班被 spotlight 占着」，
+         * 于是点名结束之后，讲义跟随(40)、代码同步(40) 全被它挡住，
+         * 表现是「点完一次名，老师再翻讲义学生端毫无反应」。
+         * 结束点名必须把占用一起放开。
+         */
+        releaseFocus(cls.id, 'spotlight', FOCUS_DEPS)
         return { ok: true, spotlight: null }
       }
-      const delivered = announceSpotlight(cls.id, req.body)
-      return { ok: true, delivered }
+      const r = announceSpotlight(cls.id, req.body)
+      /* 被更高优先级挡住（有学生在考试）时不要说 ok，让前端能提示 */
+      if (r && r.blocked) return { ok: false, blocked: true, focus: r.focus || null, delivered: 0 }
+      return { ok: true, delivered: r }
     },
   })
 
@@ -342,6 +365,91 @@ export default async function classroomRoutes(app) {
     const cls = repo.getClass(req.params.id)
     if (!cls) throw notFound('班级不存在')
     return { spotlight: repo.getState(SPOT_KEY(cls.id), null) }
+  })
+
+  /* ---------------- 课堂聚焦（学生端此刻在显示什么） ---------------- */
+
+  /**
+   * 教师端监视：这个班现在被哪种状态占着、它的优先级、以及整张优先级表。
+   *
+   * 老师点「随机点名」没反应、推代码学生没跟着变 —— 八成是被更高优先级挡住了
+   * （有学生在考试）。这个接口就是给那种时刻看的。
+   * ranks 一并返回，前端不用自己维护一份，规则只有 focus.js 一处。
+   */
+  app.get('/api/classes/:id/focus', { preHandler: requireAuth('teacher') }, async (req) => {
+    const cls = repo.getClass(req.params.id)
+    if (!cls) throw notFound('班级不存在')
+    return describeFocus(cls.id, FOCUS_DEPS)
+  })
+
+  /**
+   * 学生端自己看：我此刻该显示哪块（刷新 / 重连时恢复用）。
+   *
+   * 只回自己的班，不带别人信息 —— 学生没必要知道「是谁在考试」。
+   */
+  app.get('/api/student/focus', { preHandler: requireAuth('student') }, async (req) => {
+    const cid = String(req.user.classId || '')
+    if (!cid) return { kind: 'idle', payload: null, rank: 0 }
+    const d = describeFocus(cid, FOCUS_DEPS)
+    return { kind: d.kind, rank: d.rank, payload: d.focus ? d.focus.payload : null }
+  })
+
+  /**
+   * 学生上报「我此刻在干什么」（在做作业 / 回到浏览状态）。
+   *
+   * 只认 homework 和 idle 两种：考试由服务端自己掌握（开始/交卷时立起、释放），
+   * 学生端不能自己声称「我在考试」——那是能绕开考试时长的。
+   *
+   * homework 优先级 60：能压住讲义跟随 / 代码同步（学生正在写作业，
+   * 不该被老师翻页拽走），但压不住点名（80）和考试（100）。
+   */
+  app.post('/api/student/activity', {
+    preHandler: requireAuth('student'),
+    schema: {
+      body: {
+        type: 'object',
+        required: ['kind'],
+        properties: {
+          kind: { type: 'string' },
+          assignmentId: { type: 'string' },
+          title: { type: 'string', maxLength: 80 },
+        },
+      },
+    },
+    handler: async (req) => {
+      const t = req.user
+      const cid = String(t.classId || '')
+      if (!cid) return { ok: false, reason: 'no-class' }
+      const kind = req.body.kind === 'homework' ? 'homework' : 'idle'
+      if (kind === 'idle') {
+        const done = releaseFocus(cid, 'homework', FOCUS_DEPS)
+        return { ok: true, released: done, kind: 'idle' }
+      }
+      const r = pushFocus(
+        cid,
+        'homework',
+        {
+          sid: t.sid,
+          name: t.name || '',
+          assignmentId: String(req.body.assignmentId || ''),
+          title: String(req.body.title || '').slice(0, 80),
+          /*
+           * 带过期时间，前端每 3 分钟补报一次来续期。
+           * 为什么要它：学生直接关浏览器 / 硬跳转时，onUnmounted 不一定会执行，
+           * 「在做作业」就会永远挂着 —— 之后老师的讲义跟随、代码同步全被挡住。
+           * 35 分钟没动静就当作已经离开。
+           */
+          expiresAt: new Date(Date.now() + 35 * 60 * 1000).toISOString(),
+        },
+        FOCUS_DEPS
+      )
+      return {
+        ok: r.ok,
+        blocked: !!r.blocked,
+        reason: r.reason || '',
+        focus: r.focus || r.current || null,
+      }
+    },
   })
 
   /* ---------------- 考勤会话（当前在点哪天的哪一节） ---------------- */
@@ -445,9 +553,18 @@ export default async function classroomRoutes(app) {
         by: req.user.name || '教师',
         at: Date.now(),
       }
+      /*
+       * pgsync 优先级 40，和讲义跟随同级（都属于「老师推内容给学生看」），
+       * 互相可以覆盖；但压不住点名(80) / 做作业(60) / 考试(100) ——
+       * 学生正在答题时，老师推代码不该把他的卷子顶掉。
+       */
+      const fr = pushFocus(cls.id, 'pgsync', sync, FOCUS_DEPS)
+      if (!fr.ok) {
+        return { blocked: true, reason: fr.reason || '', focus: fr.current || null, sync: null }
+      }
       repo.setState(PG_KEY(cls.id), sync)
       const delivered = broadcast({ t: 'pgsync', sync })
-      return { sync, delivered }
+      return { sync, delivered, stopped: fr.stopped || [] }
     },
   })
 
@@ -457,6 +574,8 @@ export default async function classroomRoutes(app) {
     if (!cls) throw notFound('班级不存在')
     repo.setState(PG_KEY(cls.id), null)
     broadcast({ t: 'pgsync', sync: null })
+    /* 同上：停同步时要把焦点占用一起放开，否则学生端页头一直挂着「同步练习中」 */
+    releaseFocus(cls.id, 'pgsync', FOCUS_DEPS)
     reply.status(204).send()
   })
 

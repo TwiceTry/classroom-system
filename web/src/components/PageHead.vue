@@ -26,7 +26,12 @@
   -->
   <header class="pagehead" :class="{ 'is-full': isFull }">
     <div class="head-txt">
-      <h2><slot name="title" /></h2>
+      <!--
+        标题右边的状态标签（跟随讲义中 / 同步练习中 / 做作业中 / 点名中 / 考试中）。
+        放在标题这一行、固定尺寸 —— 每页同一个位置，切页时不用重新找。
+        只有学生端会拉 /api/student/focus，教师端这里永远是 idle，不渲染。
+      -->
+      <h2><slot name="title" /><FocusLabel /></h2>
       <p v-if="sub || $slots.sub" class="sub"><slot name="sub">{{ sub }}</slot></p>
     </div>
 
@@ -38,6 +43,12 @@
           <span class="dim">{{ docPx }}</span>
           <button class="btn mini" @click="adjustDoc(1)">A+</button>
         </span>
+        <!--
+          这里原来挂过「课堂状态监视」（FocusMonitor）。
+          现在去掉了：它是个全局状态，却占着每个页面的通用区，
+          而真正需要看它的时刻（点名没反应 / 推代码学生没变）很少，
+          为它常驻一排按钮不划算。需要的话另找地方按需展开。
+        -->
         <!--
           只有「这一页真的有数据要重拉」时才出现。
           判断依据是页面有没有注册 @reload —— 讲义、课程材料这种只读内容页
@@ -68,6 +79,7 @@
 <script setup>
 import { onBeforeUnmount, onMounted, ref, useAttrs } from 'vue'
 import { useFontSize } from '../composables/useFontSize'
+import FocusLabel from './FocusLabel.vue'
 
 defineProps({
   /* 说明文字：写 slot 更灵活（可带标签/多段），只想给一句话时也可以直接传 sub */

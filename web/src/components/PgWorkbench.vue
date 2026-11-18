@@ -50,7 +50,12 @@
 
     <div class="content">
       <slot name="banner" :dirty-count="dirtyCount" :files="editedFiles" />
-      <p v-if="error" class="hint err" style="margin-bottom:10px">{{ error }}</p>
+      <!--
+      报错走全站统一的 Toast（顶部居中、8 秒后自己消失，点一下也能关）。
+      原来这里是内联红字，夹在工作台上方 —— 它会把 .pg 的高度顶下去一截，
+      而且扫一眼不一定注意到。改成浮层之后不占布局，也不影响高度链。
+    -->
+    <Toast :text="error" :duration="8000" @close="error = ''" />
 
       <div v-if="!bundle" class="card empty">正在读取示例清单…</div>
 
@@ -138,6 +143,7 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { api } from '../api'
+import Toast from './Toast.vue'
 import { buildTree, isPage as isPagePath, baseOf, visibleItemsOf } from '../utils/pgTree'
 /* 新建文件的规则（校验、骨架、上限）—— usePgStore 恢复存档时用的是同一套 */
 import {
@@ -560,7 +566,14 @@ async function loadDir() {
     syncDoc()
     if (autoRun.value && page.value) run()
     // 老师正在同步时换了一节：新的一节也推过去（学生这边 dir 也跟着切）
-    if (syncOn.value) publishSync()
+    /*
+     * 老师正在同步时换了一节：新的一节也推过去（学生那边 dir 也跟着切）。
+     * 这里调的是 usePgSync 的 push()（立即推一次）——
+     * 原来写的是 publishSync()，那个函数根本不存在（改用 composable 之后名字变了），
+     * 于是「切课程」时必定抛 ReferenceError，被下面的 catch 接住，
+     * 页面上就出现「publishSync is not defined」，后面的收尾逻辑也一起中断了。
+     */
+    if (syncOn.value) push()
   } catch (e) {
     error.value = e.message
   }
@@ -615,6 +628,7 @@ const {
   canSync,
   syncTitle,
   toggle: toggleSync,
+  push,
   pushSoon,
   pushCursor,
   onMessage: onSyncMsg,

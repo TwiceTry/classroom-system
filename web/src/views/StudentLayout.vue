@@ -82,13 +82,20 @@
     </aside>
 
     <main class="main">
+      <!--
+        登录失效是**状态**（一直有效，直到重新登录才消失），留在页面里当常驻条。
+        其余「刚刚发生了什么事」属于**一次性通知** —→ 交给顶部的 Toast，
+        和教师端完全同一套：顶部居中弹出、几秒后自己消失。
+      -->
       <p v-if="state.tokenExpired" class="vis-notice">
         登录已失效，请重新登录。
         <button class="btn mini" @click="onLogin">去登录</button>
       </p>
-      <p v-if="visNotice" class="vis-notice">{{ visNotice }}</p>
       <router-view />
     </main>
+
+    <!-- 一次性通知：顶部居中弹出、定时消失（和教师端同一套） -->
+    <Toast :text="visNotice" @close="visNotice = ''" />
 
     <!-- 老师点名时全屏显示「现在点的是谁」（考勤核对 / 请回答） -->
     <Spotlight />
@@ -96,16 +103,18 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Icon from '../components/Icon.vue'
 import Spotlight from '../components/Spotlight.vue'
+import Toast from '../components/Toast.vue'
 import { api } from '../api'
 import { logout, state } from '../store'
-import { onPresenceMessage, startPresence, stopPresence } from '../utils/presence'
+import { onPresenceMessage, startPresence, stopPresence, setCurrentPage, pingNow } from '../utils/presence'
 import { castWatch, startCastWatch, stopCastWatch, dismissCastWatch } from '../utils/castWatch'
 import { loadScheme, moduleIcon, scheme } from '../utils/scheme'
 import { clock, startClock, stopClock } from '../utils/timetable'
+import { setFocus } from '../composables/useFocus'
 
 const route = useRoute()
 const router = useRouter()
@@ -225,14 +234,28 @@ function isWorkPage(p) {
   return p.indexOf(PG_PATH) === 0 || p.indexOf('/student/modules/homework/') === 0
 }
 
+/**
+ * 正在某一份作业 / 机试里作答（/student/modules/<key>/<id>）。
+ *
+ * 这种状态下**不把人切走**：学生正在写的东西会被打断，考试更是碰都不能碰。
+ * 后端那边也做了优先级（homework 60 / exam 100 会拒掉 follow 和 pgsync 的推送），
+ * 这里再挡一道，是因为消息可能是断线重连时补发的、或者队列里还压着一条旧的 ——
+ * 双重保险比「学生卷子被换掉」便宜得多。
+ */
+function inWorkPage(p) {
+  return /^\/student\/modules\/[^/]+\/[^/]+/.test(p)
+}
+
 function jumpToPlayground(opts) {
   const o = opts || {}
   if (route.path === PG_PATH || route.path.indexOf(PG_PATH + '/') === 0) return false
+  /* 正在作答：不切页，也不弹「已切到代码练习」这种会误导的提示 */
+  if (inWorkPage(route.path)) return false
   const leavingWork = isWorkPage(route.path)
   router.push(PG_PATH)
+  /* 不说「已切到代码练习」——页面已经切过去了，页头标签也写着，再说一遍是噪音 */
   visNotice.value =
     (o.already ? '老师正在同步练习' : '老师开始同步练习') +
-    '，已切到「代码练习」' +
     (leavingWork ? '（你刚写的内容已保存，老师讲完回去接着写）' : '')
   setTimeout(() => (visNotice.value = ''), 6000)
   return true
@@ -240,8 +263,15 @@ function jumpToPlayground(opts) {
 
 function onPgSync(msg) {
   if (!msg) return
-  if (msg.active === true) {
-    jumpToPlayground()
+  /*
+   * 服务端发的是 { t:'pgsync', sync }：sync 有内容 = 开始同步，sync === null = 老师停了。
+   * 原来这里判断 msg.active === true —— 而**没有任何地方会发那个字段**，
+   * 所以「老师开始同步练习，全班自动切到代码练习」从来没生效过，
+   * 只有本来就停在练习页的学生能看到（那是 usePgSync 自己在处理）。
+   */
+  const started = !!msg.sync || msg.active === true
+  if (started) {
+    jumpToPlayground({ already: true })
     return
   }
   // 停止同步：不把人拽走；只在练习页说一句「恢复了」，别在别的页面瞎弹
@@ -251,10 +281,39 @@ function onPgSync(msg) {
   }
 }
 
+/** 老师翻讲义：把全班带到「课程材料」那页（否则停在别处的学生根本不知道老师讲到哪了） */
+const MAT_PATH = '/student/materials'
+function jumpToMaterials(opts) {
+  const o = opts || {}
+  if (route.path === MAT_PATH || route.path.indexOf(MAT_PATH + '/') === 0) return false
+  if (inWorkPage(route.path)) return false
+  const leavingWork = isWorkPage(route.path)
+  router.push(MAT_PATH)
+  visNotice.value =
+    (o.already ? '老师正在讲这一节' : '老师开始跟讲义') + (leavingWork ? '（你刚写的已保存）' : '')
+  setTimeout(() => (visNotice.value = ''), 6000)
+  return true
+}
+
+/**
+ * 讲义跟随。
+ *
+ * 和 pgsync 一样，这里只管「切页」；跳过去之后 Materials.vue 挂载时会
+ * 自己 GET /api/follow 把位置对上，所以不需要把消息内容带过去。
+ * 两者是同级（都是 40）：谁后推谁生效，后端会先广播另一方的清空消息。
+ */
+function onFollowMsg(msg) {
+  if (!msg || msg.stopped) return
+  jumpToMaterials({ already: true })
+}
+
 function onPresenceMsg(msg) {
   if (!msg) return
   if (msg.t === 'stuvis') onVisMessage(msg)
   else if (msg.t === 'pgsync') onPgSync(msg)
+  else if (msg.t === 'follow') onFollowMsg(msg)
+  /* 状态总闸：服务端仲裁完广播 { t:'focus', active }，页头标签读它 */
+  else if (msg.t === 'focus') setFocus(msg.active, msg.focus && msg.focus.payload)
 }
 
 function onVisMessage(msg) {
@@ -285,7 +344,68 @@ onMounted(async () => {
   } catch (e) {
     /* 没登录 / 接口不通就忽略 */
   }
+  /* 同上，状态标签也要能恢复：刷新后重新问一次「现在该显示什么」 */
+  refreshFocus()
+  /* bootstrap 回来之后补报一次所在页面（首次 watch 那会儿 isGuest 还没就绪，没发出去） */
+  reportPage(route.path)
 })
+
+/**
+ * 把「现在停在哪个页面」报给服务端（教师端名单里那一列「状态」）。
+ *
+ * 只给短标签，不传 URL —— 老师要的是「他在做作业」这种一句话，
+ * 而不是 /student/modules/homework/amwjfuuc2gl2qru 这种看不懂的路径。
+ */
+function pageLabel(p) {
+  if (p.startsWith('/student/materials')) return '课程材料'
+  if (p.startsWith('/student/score')) return '我的成绩'
+  if (p.startsWith('/student/playground')) return '代码练习'
+  if (p.startsWith('/student/watch')) return '看投屏'
+  const m = p.match(/^\/student\/modules\/([^/]+)(\/[^/]+)?$/)
+  if (m) {
+    const name = { homework: '课堂作业', project: '大作业', exam: '机试' }[m[1]] || m[1]
+    return m[2] ? name + '·作答' : name
+  }
+  return '其他'
+}
+
+function reportPage(p) {
+  /*
+   * 先记下来，再决定发不发。
+   * 为什么不是「游客就整个跳过」：watch 的 immediate 那一跑发生在 setup 阶段，
+   * 那时 bootstrap() 还没回来、isGuest 还是 true —— 如果一起跳过，
+   * 页面标签就停在空字符串，要等到下一次路由变化才补上。
+   * 所以标签总是记，只是游客不发请求。
+   */
+  setCurrentPage(pageLabel(p))
+  if (isGuest.value) return
+  pingNow()
+}
+
+/* 切页面立刻上报，不等下一个 10 秒心跳 —— 否则老师看到的状态会落后一整段 */
+watch(
+  () => route.path,
+  (p) => reportPage(p),
+  { immediate: true }
+)
+
+/**
+ * 刷新 / 重连后恢复当前状态。
+ *
+ * 服务的 view 是这个班的唯一真相，前端只照做：
+ * 如果正在跟讲义或同步练习，顺带把人带到那一页（不然刷新完停在上一个页面，
+ * 页头挂着「跟随讲义中」却看不到内容，反而更困惑）。
+ */
+async function refreshFocus() {
+  try {
+    const r = await api.get('/api/student/focus')
+    setFocus(r.kind, r.payload)
+    if (r.kind === 'follow') jumpToMaterials({ already: true })
+    else if (r.kind === 'pgsync') jumpToPlayground({ already: true })
+  } catch (e) {
+    /* 拉不到就当 idle，不影响用 */
+  }
+}
 onUnmounted(() => {
   if (offVis) offVis()
   stopClock()
@@ -312,14 +432,37 @@ function onLogin() {
 
 <style scoped>
 /* 老师把当前入口收起来时的一句提示（4 秒后自动消失） */
+/*
+ * 学生端的三层消息，各管一件事，视觉上不串：
+ *
+ *   ① 一次性操作反馈  Toast        底部居中 · 深色 · 2.5 秒          （保存成功、导入完成）
+ *   ② 被动系统通知    .vis-notice  页头下方 · 浅蓝条 · 4~6 秒          （老师跟讲义/结束了同步）
+ *   ③ 持续状态        FocusLabel   页头标题右侧 · 常驻 · 固定 104×22   （跟随讲义中 / 考试中）
+ *
+ * ②和③都跟「老师现在在干什么」有关，但职责不同：
+ *   ②是「刚刚发生了一件事」——会消失，学生错过也没关系；
+ *   ③是「现在处于什么状态」——一直在，随时能确认。
+ * 所以②不重复③的内容（不再说「已有讲义跟随」），只说发生了什么 + 怎么回去。
+ */
 .vis-notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 0 0 10px;
-  padding: 6px 12px;
+  padding: 7px 12px;
   border-radius: var(--r-md);
-  background: #fff8e6;
-  border-left: 3px solid #e0a300;
-  color: #6b5320;
+  background: #eef4fb;
+  border: 1px solid #d3e3f3;
+  color: #1c5a8c;
   font-size: var(--fs-sm);
+}
+.vis-notice::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #2f7fb8;
+  flex: none;
 }
 /* ---------------- 折叠态 ---------------- */
 /* 学生端品牌行里那块信息叫 .who（教师端叫 .brand-txt），折叠时一起收掉 */

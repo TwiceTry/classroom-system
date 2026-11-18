@@ -41,12 +41,36 @@ function dispatch(msg) {
   }
 }
 
-function ping() {
+/**
+ * 当前停在哪个页面（中文短标签）。
+ *
+ * 由 StudentLayout 在路由变化时写进来，心跳顺带报给服务端 ——
+ * 教师端「班级名单」里那一列「状态」显示的就是它。
+ * 放在模块级而不是参数一路传：ping 是定时器调的，那里拿不到路由。
+ */
+let currentPage = ''
+
+export function setCurrentPage(p) {
+  currentPage = String(p || '').slice(0, 40)
+}
+
+/** 立刻上报一次（切页面时用，不用等下一个 10 秒心跳） */
+export function pingNow() {
+  ping()
+}
+
+/**
+ * @param pageOverride 传空串表示「清掉页面标记」（切走标签页时用）；不传则用当前页
+ */
+function ping(pageOverride) {
   if (!getToken()) return
+  const page = pageOverride === undefined ? currentPage : String(pageOverride || '')
   fetch('/api/presence/ping', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + getToken() },
-    body: '{}',
+    /* 总是带 page 字段（哪怕是空串）—— 服务端要靠「这次带了但为空」区分
+       「不知道」和「明确没有页面标记」，只有后者才该覆盖掉旧值 */
+    body: JSON.stringify({ page }),
   })
     .then((r) => (r.ok ? r.json() : null))
     .then((data) => {
@@ -121,8 +145,23 @@ function scheduleWs() {
   }, RECONNECT_MS)
 }
 
+/**
+ * 切换标签页 / 最小化 / 锁屏。
+ *
+ * 隐藏时**清掉页面标记**（报一个空 page）：
+ *   心跳在隐藏期间是停的，如果不清，服务端会一直留着最后一次的「课堂作业·作答」，
+ *   老师以为学生还在写，其实人早就切去别的窗口了。
+ *   清掉之后教师端退回显示「在线」—— 人在线，但不确定在看哪一页，这是实话。
+ *
+ * 回来后立刻补一次真实页面，不用等下一个 10 秒心跳。
+ */
 function onVisible() {
-  if (running && !document.hidden) ping()
+  if (!running) return
+  if (document.hidden) {
+    ping('')
+    return
+  }
+  ping()
 }
 
 export function startPresence() {

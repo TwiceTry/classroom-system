@@ -45,6 +45,32 @@ export function leave(classId, sid) {
   seen.delete(keyOf(classId, sid))
 }
 
+/**
+ * 学生此刻停在哪个页面（教师端名单里显示「他在看什么」）。
+ *
+ * 存在 seen 记录上而不是单独一张表：这条信息只在「人在线」时有意义，
+ * 人一 leave 就该跟着没 —— 用 seen 的生命周期正好，不会留下没人清理的脏数据。
+ *
+ * 还没 touch 过的（刚打开页面、WS 还没连上）也先建一条：
+ * 否则学生刚进来那几秒，老师看到的名字后面什么都没有。
+ */
+export function setPage(classId, sid, page) {
+  const key = keyOf(classId, sid)
+  const v = String(page || '').slice(0, 40)
+  const hit = seen.get(key)
+  if (hit) {
+    hit.page = v
+    hit.lastSeen = Date.now()
+    return
+  }
+  const now = Date.now()
+  seen.set(key, { classId, sid, name: '', firstSeen: now, lastSeen: now, page: v })
+}
+
+export function pageOf(classId, sid) {
+  return (seen.get(keyOf(classId, sid)) || {}).page || ''
+}
+
 export function attach(classId, sid, name) {
   touch(classId, sid, name)
   const key = keyOf(classId, sid)

@@ -1193,18 +1193,44 @@ td.num.bad {
   overflow: auto;
 }
 
+/*
+ * 全站一次性提示：顶部居中弹出，几秒后自己消失（见 components/Toast.vue）。
+ *
+ * 原来在 bottom: 24px —— 会压在页脚、提交按钮、工作台状态条上，
+ * 学生做作业时那一条正好盖住「提交」。挪到顶部之后，教/学两端的提示位置也一致了。
+ *
+ * z-index 200：要能盖住弹层（90）和状态监视面板（70），
+ * 否则「保存失败」这类提示会被打开着的弹窗挡住 —— 那正是最需要看到的时刻。
+ */
 .toast {
   position: fixed;
   left: 50%;
-  bottom: 24px;
+  top: 16px;
   transform: translateX(-50%);
-  z-index: 90;
-  padding: 8px 16px;
+  z-index: 200;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 10px 18px;
   border-radius: var(--r-md);
   background: #23272c;
   color: #f2f3f0;
   font-size: var(--fs-md);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
+  line-height: 1.5;
+  text-align: center;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+  /* 长文本换行而不是撑出屏幕 */
+  word-break: break-word;
+}
+
+/* 从上方滑入、淡出：比纯淡入更像「一条通知掉下来」 */
+.toast-drop-enter-active,
+.toast-drop-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.toast-drop-enter-from,
+.toast-drop-leave-to {
+  opacity: 0;
+  transform: translate(-50%, -10px);
 }
 
 /* ==========================================================================
@@ -1501,6 +1527,28 @@ td.num.bad {
 
 .content.ws .ws-foot {
   grid-column: 1 / -1;
+}
+
+/*
+ * 并排（body-class="ws side"）：中栏自己变成两列，两边各自滚。
+ *
+ * 用在讲义页 —— 左边讲义、右边学生材料，对照着讲。
+ * 这里只负责「两栏 + 各自滚」，具体谁跟谁对齐由页面自己处理。
+ * 中栏改成 overflow: hidden：如果让它自己滚，两个卡片就都撑成内容高度，
+ * 内部滚动条不会出现，跟着跟着就整块滚走了。
+ */
+.content.ws.side .ws-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+.content.ws.side .ws-main > .side-card {
+  min-height: 0;
+  overflow: auto;
+  margin-bottom: 0;
+  padding-bottom: 32px;
 }
 
 /*

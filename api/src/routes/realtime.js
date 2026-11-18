@@ -17,10 +17,26 @@ import { verify } from '../lib/auth.js'
 import { castState } from './cast.js'
 
 export default async function realtimeRoutes(app) {
-  /** 心跳：学生端每 10 秒来一次（WS 被掐掉时靠它兜底） */
+  /**
+   * 心跳：学生端每 10 秒来一次（WS 被掐掉时靠它兜底）。
+   *
+   * 顺带带一个 page：这个学生此刻停在哪个页面。
+   * 教师端「班级管理 → 班级名单」里那一列显示的就是它 ——
+   * 复用心跳而不是单开接口：反正每 10 秒都要发一次，多带一个短字符串不花钱，
+   * 而且天然有「人走了就不再上报」的语义（离开页面时 presence.leave 会把记录删掉）。
+   */
   app.post('/api/presence/ping', { preHandler: requireAuth('student') }, async (req) => {
     const t = req.user
     presence.touch(t.classId, t.sid, t.name)
+    /*
+     * 注意是 hasOwnProperty 而不是「有值才算」：
+     * 前端切走标签页时会主动报一个空串 page，意思是「我不确定在看哪一页」，
+     * 这时必须把旧值覆盖掉。如果只判真值，那条空上报会被忽略，
+     * 教师端就会一直显示学生最后停留的页面。
+     */
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'page')) {
+      presence.setPage(t.classId, t.sid, req.body.page || '')
+    }
     return { ok: true, online: presence.onlineSet(t.classId).size, cast: castState().mode }
   })
 
@@ -42,7 +58,10 @@ export default async function realtimeRoutes(app) {
       onlineCount: online.size,
       castingCount: casting.size,
       total: roster.length,
-      online: roster.filter((s) => online.has(s.sid)),
+      /* page：这个学生此刻停在哪个页面（课程材料 / 课堂作业 / 代码练习…） */
+    online: roster
+      .filter((s) => online.has(s.sid))
+      .map((s) => Object.assign({}, s, { page: presence.pageOf(cls.id, s.sid) })),
       offline: roster.filter((s) => !online.has(s.sid)),
       casting: roster.filter((s) => casting.has(s.sid)),
       ttlSeconds: Math.round(presence.TTL / 1000),

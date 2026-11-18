@@ -69,7 +69,8 @@
         :empty="'这个班还没有名单。'"
       >
         <template #cell-sid="{ row }"><span class="sid">{{ row.sid }}</span></template>
-        <template #cell-online="{ row }"><i class="dot" :class="{ on: row.online }"></i></template>
+        <!-- 读 onlineMap（轮询来的实时状态），不读 row.online（reload 那一刻的快照） -->
+      <template #cell-online="{ row }"><i class="dot" :class="{ on: onlineMap[row.sid] }"></i></template>
         <template #cell-score="{ row }"><span class="score">{{ row.score }}</span></template>
         <template #cell-count="{ row }"><span class="dim">{{ row.count }}</span></template>
         <template #cell-actions="{ row }">
@@ -170,7 +171,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { api } from '../../api'
 import Toast from '../../components/Toast.vue'
 import { currentClassId, setClassId } from '../../utils/classSel'
@@ -195,6 +196,17 @@ const props = defineProps({
 const classes = ref([])
 const activeId = ref('')
 const students = ref([])
+
+/**
+ * 在线状态单独存一份，和考勤页同一套做法。
+ *
+ * 为什么不能直接用 students[i].online：
+ *   students 是 reload() 时整批换掉的，而 reload 只在切班、点完名之后调 ——
+ *   学生中途连上 / 掉线，页面根本不会重拉，那些点就一直是打开页面那一刻的样子。
+ *   /presence 是轻量的（只回 sid 列表），单独轮询它，10 秒一次。
+ */
+const onlineMap = reactive({})
+let presenceTimer = null
 const presets = ref([])
 const recent = ref([])
 const roll = reactive({ pickedCount: 0, remaining: 0 })
@@ -236,7 +248,8 @@ const spotOpen = ref(false)
 const error = ref('')
 const toast = ref('')
 
-const onlineCount = computed(() => students.value.filter((s) => s.online).length)
+/* 统计也跟着 onlineMap 走 —— 否则会出现「列表全暗、上面写着在线 6」 */
+const onlineCount = computed(() => students.value.filter((s) => onlineMap[s.sid]).length)
 const visible = computed(() => {
   const q = search.value.trim()
   return q ? students.value.filter((s) => s.sid.indexOf(q) >= 0 || s.name.indexOf(q) >= 0) : students.value
@@ -292,12 +305,25 @@ async function reload(keepCurrent) {
   }
 }
 
+/** 在线状态单独取（学生心跳会变，而名单不是每次都重拉） */
+async function loadPresence() {
+  if (!activeId.value) return
+  try {
+    const res = await api.get(url('/presence'))
+    const set = new Set((res.online || []).map((s) => s.sid))
+    for (const s of students.value) onlineMap[s.sid] = set.has(s.sid)
+  } catch (e) {
+    /* 拿不到不影响点名 */
+  }
+}
+
 function pick(id) {
   if (id === activeId.value) return
   activeId.value = id
   setClassId(id)
   current.value = null
-  reload()
+  /* 换班之后名单整批换了，在线状态要立刻跟着换一次，别等下一轮轮询 */
+  reload().then(loadPresence)
 }
 
 /** 抽一个人（本轮不重复） */
@@ -305,6 +331,11 @@ async function drawOne() {
   const res = await api.post(url('/rollcall/draw'), { count: 1, exclude: true, lock: spotLock.value })
   const who = (res.drawn || [])[0]
   if (!who) return null
+  /* 抽到了但浮层没推下去（有学生在考试时点名被挡）——必须告诉老师 */
+  if (res.blocked) {
+    const k = res.focus && res.focus.kind
+    show(k === 'exam' ? '有学生正在考试，点名浮层没有推到学生端' : '学生端被别的状态占着，点名浮层没推下去')
+  }
   current.value = students.value.find((s) => s.sid === who.sid) || { sid: who.sid, name: who.name, score: 0, count: 0, online: false }
   roll.pickedCount = res.pickedCount === undefined ? roll.pickedCount : res.pickedCount
   roll.remaining = res.remaining === undefined ? roll.remaining : res.remaining
@@ -456,6 +487,13 @@ onMounted(async () => {
   await loadClasses()
   await reload()
   await restoreSpot()
+  await loadPresence()
+  /* 10 秒一次，和考勤页同频 —— 学生连上/掉线不用手动刷新就能看到 */
+  presenceTimer = setInterval(loadPresence, 10000)
+})
+
+onUnmounted(() => {
+  if (presenceTimer) clearInterval(presenceTimer)
 })
 </script>
 

@@ -214,11 +214,45 @@ onMounted(async () => {
       })
     }
   })
+
+  /*
+   * 告诉服务端「我在做作业」。
+   *
+   * 这是一种**屏幕占用**（优先级 60）：老师翻讲义 / 推代码不该把正在写作业的学生拽走，
+   * 但点名(80)、考试(100) 仍然能盖过它。上报失败不影响做作业本身 ——
+   * 网络断了也就是老师那边看不到你在写，功能照旧。
+   */
+  report('homework')
 })
 
 onUnmounted(() => {
   if (off) off()
+  /* 离开页面：把「在做作业」还回去，否则会一直显示你在写这份 */
+  report('idle')
 })
+
+let reportTimer = null
+function report(kind) {
+  const body = { kind }
+  if (kind === 'homework') {
+    body.assignmentId = String(id || '')
+    body.title = (a.value && a.value.title) || ''
+  }
+  /* 轻量接口，失败无所谓；不 await，别挡页面 */
+  api.post('/api/student/activity', body).catch(() => {})
+  if (kind === 'homework') {
+    /*
+     * 每 3 分钟补报一次：服务端的「在做作业」不带过期时间（学生可能写很久），
+     * 但如果中途服务重启 / 状态被清，补报能让它回来。
+     */
+    clearInterval(reportTimer)
+    reportTimer = setInterval(() => {
+      api.post('/api/student/activity', { kind: 'homework', assignmentId: String(id || '') }).catch(() => {})
+    }, 180000)
+  } else {
+    clearInterval(reportTimer)
+  }
+}
 
 async function load() {
   err.value = ''

@@ -18,6 +18,8 @@ import * as repo from '../lib/repo.js'
 import { gradeSubmission, submissionView, courseOfAssignment } from '../lib/grading.js'
 import * as scheme from '../lib/scheme.js'
 import { withCourseScheme } from '../lib/scheme.js'
+import { pushFocus, releaseFocus, getFocus } from '../lib/focus.js'
+import { broadcast } from './cast.js'
 import * as examLib from '../lib/exam.js'
 
 const uid = (p) => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
@@ -367,6 +369,8 @@ export default async function examRoutes(app) {
     examItemOf(a)
     if (a.status !== 'open') throw forbidden(a.openedAt ? '这场机试已经结束了' : '老师还没开始这场机试')
     const { sub, state } = ensureSubmission(a, t)
+    /* 开考即占住学生端屏幕（优先级最高，谁都压不掉）——交卷时释放 */
+    lockExamFocus(a, t, state)
     return {
       submissionId: sub.id,
       paper: normalizeOptions(examLib.publicPaper(state.paper)),
@@ -439,10 +443,68 @@ export default async function examRoutes(app) {
     state.graded.at = state.submittedAt
     writeState(a, sub, state)
 
+    /* 交卷即退出「考试中」；同班还有人没交就继续占着 */
+    unlockExamFocus(a, t)
+
     // 自动判分立刻进计分表：学生交完就能看到分，老师再改也是「撤旧记新」
     const graded = gradeSubmission(a, sub, '机试自动判分', { raw: state.graded.autoScore, comment: '' })
     return { ok: true, submissionId: sub.id, autoScore: state.graded.autoScore, total: state.graded.total, score: graded.score }
   })
+}
+
+/* ---------------- 考试期间的「屏幕占用」---------------- */
+
+const examDeps = () => ({ repo, broadcast })
+
+/**
+ * 开考 → 占住学生端屏幕。
+ *
+ * 优先级 100，压过点名(80)、做作业(60)、讲义跟随/代码同步(40)：
+ * 正在答题的学生，不该因为老师翻页讲义或点个名就被拽走 —— 那是会丢分的。
+ *
+ * 记录里维护一份 sids（这场考试还有谁在考），交卷时逐个剔除，
+ * 全交完才真的放开。带 expiresAt（时长 + 10 分钟宽限）：
+ * 学生没交卷就关掉浏览器的话，状态不会永远卡在「考试中」。
+ */
+function lockExamFocus(a, t, state) {
+  const cid = String(t.classId || '')
+  if (!cid) return
+  const cur = getFocus(cid, examDeps())
+  const prev = cur && cur.kind === 'exam' && cur.payload && Array.isArray(cur.payload.sids) ? cur.payload.sids : []
+  const sids = prev.includes(String(t.sid)) ? prev : prev.concat([String(t.sid)])
+  const mins = Number((state.paper && state.paper.duration) || 0) || 60
+  const start = Date.parse(state.startedAt || '') || Date.now()
+  pushFocus(
+    cid,
+    'exam',
+    {
+      sids,
+      assignmentId: a.id,
+      title: a.title || '',
+      expiresAt: new Date(start + (mins + 10) * 60 * 1000).toISOString(),
+    },
+    examDeps()
+  )
+}
+
+/** 交卷 → 把自己从「在考名单」里去掉；全都交完才放开屏幕 */
+function unlockExamFocus(a, t) {
+  const cid = String(t.classId || '')
+  if (!cid) return
+  const cur = getFocus(cid, examDeps())
+  if (!cur || cur.kind !== 'exam') return
+  const prev = cur.payload && Array.isArray(cur.payload.sids) ? cur.payload.sids : []
+  const sids = prev.filter((x) => x !== String(t.sid))
+  if (!sids.length) {
+    releaseFocus(cid, 'exam', examDeps())
+    return
+  }
+  pushFocus(
+    cid,
+    'exam',
+    Object.assign({}, cur.payload, { sids }),
+    examDeps()
+  )
 }
 
 /** 兜底：直接按提交 id 查（机试路由允许用 subId） */

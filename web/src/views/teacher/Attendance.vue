@@ -148,7 +148,12 @@
       :empty="'这个班还没有名单。'"
     >
       <template #cell-sid="{ row }"><span class="sid">{{ row.sid }}</span></template>
-      <template #cell-online="{ row }"><i class="dot" :class="{ on: row.online }"></i></template>
+      <!--
+        和网格同一个坑：row.online 是 loadClasses 那一刻的快照，
+        教学机代理后续上报只写进 onlineMap，所以这些点一直不亮。
+        两个视图（网格 / 列表）必须读同一个来源，否则会「网格亮、列表全暗」。
+      -->
+      <template #cell-online="{ row }"><i class="dot" :class="{ on: onlineMap[row.sid] }"></i></template>
       <template #cell-score="{ row }"><span class="score">{{ scoreOf(row.sid) }}</span></template>
       <template #cell-actions="{ row }">
         <button
@@ -673,6 +678,18 @@ async function drawOne() {
     if (!who) {
       current.value = null
       return
+    }
+    /*
+     * 抽是抽到了（后端已经记进「本轮已抽」），但浮层可能没推到学生端 ——
+     * 有学生正在考试（优先级 100）时点名（80）推不下去。
+     * 这里必须说一句，否则老师看到弹窗里有人、学生那边没反应，会以为坏了。
+     */
+    if (res.blocked) {
+      const k = res.focus && res.focus.kind
+      error.value =
+        k === 'exam'
+          ? '有学生正在考试，这次点名的浮层没有推到学生端（考完再点）'
+          : '学生端被别的状态占着（' + (k || '未知') + '），这次点名的浮层没推下去'
     }
     current.value = students.value.find((s) => s.sid === who.sid) || { sid: who.sid, name: who.name || '' }
     /* 服务端回来的 picked 就是权威的「本轮已抽」，同步成镜像 */

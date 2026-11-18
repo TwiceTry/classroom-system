@@ -25,7 +25,7 @@ import { findBundle, kindOf, info as compatInfo } from '../lib/compat.js'
  * 把它一起清掉，一个模块级变量留在这里别处就没法收拾。
  * 语义不变：全局一个，一个老师在讲、全班看同一处。
  */
-import { getFollow, setFollow, standDown } from '../lib/focus.js'
+import { getFollow, setFollow, standDown, pushFocus, releaseFocus, stopFollow } from '../lib/focus.js'
 
 /** standDown 要用的依赖（用参数传是为了避免 focus.js 反向 import 造成环） */
 const FOCUS_DEPS = { repo, broadcast }
@@ -293,12 +293,7 @@ export default async function compatRoutes(app) {
       },
     },
     handler: async (req) => {
-      /*
-       * 立起「跟随」之前，先把这个班的点名 / 代码同步停掉。
-       * 学生端同一时刻只该看一块东西：跟着讲义走的时候，
-       * 上一次点名的大字浮层和上一次推过去的代码都应该让位。
-       */
-      const stopped = standDown(String(req.body.classId || ''), 'follow', FOCUS_DEPS)
+      const cid = String(req.body.classId || '')
       const next = {
         lessonId: String(req.body.lessonId),
         anchor: String(req.body.anchor),
@@ -306,15 +301,39 @@ export default async function compatRoutes(app) {
         courseId: String(req.body.courseId || ''),
         at: Date.now(),
       }
-      setFollow(next)
+      /*
+       * 走统一的焦点仲裁：follow 的优先级是 40。
+       * 如果有人正在考试（100）/ 点名（80）/ 做作业（60），这里会被拒 ——
+       * 学生端不该因为老师翻了一页讲义就被拽离考场。
+       * 被拒时返回 blocked，前端据此提示，而不是「按了没反应」。
+       */
+      const r = pushFocus(cid, 'follow', next, FOCUS_DEPS)
+      if (!r.ok) {
+        return {
+          ok: false,
+          blocked: !!r.blocked,
+          reason: r.reason || '',
+          focus: r.current || null,
+          follow: next,
+        }
+      }
       const delivered = broadcast(Object.assign({ t: 'follow' }, next))
-      return { ok: true, delivered, follow: next, stopped }
+      return { ok: true, delivered, follow: next, stopped: r.stopped || [] }
     },
   })
 
-  /* 停跟随：切到点名 / 代码同步时由前端调，也可以老师手动停 */
-  app.delete('/api/teacher/follow', { preHandler: requireAuth('teacher') }, async () => {
-    const stopped = standDown('', 'none', FOCUS_DEPS)
+  /**
+   * 停跟随。
+   *
+   * 带 ?classId= 时把 focus 记录一起放开 —— 原来只清了内存那份，
+   * 焦点记录还留着 follow，于是学生端页头一直挂着「跟随讲义中」，
+   * 而且它会挡住后面 pgsync（同级，看着像「推代码没反应」）。
+   */
+  app.delete('/api/teacher/follow', { preHandler: requireAuth('teacher') }, async (req) => {
+    const cid = String((req.query && req.query.classId) || '')
+    const stopped = cid ? (releaseFocus(cid, 'follow', FOCUS_DEPS) ? ['follow'] : []) : standDown('', 'none', FOCUS_DEPS)
+    /* 内存那份无论如何都要清（学生刷新时读的是它） */
+    stopFollow(FOCUS_DEPS.broadcast)
     return { ok: true, stopped }
   })
 

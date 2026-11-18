@@ -1,34 +1,48 @@
 /*
- * lib/focus.js —— 课堂聚焦：一个班同一时刻只允许一种「学生端浮层」
+ * lib/focus.js —— 课堂聚焦：一个班同一时刻只允许一种「学生端状态」
  *
- * 会占住学生屏幕的三样东西：
- *   follow     讲义跟随（学生端跳到某节课某一节）
- *   pgsync     代码同步（学生端工作台跟着老师的代码变）
- *   spotlight  点名 —— 考勤 attend / 课堂互动 interact 共用 spot:<cid>，靠 kind 区分，
- *              本来就是互斥的；所以这里只需要它和其它两样互斥
+ * 会占用学生屏幕的东西一共六样，它们本来各存各的、互不知晓：
  *
- * 原来三处各存各的、互不知晓：
- *   follow     compat.js 的模块变量（内存，连班级维度都没有）
- *   pgsync     state['pg:<cid>']
- *   spotlight  state['spot:<cid>']
+ *   exam       正在考试          考试开始 → 交卷/超时
+ *   spotlight  点名（考勤 / 互动） 老师抽人 → 结束点名
+ *   homework   学生自己在做作业     学生打开作业页 → 离开
+ *   follow     讲义跟随          老师翻讲义 → 停跟随
+ *   pgsync     代码同步          老师推代码 → 停同步
+ *   idle       什么都没有
  *
- * 于是：老师一边跟随讲义一边点人，学生端两个浮层叠着；
- *       推完代码再点名，学生端还挂着上次的同步位置。
+ * 原来只有前三样里的 three 种能互相清（standDown），而且是「谁后立谁赢」——
+ * 于是老师推代码能把正在考试的学生带离考场，点名结束后学生的作业页被
+ * 讲义的跳转打断。谁先谁后全看操作顺序，没有规矩。
  *
- * 现在每个入口在立起自己之前先调 standDown(cid, 自己的 kind)，
- * 把别人**真的停掉**（置 null + 广播各自的清空消息），不是只标个记 ——
- * 否则学生刷新一下又回来了。
+ * 现在有了明确优先级（数字大的压住小的，同级可互覆）：
+ *
+ *   exam 100  >  spotlight 80  >  homework 60  >  follow = pgsync 40  >  idle 0
+ *
+ * 立不起来的时候**不是悄悄失败**：pushFocus 返回 { blocked: true, current }，
+ * 调用方（教师端）据此提示「这次没推下去，有学生在考试」，而不是按了没反应。
+ *
+ * 存储：state['focus:<cid>']，一个班一条。为什么落库不纯内存 ——
+ * 学生刷新页面、换设备都要能恢复出「现在该显示什么」，服务端重启也不该丢。
+ * 带 expiresAt 的（考试）过期自动失效，避免学生没交卷就关掉、状态永远卡住。
  */
 
-/* key 与 classroom.js 里的 SPOT_KEY / PG_KEY 必须一致（那边是 'spot:' + cid / 'pg:' + cid） */
-const PG_KEY = (cid) => 'pg:' + cid
-const SPOT_KEY = (cid) => 'spot:' + cid
+/* 优先级表：改这里就是改规则，不要在各个入口散着写 if */
+export const RANK = {
+  idle: 0,
+  pgsync: 40,
+  follow: 40,
+  homework: 60,
+  spotlight: 80,
+  exam: 100,
+}
+
+const KEY = (cid) => 'focus:' + cid
 
 /**
- * 当前讲义跟随的位置。
+ * 讲义跟随的当前位置。
  *
- * 放在这里而不是 compat.js，是因为 standDown 要能清它 ——
- * 一个模块级变量散在路由文件里，别处就没法统一收拾。
+ * 单独留在内存里（不放进 focus 记录）：学生刷新时前端要拿它恢复页面，
+ * 而 focus 记录只是「谁占了屏幕」。两者生命周期一样，但用途不同。
  * 语义仍是「全局一个」：一个老师在讲，全班看同一处。
  */
 let followState = null
@@ -41,7 +55,7 @@ export function setFollow(v) {
   followState = v
 }
 
-/** 只清跟随（教师主动停，或切到别的动作时用） */
+/** 只清跟随（教师主动停） */
 export function stopFollow(broadcast) {
   if (!followState) return false
   followState = null
@@ -50,39 +64,145 @@ export function stopFollow(broadcast) {
 }
 
 /**
- * 立起 keep 之前，把其它几类清掉并广播。
- *
- * @param classId 班级 id；空则只清全局的 follow（点名/代码同步是按班存的，没班级就没法清）
- * @param keep    这次要立起的种类：'follow' | 'pgsync' | 'spotlight'
- * @param deps    { repo, broadcast } —— 用参数传而不是 import，
- *                因为 compat.js / classroom.js 都 import 这里，反过来 import 会成环
- * @returns 被停掉的种类名，给日志和测试用
+ * 每种状态「被顶掉」时要广播的清空消息。
+ * 这些消息是给各组件自己用的（它们早就认识），focus 只是总闸。
  */
-export function standDown(classId, keep, deps) {
-  const { repo, broadcast } = deps
-  const stopped = []
+const CLEAR_MSG = {
+  follow: () => ({ t: 'follow', stopped: true }),
+  pgsync: () => ({ t: 'pgsync', sync: null }),
+  spotlight: () => ({ t: 'spotlight', clear: true }),
+  homework: () => ({ t: 'activity', active: 'idle' }),
+  exam: () => ({ t: 'exam', active: false }),
+}
 
-  if (classId && keep !== 'pgsync' && repo.getState(PG_KEY(classId), null)) {
-    repo.setState(PG_KEY(classId), null)
-    broadcast({ t: 'pgsync', sync: null })
-    stopped.push('pgsync')
+/** 当前占用者（过期的不算） */
+export function getFocus(classId, deps) {
+  if (!classId) return null
+  let cur = null
+  try {
+    cur = deps.repo.getState(KEY(classId), null)
+  } catch (e) {
+    return null
   }
-  if (classId && keep !== 'spotlight' && repo.getState(SPOT_KEY(classId), null)) {
-    repo.setState(SPOT_KEY(classId), null)
-    broadcast({ t: 'spotlight', clear: true })
-    stopped.push('spotlight')
+  if (!cur) return null
+  if (cur.expiresAt && Date.parse(cur.expiresAt) < Date.now()) {
+    /* 过期（考试超时没交卷）——当作没有，顺手清掉，别让状态永远卡着 */
+    try {
+      deps.repo.setState(KEY(classId), null)
+    } catch (e) {
+      /* 清不掉也不影响本次判断 */
+    }
+    return null
   }
-  if (keep !== 'follow' && stopFollow(broadcast)) {
-    stopped.push('follow')
-  }
+  return cur
+}
+
+/**
+ * 立起一种状态。
+ *
+ * @param classId 班级 id
+ * @param kind    RANK 里的键
+ * @param payload { sid?, assignmentId?, expiresAt?, ... } 该状态自己的数据
+ * @param deps    { repo, broadcast } —— 用参数传，避免 compat/classroom 反向 import 成环
+ * @returns {{ ok:boolean, blocked?:boolean, current?:object, focus?:object, stopped?:string[] }}
+ */
+export function pushFocus(classId, kind, payload, deps) {
+  const { repo, broadcast } = deps
+  if (!classId || !(kind in RANK)) return { ok: false, reason: 'bad-args' }
+
+  const cur = getFocus(classId, deps)
+  const mine = RANK[kind]
+  const theirs = cur ? RANK[cur.kind] ?? 0 : 0
 
   /*
-   * 一条总消息：前端（StudentLayout）收到就知道「现在该显示哪一块」。
-   * 上面那几条清空消息是给各组件自己用的（它们已经能处理），
-   * 这条是兜底 —— 万一某个组件的清空分支有遗漏，前端还能按 active 收一遍。
+   * 高优先级在场时，低的一律立不起来 —— 这是整个设计的核心：
+   * 正在考试的学生，不会因为老师翻讲义 / 点个名就被拽走。
+   * 同级（follow 与 pgsync）允许互相覆盖，那是同一种「内容展示」。
    */
-  if (stopped.length) {
-    broadcast({ t: 'focus', active: keep, stopped })
+  if (cur && theirs > mine) {
+    return { ok: false, blocked: true, current: cur, reason: 'lower-priority' }
+  }
+
+  /* 先真的把旧的停掉（广播它自己的清空消息），再立新的 */
+  const stopped = []
+  if (cur && cur.kind !== kind) {
+    const msg = CLEAR_MSG[cur.kind]
+    if (msg) broadcast(msg())
+    stopped.push(cur.kind)
+    if (cur.kind === 'follow') followState = null
+  }
+
+  const next = { kind, payload: payload || null, at: new Date().toISOString() }
+  if (payload && payload.expiresAt) next.expiresAt = payload.expiresAt
+  if (payload && payload.sid) next.sid = String(payload.sid)
+
+  try {
+    repo.setState(KEY(classId), next)
+  } catch (e) {
+    return { ok: false, reason: 'persist-failed' }
+  }
+
+  if (kind === 'follow' && payload) setFollow(payload)
+
+  /* 一条总消息：学生端只认它，各组件也顺带收到自己那份清空 */
+  broadcast({ t: 'focus', active: kind, focus: next, stopped })
+  return { ok: true, focus: next, stopped }
+}
+
+/**
+ * 主动释放（考试交卷、学生离开作业页）。
+ *
+ * 只清「确实是自己」的那条：如果中途已经被更高优先级顶掉，这里不该误伤。
+ * 交卷时还要判断「这个班是不是还有别人在考」—— 由调用方决定是否调用本函数。
+ */
+export function releaseFocus(classId, kind, deps) {
+  const cur = getFocus(classId, deps)
+  if (!cur || cur.kind !== kind) return false
+  try {
+    deps.repo.setState(KEY(classId), null)
+  } catch (e) {
+    return false
+  }
+  const msg = CLEAR_MSG[kind]
+  if (msg) deps.broadcast(msg())
+  deps.broadcast({ t: 'focus', active: 'idle', stopped: [kind] })
+  return true
+}
+
+/** 教师端监视用：当前状态 + 优先级，前端不用自己维护这张表 */
+export function describeFocus(classId, deps) {
+  const cur = getFocus(classId, deps)
+  return {
+    focus: cur,
+    kind: cur ? cur.kind : 'idle',
+    rank: cur ? RANK[cur.kind] ?? 0 : 0,
+    ranks: RANK,
+  }
+}
+
+/**
+ * 兼容旧调用：把「立起 keep 之前清掉别人」的老语义映射到 pushFocus 的拒绝对话上。
+ * 现在只剩「停跟随」这一处还在用（compat.js 的 /api/teacher/follow 带 stopped 那支）。
+ */
+export function standDown(classId, keep, deps) {
+  const cur = getFocus(classId, deps)
+  if (!cur) {
+    if (keep !== 'follow' && stopFollow(deps.broadcast)) return ['follow']
+    return []
+  }
+  if (cur.kind === keep) return []
+  const mine = RANK[keep] ?? 0
+  const theirs = RANK[cur.kind] ?? 0
+  if (theirs > mine) return []
+  const stopped = []
+  const msg = CLEAR_MSG[cur.kind]
+  if (msg) deps.broadcast(msg())
+  stopped.push(cur.kind)
+  if (cur.kind === 'follow') followState = null
+  try {
+    deps.repo.setState(KEY(classId), null)
+  } catch (e) {
+    /* 忽略 */
   }
   return stopped
 }

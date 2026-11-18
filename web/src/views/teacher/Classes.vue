@@ -142,10 +142,17 @@
               {{ presenceSet.has(row.student.sid) ? '在线' : '离线' }}
             </span>
           </template>
-          <template v-else-if="column.key === 'cast'">
-            <span class="tag" :class="castingSet.has(row.student.sid) ? 'ok' : 'mute'">
-              {{ castingSet.has(row.student.sid) ? '在看' : '—' }}
+          <!--
+            学生此刻停在哪个页面（课程材料 / 课堂作业·作答 / 代码练习…）。
+            原来这一列是「投屏（在看）」，但投屏是偶尔才用一次的临时动作，
+            而「他现在在哪个页面」是每节课都在变的实时信息，更值得占一格。
+            离线时不重复写「离线」—— 左边 status 列已经说过了。
+          -->
+          <template v-else-if="column.key === 'page'">
+            <span v-if="presenceSet.has(row.student.sid)" class="tag mute">
+              {{ pageMap[row.student.sid] || '在线' }}
             </span>
+            <span v-else class="dim">—</span>
           </template>
           <template v-else-if="column.key === 'total'"><b>{{ row.total }}</b></template>
           <template v-else-if="column.key === 'actions'">
@@ -790,6 +797,18 @@ const pickedSid = ref('')
 const presence = ref({ onlineCount: 0, castingCount: 0, online: [], casting: [] })
 const presenceSet = computed(() => new Set((presence.value.online || []).map((s) => s.sid)))
 const castingSet = computed(() => new Set((presence.value.casting || []).map((s) => s.sid)))
+
+/**
+ * sid → 学生此刻停在哪个页面（「课程材料」「课堂作业·作答」…）。
+ *
+ * 服务端的心跳顺手带上这个（/api/presence/ping 的 page 字段），
+ * 人没上报过就是空 —— 这时显示「在线」，总比显示空白好。
+ */
+const pageMap = computed(() => {
+  const m = {}
+  for (const s of presence.value.online || []) m[s.sid] = s.page || ''
+  return m
+})
 let presenceTimer = null
 
 const active = computed(() => classes.value.find((c) => c.id === activeId.value) || classes.value[0] || null)
@@ -813,8 +832,10 @@ const cols = computed(() => [
   { key: 'no', label: '#', width: '42px', num: true, tdClass: 'dim' },
   { key: 'sid', label: '学号', width: '110px', sortable: true, tdClass: 'dim' },
   { key: 'name', label: '姓名', width: '90px', sortable: true },
-  { key: 'status', label: '状态', hint: '登录中', width: '78px', sortable: true },
-  { key: 'cast', label: '投屏', hint: '在看', width: '78px', sortable: true },
+  /* 「在线」比「状态」准确：这一列只有在线 / 离线两种 */
+  { key: 'status', label: '在线', hint: '登录中', width: '70px', sortable: true },
+  /* 原来这里是「投屏（在看）」，换成学生此刻停在哪个页面 —— 每节课都在变，信息量更大 */
+  { key: 'page', label: '在哪页', hint: '学生此刻停在哪个页面', width: '104px', sortable: true },
   ...mainItems.value.map((it) => ({
     key: it.key,
     label: it.short,
@@ -866,7 +887,8 @@ function sortVal(r, key) {
   if (key === 'sid') return sid
   if (key === 'name') return r.student.name || ''
   if (key === 'status') return presenceSet.value.has(sid) ? '在线' : '离线'
-  if (key === 'cast') return castingSet.value.has(sid) ? '在看' : ''
+  /* 按页面名排序：同一页的人会聚在一起，老师一眼看出「这节课有几个人在做作业」 */
+  if (key === 'page') return presenceSet.value.has(sid) ? pageMap.value[sid] || '在线' : ''
   if (key === 'total') return Number(r.total) || 0
   return Number(scoreOf(r, key)) || 0 // 各计分项 + 加分
 }
