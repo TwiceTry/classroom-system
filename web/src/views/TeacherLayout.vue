@@ -375,8 +375,8 @@ async function onLogout() {
 .course {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
+  gap: var(--sp-2);
+  padding: var(--sp-2) 8px;
   margin-bottom: 8px;
   border: 1px solid var(--line-soft);
   border-radius: var(--r-md);
@@ -417,7 +417,7 @@ async function onLogout() {
 
 .cast {
   padding-bottom: 12px;
-  margin-bottom: 10px;
+  margin: var(--sp-2);
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
@@ -426,8 +426,8 @@ async function onLogout() {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  padding: 8px 10px;
+  gap: var(--sp-2);
+  padding: 8px var(--sp-2);
   border-radius: var(--r-md);
   border: 1px solid #4a515c;
   background: #2b3037;
@@ -491,7 +491,7 @@ async function onLogout() {
 }
 
 .cast-meta {
-  margin: 6px 0 4px;
+  margin: var(--sp-2) 0 4px;
   font-size: var(--fs-xs);
   color: var(--side-dim);
   line-height: 1.5;

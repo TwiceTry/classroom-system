@@ -1,6 +1,10 @@
 <template>
-  <!-- 并排时不限宽（要放下两栏），单栏时按阅读宽度收窄 -->
-  <PageShell :body-class="sideBySide ? 'ws side' : 'ws read'">
+  <!--
+    并排时不限宽（要放下两栏），单栏时按阅读宽度收窄。
+    类名用 side-by-side 而不是 side：`.side` 是侧栏那个类（深灰底 208px），
+    撞上之后整个内容区会变成侧栏的颜色。
+  -->
+  <PageShell :body-class="sideBySide ? 'ws side-by-side' : 'ws read'">
     <template #head>
       <!-- 只读内容页：没有「要重拉的数据」，所以不注册 @reload，页头也就不会有「↻」 -->
       <PageHead>

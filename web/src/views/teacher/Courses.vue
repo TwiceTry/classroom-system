@@ -860,7 +860,7 @@ async function exportPack(c, parts) {
 
 /* 导出弹层里「必带」的那一行（不是复选框，避免看起来像没勾上） */
 .peer-line {
-  margin: 0 0 6px;
+  margin: 0 0 var(--sp-2);
   font-size: var(--fs-md);
   color: #40505f;
 }
@@ -875,7 +875,7 @@ async function exportPack(c, parts) {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  margin: 12px 2px 6px;
+  margin: 12px 2px var(--sp-2);
   font-size: var(--fs-md);
   color: #40505f;
 }
@@ -905,7 +905,7 @@ async function exportPack(c, parts) {
 .up {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-2);
   margin-top: 8px;
 }
 

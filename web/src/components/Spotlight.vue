@@ -344,7 +344,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: var(--sp-3);
   margin: 3vh 0 0;
   font-size: clamp(13px, 1.2vw, 17px);
   color: #7d8792;
@@ -368,7 +368,7 @@ onUnmounted(() => {
 }
 
 .spot-meta .me {
-  padding: 4px 14px;
+  padding: 4px var(--sp-3);
   border-radius: 999px;
   background: #4fb3cc;
   color: #06222b;

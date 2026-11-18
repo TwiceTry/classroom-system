@@ -124,8 +124,8 @@ defineExpose({ frameEl })
   background: var(--card);
 }
 .npmcard {
-  margin: 14px;
-  padding: 16px 18px;
+  margin: var(--sp-3);
+  padding: 16px var(--sp-4);
   border: 1px solid #e2dcc6;
   border-radius: 6px;
   background: #fdfaf1;
@@ -136,18 +136,18 @@ defineExpose({ frameEl })
 .npmicon {
   font-size: 22px;
   line-height: 1;
-  margin-bottom: 6px;
+  margin: var(--sp-2);
 }
 .npmcard h3 {
-  margin: 0 0 6px;
+  margin: 0 0 var(--sp-2);
   font-size: var(--fs-md);
   color: #4a3d16;
 }
 .npmcard p {
-  margin: 6px 0;
+  margin: var(--sp-2) 0;
 }
 .npmcard ol {
-  margin: 6px 0 6px 18px;
+  margin: var(--sp-2) 0 var(--sp-2) var(--sp-4);
   padding: 0;
 }
 .npmcard li {
@@ -162,8 +162,8 @@ defineExpose({ frameEl })
 .perr-head {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 9px;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-2);
   border-bottom: 1px solid #f6e2de;
   font-size: var(--fs-sm);
   color: #8a3a2c;
@@ -182,7 +182,7 @@ defineExpose({ frameEl })
 .perr-badge {
   min-width: 18px;
   height: 18px;
-  padding: 0 5px;
+  padding: 0 var(--sp-1);
   border-radius: var(--r-lg);
   background: #c0392b;
   color: #fff;
@@ -198,7 +198,7 @@ defineExpose({ frameEl })
   border: 1px solid #e6c8c2;
   background: var(--card);
   border-radius: var(--r-md);
-  padding: 1px 7px;
+  padding: 1px var(--sp-2);
   font-size: var(--fs-sm);
   color: #8a3a2c;
   cursor: pointer;
@@ -209,12 +209,12 @@ defineExpose({ frameEl })
 }
 .perr-list {
   margin: 0;
-  padding: 4px 9px 8px 26px;
+  padding: 4px var(--sp-2) 8px var(--sp-5);
   font-size: var(--fs-sm);
   color: #5a3b34;
 }
 .perr-list li {
-  margin: 5px 0;
+  margin: var(--sp-1) 0;
 }
 .perr-list li::marker {
   color: #c9a227;
@@ -222,12 +222,12 @@ defineExpose({ frameEl })
 .perr-line {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
 }
 .perr-tag {
   flex: 0 0 auto;
-  padding: 0 5px;
+  padding: 0 var(--sp-1);
   border-radius: var(--r-sm);
   background: #f3e2de;
   color: #8a3a2c;
@@ -278,7 +278,7 @@ defineExpose({ frameEl })
 }
 .perr-stack {
   margin: 4px 0 0;
-  padding: 6px 8px;
+  padding: var(--sp-2) 8px;
   border-radius: var(--r-md);
   background: #fbf3f1;
   color: #6b4a43;
@@ -289,7 +289,7 @@ defineExpose({ frameEl })
 .perr-list .res-sum {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
 }
 .perr-list .res-sum .dim {

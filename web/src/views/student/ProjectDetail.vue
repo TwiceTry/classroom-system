@@ -253,16 +253,16 @@ function grab(s, name) {
 
 <style scoped>
 .brief {
-  padding: 14px 16px;
+  padding: var(--sp-3) 16px;
 }
 
 .brief h3 {
-  margin: 0 0 6px;
+  margin: 0 0 var(--sp-2);
   font-size: 15.5px;
 }
 
 .brief .note {
-  margin: 6px 0 8px;
+  margin: var(--sp-2) 0 8px;
   font-size: var(--fs-md);
   line-height: 1.75;
   color: #3b434b;
@@ -272,13 +272,13 @@ function grab(s, name) {
 .form {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--sp-3);
 }
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 
 .field > span {
@@ -289,7 +289,7 @@ function grab(s, name) {
 .picker {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-2);
 }
 
 .files {
@@ -315,15 +315,15 @@ function grab(s, name) {
 .actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-2);
 }
 
 .lock {
-  padding: 16px 18px;
+  padding: 16px var(--sp-4);
 }
 
 .lock h3 {
-  margin: 0 0 6px;
+  margin: 0 0 var(--sp-2);
   font-size: var(--fs-lg);
 }
 
@@ -334,7 +334,7 @@ function grab(s, name) {
 }
 
 .sub {
-  padding: 10px 0;
+  padding: var(--sp-2) 0;
   border-top: 1px solid var(--line-soft);
 }
 
@@ -350,7 +350,7 @@ function grab(s, name) {
 }
 
 .subnote {
-  margin: 6px 0 4px;
+  margin: var(--sp-2) 0 4px;
   font-size: var(--fs-md);
   line-height: 1.7;
   white-space: pre-wrap;
@@ -358,19 +358,19 @@ function grab(s, name) {
 }
 
 .suburl {
-  margin: 2px 0 6px;
+  margin: 2px 0 var(--sp-2);
   font-size: var(--fs-sm);
   word-break: break-all;
 }
 
 .subcmt {
-  margin: 4px 0 6px;
+  margin: 4px 0 var(--sp-2);
   font-size: var(--fs-md);
   color: #7a5a20;
   background: #fbf7ef;
   border: 1px solid #ece0c8;
   border-radius: var(--r-sm);
-  padding: 6px 9px;
+  padding: var(--sp-2) var(--sp-2);
 }
 
 .ellip {

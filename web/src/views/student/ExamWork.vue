@@ -255,7 +255,7 @@ async function submit(auto) {
 }
 
 .q {
-  padding: 10px 0;
+  padding: var(--sp-2) 0;
   border-top: 1px solid var(--line-soft);
 }
 
@@ -278,8 +278,8 @@ async function submit(auto) {
 .opt {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   font-size: var(--fs-md);

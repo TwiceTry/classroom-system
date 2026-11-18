@@ -124,7 +124,7 @@ function tagOf(a) {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px 14px;
+  padding: 12px var(--sp-3);
 }
 
 .hw.shut {
@@ -167,7 +167,7 @@ function tagOf(a) {
   flex-wrap: wrap;
   gap: 8px;
   margin-top: auto;
-  padding-top: 6px;
+  padding: var(--sp-2);
   border-top: 1px solid var(--line-soft);
   font-size: var(--fs-sm);
 }

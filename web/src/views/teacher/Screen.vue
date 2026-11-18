@@ -281,13 +281,13 @@ async function savePwd() {
 .metrics {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 10px;
+  gap: var(--sp-2);
 }
 
 .metric {
   background: #f7f8fc;
   border-radius: var(--r-md);
-  padding: 10px 13px;
+  padding: var(--sp-2) var(--sp-3);
 }
 
 .metric span {
@@ -313,7 +313,7 @@ async function savePwd() {
 .url {
   flex: 1;
   min-width: 240px;
-  padding: 7px 11px;
+  padding: var(--sp-2) var(--sp-3);
   background: #f4f6fb;
   border-radius: var(--r-lg);
   font-family: Consolas, monospace;
@@ -326,7 +326,7 @@ async function savePwd() {
 code {
   font-family: Consolas, monospace;
   background: #f1f4f9;
-  padding: 1px 5px;
+  padding: 1px var(--sp-1);
   border-radius: var(--r-sm);
   font-size: var(--fs-sm);
 }

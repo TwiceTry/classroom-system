@@ -133,8 +133,8 @@ function onFile(e) {
 <style scoped>
 /* 多条错误清单（以前课程包弹窗里那份，别人没有就自己带一份，不依赖页面样式） */
 .imp-errs {
-  margin: 0 0 10px;
-  padding-left: 18px;
+  margin: 0 0 var(--sp-2);
+  padding: var(--sp-4);
   max-height: 160px;
   overflow: auto;
   font-size: var(--fs-sm);

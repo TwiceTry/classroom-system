@@ -835,7 +835,8 @@ const cols = computed(() => [
   /* 「在线」比「状态」准确：这一列只有在线 / 离线两种 */
   { key: 'status', label: '在线', hint: '登录中', width: '70px', sortable: true },
   /* 原来这里是「投屏（在看）」，换成学生此刻停在哪个页面 —— 每节课都在变，信息量更大 */
-  { key: 'page', label: '在哪页', hint: '学生此刻停在哪个页面', width: '104px', sortable: true },
+  /* hint 只放短词（它跟在表头文字后面同一行），一句话的说明会撑宽列 */
+  { key: 'page', label: '在哪页', width: '104px', sortable: true },
   ...mainItems.value.map((it) => ({
     key: it.key,
     label: it.short,
@@ -1466,12 +1467,12 @@ function onKey(e) {
   border-left: 3px solid #2f7d92;
   border-radius: var(--r-md);
   background: #f7fbfd;
-  padding: 8px 10px;
+  padding: 8px var(--sp-2);
 }
 
 .ip-row {
   display: flex;
-  gap: 10px;
+  gap: var(--sp-2);
   align-items: baseline;
   padding: 2px 0;
 }
@@ -1497,7 +1498,7 @@ function onKey(e) {
 
 /* 名单导入：没被采纳的行 */
 .iss {
-  margin: 6px 0 0 18px;
+  margin: var(--sp-2) 0 0 var(--sp-4);
   max-height: 140px;
   overflow: auto;
 }
@@ -1555,12 +1556,12 @@ th.on .sortmark {
   color: #1d4ed8;
 }
 
+/* 内边距交给全局的 .card.classbar（12px 16px）—— 这里只排布 */
 .classbar {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  padding: 12px 16px;
 }
 
 /* 卡片撑满右栏，列表吃掉剩余高度自己滚 —— 否则流水一多就把卡片撑破，一少底边又对不齐 */
@@ -1575,7 +1576,7 @@ th.on .sortmark {
 .log-tools {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-2);
   margin-bottom: 8px;
 }
 .log-tools .select,
@@ -1586,7 +1587,7 @@ th.on .sortmark {
 /* 右栏窄，一条记录的头改成「谁 + 分 + 时间」压一行，原因和操作人各占一行 */
 .log .lhead {
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 
 /* 操作列：宽屏写全称，窄屏缩图标（见模板里那段注释） */
@@ -1605,7 +1606,7 @@ th.on .sortmark {
 .classbar .pill em {
   font-style: normal;
   color: var(--dim);
-  margin-left: 6px;
+  margin: var(--sp-2);
   font-size: var(--fs-sm);
 }
 
@@ -1626,13 +1627,13 @@ th.on .sortmark {
 .tabs {
   display: flex;
   gap: 2px;
-  margin: 6px 0 0;
-  padding: 0 6px;
+  margin: var(--sp-2) 0 0;
+  padding: 0 var(--sp-2);
   border-bottom: 1px solid var(--line);
 }
 .tab {
   position: relative;
-  padding: 7px 16px;
+  padding: var(--sp-2) 16px;
   border: 1px solid transparent;
   border-bottom: none;
   border-radius: var(--r-md) var(--r-md) 0 0;
@@ -1672,7 +1673,7 @@ th.on .sortmark {
 }
 
 .log > li {
-  padding: 10px 12px;
+  padding: var(--sp-2) 12px;
   border: 1px solid var(--line-soft);
   border-radius: var(--r-md);
   margin-bottom: 8px;
@@ -1706,13 +1707,13 @@ th.on .sortmark {
 }
 
 .reason {
-  margin: 5px 0 2px;
+  margin: var(--sp-1) 0 2px;
   font-size: 13.8px;
 }
 
 .lf {
   display: flex;
-  gap: 10px;
+  gap: var(--sp-2);
   font-size: var(--fs-sm);
   color: var(--dim);
 }
@@ -1749,22 +1750,22 @@ th.on .sortmark {
 .check {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   font-size: var(--fs-md);
   color: #475569;
 }
 /* 登录管理 */
 .lgrow {
   display: flex;
-  gap: 14px;
+  gap: var(--sp-3);
   flex-wrap: wrap;
-  margin: 6px 0 8px;
+  margin: var(--sp-2) 0 8px;
 }
 .lgopt {
   display: flex;
   gap: 8px;
   align-items: flex-start;
-  padding: 10px 12px;
+  padding: var(--sp-2) 12px;
   border: 1px solid var(--line-soft);
   border-radius: var(--r-lg);
   cursor: pointer;
@@ -1787,7 +1788,7 @@ th.on .sortmark {
 .lgtbl th,
 .lgtbl td {
   text-align: left;
-  padding: 6px 8px;
+  padding: var(--sp-2) 8px;
   border-bottom: 1px solid var(--line-soft);
 }
 .lgtbl th {
@@ -1812,7 +1813,7 @@ th.on .sortmark {
   display: flex;
   gap: 8px;
   align-items: flex-start;
-  margin: 10px 0 6px;
+  margin: var(--sp-2) 0 var(--sp-2);
   cursor: pointer;
 }
 .chkrow span {
@@ -1826,7 +1827,7 @@ th.on .sortmark {
 .lgbases {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--sp-2);
   margin: 8px 0 4px;
 }
 .lgbase {
@@ -1874,8 +1875,8 @@ th.on .sortmark {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
-  margin-top: 10px;
-  padding-top: 10px;
+  margin: var(--sp-2);
+  padding: var(--sp-2);
   border-top: 1px solid var(--line-soft);
 }
 </style>

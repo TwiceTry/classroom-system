@@ -190,7 +190,7 @@ async function open(id, opts) {
   bottom: 26px;
   transform: translateX(-50%);
   z-index: 80;
-  padding: 9px 18px;
+  padding: var(--sp-2) var(--sp-4);
   border-radius: var(--r-md);
   background: rgba(17, 24, 39, 0.9);
   color: #fff;

@@ -59,7 +59,7 @@ watch(
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: var(--sp-2);
   color: #475569;
 }
 .boot-dot {

@@ -52,7 +52,7 @@ function reset() {
 .eb {
   margin: 24px auto;
   max-width: 760px;
-  padding: 20px 22px;
+  padding: var(--sp-4) var(--sp-5);
 }
 
 .eb h3 {
@@ -61,15 +61,15 @@ function reset() {
 }
 
 .eb .dim {
-  margin: 0 0 10px;
+  margin: 0 0 var(--sp-2);
   font-size: var(--fs-md);
   line-height: 1.8;
   color: #4b5563;
 }
 
 .msg {
-  margin: 0 0 14px;
-  padding: 10px 12px;
+  margin: 0 0 var(--sp-3);
+  padding: var(--sp-2) 12px;
   background: #fef2f2;
   border: 1px solid #fecaca;
   border-radius: var(--r-md);

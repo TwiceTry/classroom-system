@@ -944,7 +944,7 @@ async function runPreview() {
 .course-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
   margin-bottom: 12px;
 }
@@ -1005,13 +1005,13 @@ async function runPreview() {
   border-left: 3px solid #2f7d92;
   border-radius: var(--r-md);
   background: #f8fbfd;
-  padding: 8px 10px;
-  margin-top: 10px;
+  padding: 8px var(--sp-2);
+  margin: var(--sp-2);
 }
 
 .sio-row {
   display: flex;
-  gap: 10px;
+  gap: var(--sp-2);
   align-items: baseline;
   padding: 2px 0;
 }
@@ -1025,7 +1025,7 @@ async function runPreview() {
 .sio-list {
   margin-top: 8px;
   border-top: 1px dashed var(--line);
-  padding-top: 6px;
+  padding: var(--sp-2);
 }
 
 .sio-item {
@@ -1037,7 +1037,7 @@ async function runPreview() {
 }
 
 .hint-tip {
-  margin-left: 6px;
+  margin: var(--sp-2);
   color: #1d4ed8;
   font-style: normal;
 }
@@ -1057,8 +1057,8 @@ async function runPreview() {
 
 .hint-vars code {
   display: inline-block;
-  margin-right: 6px;
-  padding: 1px 5px;
+  margin: var(--sp-2);
+  padding: 1px var(--sp-1);
   background: #eef2ff;
   border: 1px solid #dbe2f5;
   border-radius: var(--r-sm);
@@ -1079,7 +1079,7 @@ async function runPreview() {
   background: #eef4ff;
   border: 1px solid #cddffb;
   border-radius: var(--r-sm);
-  padding: 2px 7px;
+  padding: 2px var(--sp-2);
   vertical-align: middle;
 }
 
@@ -1098,7 +1098,7 @@ async function runPreview() {
 
 .list,
 .detail {
-  padding: 12px 14px;
+  padding: 12px var(--sp-3);
 }
 
 .items {
@@ -1111,7 +1111,7 @@ async function runPreview() {
 }
 
 .items li {
-  padding: 7px 9px;
+  padding: var(--sp-2) var(--sp-2);
   border: 1px solid var(--line-soft);
   border-radius: var(--r-md);
   cursor: pointer;
@@ -1130,7 +1130,7 @@ async function runPreview() {
 .itop {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 
 .itop b {
@@ -1149,7 +1149,7 @@ async function runPreview() {
   border: 1px solid var(--line);
   background: var(--card);
   border-radius: var(--r-sm);
-  padding: 0 5px;
+  padding: 0 var(--sp-1);
   font-size: var(--fs-sm);
   line-height: 18px;
   color: #4a525a;
@@ -1183,30 +1183,30 @@ async function runPreview() {
 .globals {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--sp-2);
   margin-top: 12px;
-  padding-top: 10px;
+  padding: var(--sp-2);
   border-top: 1px solid var(--line-soft);
 }
 
 .grid2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: var(--sp-2);
 }
 
 .detail h4 {
   margin: 16px 0 8px;
   font-size: var(--fs-md);
   color: #374151;
-  padding-top: 10px;
+  padding: var(--sp-2);
   border-top: 1px dashed var(--line-soft);
 }
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--sp-1);
 }
 
 .field > span {
@@ -1217,14 +1217,14 @@ async function runPreview() {
 .field.inline {
   flex-direction: row;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 
 .params {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-top: 10px;
+  gap: var(--sp-2);
+  margin: var(--sp-2);
 }
 
 .subfields {
@@ -1237,31 +1237,31 @@ async function runPreview() {
 .tbl {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--sp-1);
 }
 
 .trow {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 
 .rulehint {
-  margin: 18px 0 0;
+  margin: var(--sp-4) 0 0;
   line-height: 1.6;
 }
 
 .check {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   font-size: var(--fs-md);
   color: #475569;
-  margin-top: 10px;
+  margin: var(--sp-2);
 }
 
 .adv {
-  margin-top: 14px;
+  margin: var(--sp-3);
 }
 
 .adv summary {
@@ -1271,7 +1271,7 @@ async function runPreview() {
 }
 
 .adv textarea {
-  margin-top: 6px;
+  margin: var(--sp-2);
   font-family: Consolas, monospace;
   font-size: var(--fs-sm);
 }
@@ -1283,7 +1283,7 @@ async function runPreview() {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-2);
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -1295,7 +1295,7 @@ async function runPreview() {
   align-items: baseline;
   gap: 8px;
   font-size: var(--fs-sm);
-  padding: 5px 0;
+  padding: var(--sp-1) 0;
   border-top: 1px solid var(--line-soft);
 }
 
@@ -1312,14 +1312,14 @@ async function runPreview() {
   color: #7a5a20;
   background: #fbf7ef;
   border-radius: var(--r-sm);
-  padding: 0 5px;
+  padding: 0 var(--sp-1);
 }
 
 .cmp {
   display: flex;
   align-items: center;
-  gap: 18px;
-  padding: 14px 4px;
+  gap: var(--sp-4);
+  padding: var(--sp-3) 4px;
 }
 
 .cmpcol {
@@ -1345,7 +1345,7 @@ async function runPreview() {
 .row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-2);
 }
 
 .spacer {
@@ -1374,6 +1374,6 @@ async function runPreview() {
 
 .hint ul {
   margin: 4px 0 0;
-  padding-left: 18px;
+  padding: var(--sp-4);
 }
 </style>

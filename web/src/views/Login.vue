@@ -209,7 +209,7 @@ async function loginTeacher() {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 32px 20px;
+  padding: 32px var(--sp-4);
   background: var(--bg);
 }
 
@@ -219,7 +219,7 @@ async function loginTeacher() {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 6px;
-  padding: 26px 26px 18px;
+  padding: var(--sp-5) var(--sp-5) var(--sp-4);
 }
 
 .head h1 {
@@ -238,12 +238,12 @@ async function loginTeacher() {
 .tabs {
   display: flex;
   gap: 0;
-  margin: 20px 0 16px;
+  margin: var(--sp-4) 0 16px;
   border-bottom: 1px solid var(--line);
 }
 
 .tabs button {
-  padding: 7px 14px 8px;
+  padding: var(--sp-2) var(--sp-3) 8px;
   border: none;
   border-bottom: 2px solid transparent;
   background: none;
@@ -286,8 +286,8 @@ async function loginTeacher() {
 }
 
 .foot {
-  margin-top: 18px;
-  padding-top: 10px;
+  margin: var(--sp-4);
+  padding: var(--sp-2);
   border-top: 1px solid var(--line-soft);
   font-size: var(--fs-xs);
   color: #a8afb6;

@@ -282,16 +282,16 @@ async function submit() {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  margin-bottom: 14px;
+  margin: var(--sp-3);
 }
 
 .check {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--sp-2);
   font-size: var(--fs-md);
   color: #475569;
-  margin-bottom: 6px;
+  margin: var(--sp-2);
 }
 
 .calc {
@@ -316,7 +316,7 @@ async function submit() {
 
 .req {
   font-style: normal;
-  padding: 0 6px;
+  padding: 0 var(--sp-2);
   border-radius: var(--r-md);
   background: #fee2e2;
   color: var(--err);
@@ -324,8 +324,8 @@ async function submit() {
 }
 
 .evi {
-  margin-top: 14px;
-  padding: 11px 12px;
+  margin: var(--sp-3);
+  padding: var(--sp-3) 12px;
   border: 1px dashed #cbd5e1;
   border-radius: var(--r-md);
   background: #fbfcff;
@@ -337,13 +337,13 @@ async function submit() {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--sp-1);
   font-size: var(--fs-md);
 }
 
 .files li {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-2);
 }
 </style>

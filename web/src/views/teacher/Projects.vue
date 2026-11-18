@@ -857,7 +857,7 @@ function grab(s, name) {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--sp-2);
   margin: 2px 0 8px;
   font-size: var(--fs-sm);
   color: #40505f;
@@ -886,11 +886,11 @@ function grab(s, name) {
 .lib-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: var(--sp-2);
+  padding: 8px var(--sp-2);
   border: 1px solid var(--line);
   border-radius: 6px;
-  margin-bottom: 6px;
+  margin: var(--sp-2);
   background: var(--card);
 }
 
@@ -929,11 +929,11 @@ function grab(s, name) {
 .hwpill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 
 .hwpill .cnt {
-  padding: 0 5px;
+  padding: 0 var(--sp-1);
   border-radius: var(--r-lg);
   background: #eef1f3;
   color: #5a6570;
@@ -959,8 +959,8 @@ function grab(s, name) {
 .ctrl {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 12px 14px;
+  gap: var(--sp-3);
+  padding: 12px var(--sp-3);
   margin-bottom: 12px;
 }
 
@@ -994,12 +994,12 @@ function grab(s, name) {
 .stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 10px;
+  gap: var(--sp-2);
   margin-bottom: 12px;
 }
 
 .st {
-  padding: 10px 12px;
+  padding: var(--sp-2) 12px;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--card);
@@ -1041,8 +1041,8 @@ function grab(s, name) {
 .miss {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 10px 12px;
+  gap: var(--sp-2);
+  padding: var(--sp-2) 12px;
 }
 
 .missi {
@@ -1056,7 +1056,7 @@ function grab(s, name) {
 
 .missi em {
   font-style: normal;
-  margin-left: 5px;
+  margin: var(--sp-1);
   color: #a08a5e;
   font-size: var(--fs-xs);
 }
@@ -1082,7 +1082,7 @@ function grab(s, name) {
 }
 
 .who h4:first-of-type {
-  margin-top: 6px;
+  margin: var(--sp-2);
 }
 
 .note {
@@ -1102,16 +1102,16 @@ function grab(s, name) {
 .gradebox {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-2);
   min-width: 0;
   border-left: 1px solid var(--line-soft);
-  padding-left: 14px;
+  padding: var(--sp-3);
 }
 
 .dims {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 
 .drow {

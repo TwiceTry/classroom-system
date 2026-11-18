@@ -119,7 +119,7 @@
           <div class="scorebar">
             <span>客观题 <b>{{ detail.graded ? detail.graded.autoScore : '—' }}</b></span>
             <span>主观题
-              <input v-for="q in subjective" :key="q.id" v-model="manual[q.id]" class="input" type="number" min="0" :max="q.score" :title="q.id" style="width: 58px; margin-left: 6px" />
+              <input v-for="q in subjective" :key="q.id" v-model="manual[q.id]" class="input" type="number" min="0" :max="q.score" :title="q.id" style="width: 58px; margin: var(--sp-2)" />
             </span>
             <span>总分 <b class="total">{{ totalPreview }}</b> / {{ detail.paper.fullScore }}</span>
             <span class="spacer"></span>
@@ -446,7 +446,7 @@ async function saveGrade() {
 .hwpill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 
 .led {
@@ -468,8 +468,8 @@ async function saveGrade() {
 .ctrl {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 12px 14px;
+  gap: var(--sp-3);
+  padding: 12px var(--sp-3);
   margin-bottom: 12px;
 }
 
@@ -492,7 +492,7 @@ async function saveGrade() {
 .scorebar {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: var(--sp-3);
   flex-wrap: wrap;
   padding: 8px 0 12px;
   border-bottom: 1px solid var(--line-soft);
@@ -509,11 +509,11 @@ async function saveGrade() {
 }
 
 .sec {
-  margin-top: 14px;
+  margin: var(--sp-3);
 }
 
 .sec h4 {
-  margin: 0 0 6px;
+  margin: 0 0 var(--sp-2);
   font-size: var(--fs-md);
   color: #374151;
 }
@@ -535,7 +535,7 @@ async function saveGrade() {
 
 .opts {
   margin: 0 0 4px;
-  padding-left: 18px;
+  padding: var(--sp-4);
   font-size: var(--fs-sm);
   color: #475569;
 }

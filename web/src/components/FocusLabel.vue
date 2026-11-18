@@ -38,12 +38,12 @@ const hint = computed(() => {
 .focus-label {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--sp-1);
   /* 固定尺寸：位置稳定比内容自适应重要 */
   width: 104px;
   height: 22px;
   padding: 0 8px;
-  margin-left: 10px;
+  margin: var(--sp-2);
   border-radius: 11px;
   font-size: var(--fs-xs);
   font-weight: 600;

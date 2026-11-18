@@ -1017,7 +1017,7 @@ async function clearGrade() {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--sp-2);
   margin: 2px 0 8px;
   font-size: var(--fs-sm);
   color: #40505f;
@@ -1047,11 +1047,11 @@ async function clearGrade() {
 .lib-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: var(--sp-2);
+  padding: 8px var(--sp-2);
   border: 1px solid var(--line);
   border-radius: 6px;
-  margin-bottom: 6px;
+  margin: var(--sp-2);
   background: var(--card);
 }
 
@@ -1084,7 +1084,7 @@ async function clearGrade() {
 }
 
 .wtip {
-  margin-left: 6px;
+  margin: var(--sp-2);
   color: #1d4ed8;
   font-style: normal;
 }
@@ -1100,11 +1100,11 @@ async function clearGrade() {
 .hwpill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 
 .hwpill .cnt {
-  padding: 0 5px;
+  padding: 0 var(--sp-1);
   border-radius: var(--r-lg);
   background: #eef1f3;
   color: #5a6570;
@@ -1130,8 +1130,8 @@ async function clearGrade() {
 .ctrl {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 12px 14px;
+  gap: var(--sp-3);
+  padding: 12px var(--sp-3);
   margin-bottom: 12px;
 }
 
@@ -1164,12 +1164,12 @@ async function clearGrade() {
 .stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 10px;
+  gap: var(--sp-2);
   margin-bottom: 12px;
 }
 
 .st {
-  padding: 10px 12px;
+  padding: var(--sp-2) 12px;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--card);
@@ -1211,8 +1211,8 @@ async function clearGrade() {
 .miss {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 10px 12px;
+  gap: var(--sp-2);
+  padding: var(--sp-2) 12px;
 }
 
 .missi {
@@ -1226,7 +1226,7 @@ async function clearGrade() {
 
 .missi em {
   font-style: normal;
-  margin-left: 5px;
+  margin: var(--sp-1);
   color: #a08a5e;
   font-size: var(--fs-xs);
 }
@@ -1242,7 +1242,7 @@ async function clearGrade() {
   display: grid;
   grid-template-columns: minmax(0, 1.3fr) minmax(360px, 1fr);
   grid-template-rows: minmax(0, 1fr) auto;
-  gap: 10px;
+  gap: var(--sp-2);
   height: min(68vh, 660px);
   overflow: hidden;
 }
@@ -1272,7 +1272,7 @@ async function clearGrade() {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
+  padding: var(--sp-2) 8px;
   border-bottom: 1px solid var(--line-soft);
   background: #fbfcff;
 }
@@ -1293,7 +1293,7 @@ async function clearGrade() {
 
 .npmnote {
   flex: 1;
-  padding: 16px 14px;
+  padding: 16px var(--sp-3);
   font-size: var(--fs-sm);
   line-height: 1.75;
   color: #92400e;
@@ -1303,7 +1303,7 @@ async function clearGrade() {
 
 .rev-note {
   margin: 0;
-  padding: 5px 8px;
+  padding: var(--sp-1) 8px;
   border-top: 1px solid var(--line-soft);
   background: #fbfcff;
 }
@@ -1312,7 +1312,7 @@ async function clearGrade() {
   border-top: 1px solid #fecaca;
   background: #fef2f2;
   color: #b91c1c;
-  padding: 6px 28px 6px 8px;
+  padding: var(--sp-2) var(--sp-5) var(--sp-2) 8px;
   font: 11.5px/1.55 Consolas, monospace;
   white-space: pre-wrap;
   max-height: 92px;
@@ -1321,7 +1321,7 @@ async function clearGrade() {
 }
 
 .perr b {
-  margin-right: 5px;
+  margin: var(--sp-1);
 }
 
 .perr-x {
@@ -1345,7 +1345,7 @@ async function clearGrade() {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--sp-2);
 }
 
 /* 等级 + 迟交占一整行，评语和按钮在下一行 */
@@ -1353,7 +1353,7 @@ async function clearGrade() {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--sp-2);
   width: 100%;
   padding-bottom: 2px;
   border-bottom: 1px dashed var(--line-soft);
@@ -1363,7 +1363,7 @@ async function clearGrade() {
 .field.inline {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   font-size: var(--fs-sm);
   color: #4a525a;
 }

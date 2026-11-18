@@ -447,9 +447,9 @@ function onLogin() {
 .vis-notice {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 0 0 10px;
-  padding: 7px 12px;
+  gap: var(--sp-2);
+  margin: 0 0 var(--sp-2);
+  padding: var(--sp-2) 12px;
   border-radius: var(--r-md);
   background: #eef4fb;
   border: 1px solid #d3e3f3;
@@ -489,8 +489,8 @@ function onLogin() {
  * 常常要 12 个字，差几个像素就变成「Web 前端框…」 */
 .side .brand {
   padding-left: 12px;
-  padding-right: 10px;
-  gap: 7px;
+  padding: var(--sp-2);
+  gap: var(--sp-2);
 }
 
 .who h1 {
@@ -516,10 +516,10 @@ function onLogin() {
   z-index: 80;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-2);
   width: max-content; /* 否则 left:50% 会把可用宽度压到半屏，文案被提前省略 */
   max-width: min(920px, calc(100vw - 28px));
-  padding: 9px 12px 9px 14px;
+  padding: var(--sp-2) 12px var(--sp-2) var(--sp-3);
   border-radius: var(--r-md);
   background: #23272c;
   color: #f8fafc;
@@ -554,7 +554,7 @@ function onLogin() {
   flex: 0 0 auto;
   border: 0;
   border-radius: var(--r-md);
-  padding: 5px 11px;
+  padding: var(--sp-1) var(--sp-3);
   background: #d9a03c;
   color: #23272c;
   font-size: var(--fs-sm);
@@ -569,7 +569,7 @@ function onLogin() {
 .skip {
   flex: 0 0 auto;
   border: 0;
-  padding: 6px 4px;
+  padding: var(--sp-2) 4px;
   background: transparent;
   color: #94a3b8;
   font-size: var(--fs-sm);
@@ -612,7 +612,7 @@ function onLogin() {
 .live {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   margin: 8px 0 0;
   font-size: var(--fs-sm);
   color: #6ee7b7;

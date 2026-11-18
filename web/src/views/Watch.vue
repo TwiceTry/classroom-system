@@ -609,7 +609,7 @@ canvas {
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 4px 6px;
+  padding: 4px var(--sp-2);
   border-radius: var(--r-md);
   background: rgba(0, 0, 0, 0.62);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
@@ -623,7 +623,7 @@ canvas {
 
 .hud button {
   border: 0;
-  padding: 7px 9px;
+  padding: var(--sp-2) var(--sp-2);
   border-radius: var(--r-md);
   background: transparent;
   color: #e5e7eb;
@@ -666,7 +666,7 @@ canvas {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: var(--sp-3);
   background: #111;
   color: #d8d8d8;
   text-align: center;
@@ -690,7 +690,7 @@ canvas {
   z-index: 30;
   right: 10px;
   top: 10px;
-  padding: 8px 10px;
+  padding: 8px var(--sp-2);
   border-radius: 6px;
   background: rgba(0, 0, 0, 0.55);
   color: #9fe1cb;

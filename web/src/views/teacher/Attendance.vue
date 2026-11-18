@@ -821,8 +821,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
-  padding: 6px 0 18px;
+  gap: var(--sp-2);
+  padding: var(--sp-2) 0 var(--sp-4);
 }
 
 .who .wname {
@@ -850,7 +850,7 @@ onUnmounted(() => {
 
 .drawbtns .kbtn {
   min-width: 88px;
-  padding: 9px 10px;
+  padding: var(--sp-2) var(--sp-2);
   font-size: var(--fs-md);
   text-align: center;
 }
@@ -864,7 +864,7 @@ onUnmounted(() => {
 }
 
 .drawfoot {
-  margin-top: 18px;
+  margin: var(--sp-4);
   padding-top: 12px;
   border-top: 1px solid var(--line);
 }
@@ -872,31 +872,31 @@ onUnmounted(() => {
 .drawfoot .df-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
 }
 
 .drawfoot .df-row + .df-row {
-  margin-top: 10px;
+  margin: var(--sp-2);
 }
 
 /* 两行：第一行选数据（班级/日期/节次），第二行看结果（各状态计数） */
 .bar {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: var(--sp-2);
+  margin: var(--sp-2);
 }
 
 .bar-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
 }
 
 .stats-row {
-  padding-top: 10px;
+  padding: var(--sp-2);
   border-top: 1px dashed #eef1f4;
 }
 
@@ -904,7 +904,7 @@ onUnmounted(() => {
 
 .classes {
   display: flex;
-  gap: 6px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
   flex: 1;
   min-width: 200px;
@@ -920,7 +920,7 @@ onUnmounted(() => {
 .field.inline {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   margin: 0;
 }
 
@@ -938,7 +938,7 @@ onUnmounted(() => {
 }
 
 .segbtn {
-  padding: 3px 10px;
+  padding: 3px var(--sp-2);
   font-size: var(--fs-sm);
   background: var(--card);
   border: none;
@@ -956,7 +956,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
-  margin-bottom: 10px;
+  margin: var(--sp-2);
   font-size: var(--fs-md);
 }
 
@@ -1007,7 +1007,7 @@ onUnmounted(() => {
 
 .slotchips {
   display: flex;
-  gap: 6px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
 }
 
@@ -1065,7 +1065,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 0;
+  padding: var(--sp-1) 0;
   font-size: var(--fs-sm);
   border-bottom: 1px solid var(--line-soft);
 }
@@ -1082,7 +1082,7 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: flex-start;
   gap: 1px;
-  padding: 8px 10px;
+  padding: 8px var(--sp-2);
   border: 1px solid #d8dee6;
   border-left-width: 4px;
   border-radius: var(--r-sm);
@@ -1178,11 +1178,11 @@ tr.st-早退 {
   display: flex;
   gap: 4px;
   flex-wrap: wrap;
-  padding: 6px 8px;
+  padding: var(--sp-2) 8px;
 }
 
 .kbtn {
-  padding: 2px 9px;
+  padding: 2px var(--sp-2);
   border: 1px solid #d8dee6;
   border-radius: var(--r-md);
   background: var(--card);

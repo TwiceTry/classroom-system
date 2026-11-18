@@ -218,8 +218,8 @@ function close() {
 .rcm-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 14px 18px;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
   border-bottom: 1px solid #eef1f4;
 }
 .rcm-head h3 {
@@ -246,17 +246,17 @@ function close() {
 
 /* ── 人 + 动作 ───────────────────────────────── */
 .rcm-body {
-  padding: 16px 18px 14px;
+  padding: 16px var(--sp-4) var(--sp-3);
   min-height: 148px;
 }
 .rcm-empty {
-  margin: 34px 0;
+  margin: var(--sp-6) 0;
   text-align: center;
   color: #8a94a6;
   font-size: var(--fs-md);
 }
 .rcm-person {
-  margin-bottom: 14px;
+  margin: var(--sp-3);
 }
 .rcm-name {
   display: block;
@@ -269,7 +269,7 @@ function close() {
 .rcm-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   margin-top: 4px;
   font-size: var(--fs-sm);
   color: #8a94a6;
@@ -283,7 +283,7 @@ function close() {
 .rcm-tag {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--sp-1);
 }
 .rcm-tag i {
   width: 6px;
@@ -320,16 +320,16 @@ function close() {
 .rcm-statsbar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
-  padding: 10px 18px;
+  padding: var(--sp-2) var(--sp-4);
   background: #fafbfc;
   border-top: 1px solid #eef1f4;
 }
 .rcm-stats {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: var(--sp-3);
   font-size: var(--fs-sm);
   color: #7b8794;
 }
@@ -350,9 +350,9 @@ function close() {
 .rcm-lock {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--sp-1);
   height: 30px;
-  padding: 0 10px;
+  padding: 0 var(--sp-2);
   border: 1px solid transparent;
   border-radius: 6px;
   font-size: var(--fs-sm);
@@ -372,7 +372,7 @@ function close() {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 18px 16px;
+  padding: 12px var(--sp-4) 16px;
 }
 .rcm-gap {
   flex: 1;

@@ -55,7 +55,7 @@
         </section>
       </div>
 
-      <p class="dim" style="text-align:center;margin-top:6px">
+      <p class="dim" style="text-align:center;margin: var(--sp-2)">
         计分规则：考勤 10 + 课堂互动 10 + 课堂作业 20 + 期末机试 30 + 期末大作业 30，加分计入总分但不超过 100。
       </p>
     </template>
@@ -112,7 +112,7 @@ function fmt(iso) {
 .hero {
   display: flex;
   align-items: center;
-  gap: 26px;
+  gap: var(--sp-5);
   flex-wrap: wrap;
   border-left: 3px solid var(--brand);
   padding-left: 16px;
@@ -159,7 +159,7 @@ function fmt(iso) {
 
 .break {
   display: flex;
-  gap: 14px;
+  gap: var(--sp-3);
   align-items: center;
   font-size: var(--fs-md);
   color: var(--sub);
@@ -175,7 +175,7 @@ function fmt(iso) {
 .items {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 14px;
+  gap: var(--sp-3);
 }
 
 .item {
@@ -189,7 +189,7 @@ function fmt(iso) {
 .ihead {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: var(--sp-2);
 }
 
 .ihead h3 {
@@ -211,7 +211,7 @@ function fmt(iso) {
 
 .bar {
   height: 5px;
-  margin: 9px 0 8px;
+  margin: var(--sp-2) 0 8px;
   background: #ebebe7;
   overflow: hidden;
 }
@@ -223,7 +223,7 @@ function fmt(iso) {
 }
 
 .hint-text {
-  margin: 0 0 10px;
+  margin: 0 0 var(--sp-2);
   font-size: var(--fs-sm);
   color: var(--dim);
   line-height: 1.6;
@@ -232,14 +232,14 @@ function fmt(iso) {
 .events {
   list-style: none;
   margin: 0;
-  padding: 10px 0 0;
+  padding: var(--sp-2) 0 0;
   border-top: 1px solid var(--line-soft);
   max-height: 240px;
   overflow: auto;
 }
 
 .events li {
-  padding: 6px 0;
+  padding: var(--sp-2) 0;
   border-bottom: 1px dashed var(--line-soft);
   font-size: var(--fs-md);
 }

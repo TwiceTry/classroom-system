@@ -363,8 +363,8 @@ async function peek(s) {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 10px;
-  padding: 7px 11px;
+  margin: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: #f8fafc;
@@ -383,11 +383,11 @@ async function peek(s) {
 }
 
 .lock {
-  padding: 18px 20px;
+  padding: var(--sp-4) var(--sp-4);
 }
 
 .lock h3 {
-  margin: 0 0 6px;
+  margin: 0 0 var(--sp-2);
   font-size: var(--fs-lg);
 }
 
@@ -423,7 +423,7 @@ tr.pick {
 }
 
 .empty {
-  padding: 20px;
+  padding: var(--sp-4);
   text-align: center;
   color: var(--dim);
   font-size: var(--fs-md);

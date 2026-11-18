@@ -91,7 +91,7 @@ watch(
 .cv {
   display: grid;
   grid-template-columns: 200px minmax(0, 1fr);
-  gap: 10px;
+  gap: var(--sp-2);
   height: 100%;
   min-height: 0;
 }
@@ -107,9 +107,9 @@ watch(
 .cvitem {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   width: 100%;
-  padding: 6px 10px;
+  padding: var(--sp-2) var(--sp-2);
   border: none;
   background: none;
   text-align: left;

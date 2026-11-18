@@ -150,12 +150,12 @@ function dimSum(e) {
 .items {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
-  gap: 10px;
-  margin-bottom: 18px;
+  gap: var(--sp-2);
+  margin: var(--sp-4);
 }
 
 .item {
-  padding: 11px 13px;
+  padding: var(--sp-3) var(--sp-3);
   border: 1px solid var(--line-soft);
   border-radius: var(--r-md);
   background: #fbfcff;
@@ -190,7 +190,7 @@ function dimSum(e) {
 
 .bar {
   height: 6px;
-  margin: 9px 0 8px;
+  margin: var(--sp-2) 0 8px;
   border-radius: var(--r-md);
   background: #eaeefb;
   overflow: hidden;
@@ -215,7 +215,7 @@ function dimSum(e) {
 }
 
 .log-title {
-  margin: 0 0 10px;
+  margin: 0 0 var(--sp-2);
   font-size: var(--fs-lg);
   color: #475569;
 }
@@ -227,7 +227,7 @@ function dimSum(e) {
 }
 
 .list > li {
-  padding: 10px 12px;
+  padding: var(--sp-2) 12px;
   border: 1px solid var(--line-soft);
   border-radius: var(--r-md);
   margin-bottom: 8px;
@@ -288,14 +288,14 @@ function dimSum(e) {
 }
 
 .reason {
-  margin: 5px 0 2px;
+  margin: var(--sp-1) 0 2px;
   font-size: 13.8px;
 }
 
 .lf {
   margin: 0;
   display: flex;
-  gap: 10px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
   align-items: center;
 }

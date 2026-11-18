@@ -220,8 +220,8 @@ function shortPage(p) {
 .files-head {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 10px;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-2);
   border-bottom: 1px solid #e8eef2;
 }
 .eye {
@@ -237,13 +237,13 @@ function shortPage(p) {
 .treescroll {
   flex: 1;
   overflow: auto;
-  padding: 6px 4px;
+  padding: var(--sp-2) 4px;
 }
 .files-foot {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 6px 10px;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-2);
   border-top: 1px solid #e8eef2;
   font-size: var(--fs-sm);
   color: #5b7b86;
@@ -272,11 +272,11 @@ function shortPage(p) {
 .ghead {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--sp-1);
   width: 100%;
   border: 0;
   background: none;
-  padding: 4px 5px;
+  padding: 4px var(--sp-1);
   border-radius: var(--r-md);
   font-size: var(--fs-sm);
   color: #33505c;
@@ -307,11 +307,11 @@ function shortPage(p) {
 .item {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--sp-1);
   width: 100%;
   border: 0;
   background: none;
-  padding: 3px 5px 3px 22px;
+  padding: 3px var(--sp-1) 3px var(--sp-5);
   border-radius: var(--r-md);
   font-size: var(--fs-sm);
   color: #3d5763;
@@ -360,13 +360,13 @@ function shortPage(p) {
 .addrow {
   display: flex;
   gap: 4px;
-  padding: 6px 10px;
+  padding: var(--sp-2) var(--sp-2);
   border-bottom: 1px solid #e8eef2;
 }
 .addinput {
   flex: 1;
   min-width: 0;
-  padding: 4px 7px;
+  padding: 4px var(--sp-2);
   border: 1px solid #d5dbe2;
   border-radius: var(--r-sm);
   font-size: var(--fs-sm);
@@ -387,7 +387,7 @@ function shortPage(p) {
   border-color: #cfe6cf;
 }
 .adderr {
-  margin: 4px 10px 6px;
+  margin: 4px var(--sp-2) var(--sp-2);
   font-size: var(--fs-sm);
   line-height: 1.4;
   color: #c0392b;

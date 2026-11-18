@@ -501,14 +501,14 @@ onUnmounted(() => {
 .bar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
-  margin-bottom: 10px;
+  margin: var(--sp-2);
 }
 
 .classes {
   display: flex;
-  gap: 6px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
   flex: 1;
   min-width: 200px;
@@ -539,7 +539,7 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   height: 34px;
-  padding: 0 6px;
+  padding: 0 var(--sp-2);
   text-align: center;
 }
 .custom-act .kbtn {
@@ -620,8 +620,8 @@ onUnmounted(() => {
 .recent li {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 2px;
+  gap: var(--sp-2);
+  padding: var(--sp-1) 2px;
   border-bottom: 1px dashed #eef1f5;
   font-size: var(--fs-sm);
 }
@@ -651,9 +651,9 @@ onUnmounted(() => {
 .spotbar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-2);
   margin: 0 0 12px;
-  padding: 9px 14px;
+  padding: var(--sp-2) var(--sp-3);
   border: 1px solid #f0c9c4;
   border-left: 4px solid #c0392b;
   background: #fdf4f3;
@@ -684,7 +684,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--sp-2);
   padding: 4px 0 16px;
 }
 .spotwho .wname {
@@ -705,10 +705,10 @@ onUnmounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 0 0 18px;
+  padding: 0 0 var(--sp-4);
 }
 .kbtn {
-  padding: 9px 16px;
+  padding: var(--sp-2) 16px;
   border: 1px solid #cfe6cf;
   background: #f6fbf6;
   color: #2e7d32;
@@ -738,7 +738,7 @@ onUnmounted(() => {
 .df-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-2);
   margin-bottom: 8px;
 }
 .df-row:last-child {

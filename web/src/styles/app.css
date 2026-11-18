@@ -46,6 +46,41 @@
   --r-md: 6px; /* 按钮、输入框 */
   --r-lg: 10px; /* 弹窗（卡片仍用 --radius 6） */
 
+  /*
+   * 控件高度：2 档，全站唯一来源。
+   *
+   * 原来没有这个变量，高度是「发现不齐了打个补丁」补出来的：
+   *   页头 .right 里压成 28、.card.bar 里压成 26、其它地方的输入框干脆靠 padding 撑
+   *   → 实测同一个 .input 在三个页面是 26 / 28 / 33 三种高。
+   * 现在基础控件就有确定高度，上下文不用再覆盖。
+   *
+   * 28 是「工具栏 / 表格行」的高度：和 .btn.mini、输入框、下拉对齐；
+   * 32 给常规按钮（比工具栏控件大一点，主次靠这个差一档体现）。
+   */
+  --h-ctl: 28px;
+  --h-ctl-lg: 32px;
+
+  /*
+   * 间距：6 档，4px 基准（业界最常见的一档，Material / Ant Design / Tailwind 都是这个底）。
+   *
+   * 原来全站 padding / margin / gap 有 25 种取值（1 2 3 4 5 6 7 8 9 10 11 12 13 14 16 18 20 22 24 26 28 30 32 34 36），
+   * 且只有 39% 是 4 的倍数 —— 10px 出现 48 次是最多的，它不是 4 也不是 8 的倍数。
+   * 间距不成套的后果不是"难看"，是「每处都差一点，叠起来就毛糙」：
+   * 两个卡片上下间距 12 和 14 并排时，人眼说不出哪里不对，但会觉得不齐。
+   *
+   * 用法：
+   *   控件内边距、图标与文字   --sp-1 / --sp-2
+   *   卡片内边距、列表行间     --sp-3 / --sp-4
+   *   区块之间                --sp-5
+   *   页面级留白              --sp-6
+   */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+
   /* 背景：只表达层级，不表达风格 */
   --bg-sub: #f3f5f7; /* 表头、提示条、次级块 */
 
@@ -201,9 +236,9 @@ body,
 
 .side .brand {
   flex: 0 0 auto;
-  padding: 16px 16px 12px;
+  padding: var(--sp-4) var(--sp-4) var(--sp-3);
   display: flex;
-  gap: 9px;
+  gap: var(--sp-2);
   align-items: center;
   border-bottom: 1px solid var(--side-line);
 }
@@ -243,14 +278,14 @@ body,
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 10px 8px;
+  padding: var(--sp-2) var(--sp-2);
   display: flex;
   flex-direction: column;
   gap: 1px;
 }
 
 .side .nav .group {
-  padding: 12px 8px 4px;
+  padding: var(--sp-3) var(--sp-2) var(--sp-1);
   font-size: var(--fs-xs);
   letter-spacing: 0.6px;
   color: var(--side-dim);
@@ -259,8 +294,8 @@ body,
 .side .nav a {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-2);
   border-radius: var(--r-md);
   color: var(--side-ink);
   font-size: var(--fs-md);
@@ -333,8 +368,8 @@ body,
 /* 折叠态里的图标按钮（课程 / 班级 / 退出） */
 .side .minibtn {
   width: 100%;
-  margin: 0 0 6px;
-  padding: 8px 0;
+  margin: 0 0 var(--sp-2);
+  padding: var(--sp-2) 0;
   display: grid;
   place-items: center;
   border: 1px solid #414852;
@@ -356,9 +391,9 @@ body,
 }
 
 .side.collapsed .brand {
-  padding: 12px 0 10px;
+  padding: var(--sp-3) 0 var(--sp-2);
   flex-direction: column;
-  gap: 7px;
+  gap: var(--sp-2);
 }
 
 .side.collapsed .brand-txt {
@@ -366,14 +401,14 @@ body,
 }
 
 .side.collapsed .nav {
-  padding: 6px 6px;
+  padding: var(--sp-2) var(--sp-2);
 }
 
 /* 这个宽度写不下分组标题，改成一条细线当分隔 */
 .side.collapsed .nav .group {
   height: 1px;
   padding: 0;
-  margin: 9px 8px;
+  margin: var(--sp-2) var(--sp-2);
   background: var(--side-line);
   font-size: 0;
   overflow: hidden;
@@ -381,7 +416,7 @@ body,
 
 .side.collapsed .nav a {
   justify-content: center;
-  padding: 9px 0;
+  padding: var(--sp-2) 0;
   border-left-width: 0;
 }
 
@@ -396,7 +431,7 @@ body,
 }
 
 .side.collapsed .foot {
-  padding: 10px 6px 12px;
+  padding: var(--sp-2) var(--sp-2) var(--sp-3);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -405,18 +440,18 @@ body,
 .side.collapsed .cast {
   width: 100%;
   border-bottom: none;
-  padding-bottom: 8px;
-  margin-bottom: 8px;
+  padding: var(--sp-2);
+  margin: var(--sp-2);
 }
 
 .side.collapsed .cast .cast-btn {
-  padding: 9px 0;
+  padding: var(--sp-2) 0;
 }
 
 .side .foot {
   flex: 0 0 auto;
   margin-top: 0;
-  padding: 12px 14px 14px;
+  padding: var(--sp-3) var(--sp-3) var(--sp-3);
   border-top: 1px solid var(--side-line);
   font-size: var(--fs-sm);
   color: var(--side-dim);
@@ -431,9 +466,9 @@ body,
 }
 
 .side .foot button {
-  margin-top: 8px;
+  margin: var(--sp-2);
   width: 100%;
-  padding: 6px;
+  padding: var(--sp-2);
   border-radius: var(--r-md);
   border: 1px solid #414852;
   background: transparent;
@@ -459,9 +494,9 @@ body,
 .pagehead {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--sp-3);
   flex-wrap: wrap;
-  padding: 12px 20px;
+  padding: var(--sp-3) var(--sp-4);
   background: var(--card);
   border-bottom: 1px solid var(--line);
   position: sticky;
@@ -491,7 +526,7 @@ body,
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
-  gap: 2px 10px;
+  gap: 2px var(--sp-2);
   min-width: 0;
 }
 
@@ -519,7 +554,7 @@ body,
 .pagehead .right {
   margin-left: auto;
   display: flex;
-  gap: 8px;
+  gap: var(--sp-2);
   align-items: center;
   flex-wrap: wrap;
 }
@@ -530,16 +565,16 @@ body,
 .pagehead .head-tools {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding-right: 10px;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
   border-right: 1px solid #e2e8ed;
 }
 
 .pagehead .tool-fs {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding-right: 8px;
+  gap: var(--sp-1);
+  padding: var(--sp-2);
   margin-right: 2px;
   border-right: 1px solid #eef1f4;
 }
@@ -547,7 +582,7 @@ body,
 /* 图标按钮：和文字按钮同高，但窄一点，一排四个不至于把标题挤没 */
 .pagehead .tool-ico {
   min-width: 26px;
-  padding: 0 6px;
+  padding: 0 var(--sp-2);
   font-size: var(--fs-md);
   line-height: 1.6;
 }
@@ -555,7 +590,7 @@ body,
 .pagehead .head-page {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
 }
 
@@ -564,18 +599,17 @@ body,
    A−/A+ 是 .btn.mini（26px）、↻⛶↑ 是 .tool-ico（28px）、
    主操作是 .btn.primary（40px）—— 三种混在一行很难看。
    统一成 28px，主次靠颜色区分，不靠尺寸。 */
-.pagehead .right .btn,
-.pagehead .right .input,
-.pagehead .right select {
-  height: 28px;
-  padding-top: 0;
-  padding-bottom: 0;
-  line-height: 26px;
-  box-sizing: border-box;
-}
-/* 主按钮只换颜色，不加高 */
+/*
+ * 页头右侧是「一排控件」，这里只能有一个高度。
+ *
+ * 控件基础高度已经统一（.btn.mini / .input / .select 都是 --h-ctl），
+ * 所以这段只剩一件事：**把主按钮压回同高** ——
+ * .btn.primary 平时 32px（比工具栏控件大一档），但页头里必须和大家齐，
+ * 主次靠颜色区分，不靠尺寸。
+ */
 .pagehead .right .btn.primary {
-  min-height: 28px;
+  height: var(--h-ctl);
+  min-height: var(--h-ctl);
 }
 
 /* ── 页头里的「点名中」状态胶囊 ──────────────────────────────
@@ -589,9 +623,9 @@ body,
 .spot-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   height: 28px;
-  padding: 0 12px;
+  padding: 0 var(--sp-3);
   border: 1px solid #f2cbc2;
   border-radius: 6px;
   background: #fff5f2;
@@ -645,8 +679,8 @@ body,
   z-index: 40;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
   background: var(--card);
   border: 1px solid #e2e8ed;
   border-radius: var(--r-lg);
@@ -671,25 +705,26 @@ body,
 .card.bar,
 .card.hwbar,
 .card.classbar {
-  padding: 12px 16px;
+  padding: var(--sp-3) var(--sp-4);
 }
 
 /* ── 页面顶部那条班级栏（考勤 / 课堂互动 / 其他模块页共用 .card.bar）──
    里面混着班级 pill(26)、日期 input(36)、节次 select(36)、视图切换，
    高度差 10px 就明显不齐。统一到 26，和 pill 一样高。 */
-.card.bar .input,
-.card.bar .select,
-.card.bar .btn,
+/*
+ * 这条 bar 里混着班级 pill、日期、节次、视图切换。
+ * 原来这里把所有控件压成 26（为了和 pill 齐）——
+ * 现在基础高度就是 --h-ctl(28)，这一整段补丁就不需要了。
+ * 只留 .segbtn（不在基础控件里，没有默认高度）。
+ */
 .card.bar .segbtn {
-  height: 26px;
+  height: var(--h-ctl);
   padding-top: 0;
   padding-bottom: 0;
-  line-height: 24px;
   box-sizing: border-box;
 }
-/* 「网格 / 列表」这种分段按钮外面还套一层，容器也得跟着压 */
 .card.bar .seg {
-  height: 26px;
+  height: var(--h-ctl);
 }
 
 /* 页面外壳（components/PageShell.vue）：头部 + 内容区两段。
@@ -719,7 +754,7 @@ body,
  * 窄屏（<1600）时右边距会显得太空，所以统一收一点 padding。
  */
 .content {
-  padding: 16px 20px 0;
+  padding: var(--sp-4) var(--sp-4) 0;
   max-width: none;
   width: 100%;
   flex: 1;
@@ -785,8 +820,8 @@ body,
   background: var(--card);
   border: 1px solid var(--line-soft);
   border-radius: var(--radius);
-  padding: 14px 16px;
-  margin-bottom: 12px;
+  padding: var(--sp-3) var(--sp-4);
+  margin: var(--sp-3);
   box-shadow: 0 1px 2px rgba(20, 40, 60, 0.045);
 }
 
@@ -804,9 +839,9 @@ body,
 .card-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
-  margin-bottom: 10px;
+  margin: var(--sp-2);
 }
 
 .card-head h3 {
@@ -818,7 +853,7 @@ body,
 .card-head .right {
   margin-left: auto;
   display: flex;
-  gap: 8px;
+  gap: var(--sp-2);
   align-items: center;
   flex-wrap: wrap;
 }
@@ -838,13 +873,13 @@ body,
 
 .row {
   display: flex;
-  gap: 10px;
+  gap: var(--sp-2);
   align-items: center;
   flex-wrap: wrap;
 }
 
 .hint {
-  padding: 8px 10px;
+  padding: var(--sp-2) var(--sp-2);
   border-radius: var(--r-md);
   border-left: 3px solid #9fb3c2;
   background: var(--brand-wash);
@@ -866,7 +901,7 @@ body,
 }
 
 .empty {
-  padding: 32px 16px;
+  padding: var(--sp-6) var(--sp-4);
   text-align: center;
   color: var(--dim);
   font-size: var(--fs-md);
@@ -875,7 +910,16 @@ body,
 /* ---------------- 按钮 ---------------- */
 
 .btn {
-  padding: 7px 14px;
+  /*
+   * 高度定死、垂直 padding 归零 —— 靠 flex 居中而不是 padding 撑。
+   * 原来是 padding 7px 14px 撑出 35px，各页再各自压成 28/26，
+   * 于是同一个 .btn 在不同地方三种高。
+   */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--h-ctl-lg);
+  padding: 0 var(--sp-3);
   border: 1px solid transparent;
   /* 原来 4px，和卡片的 6px 不是一套；统一到 --r-md */
   border-radius: var(--r-md);
@@ -928,13 +972,15 @@ body,
 
 .btn.primary {
   background: var(--brand);
-  padding: 9px 24px;
+  padding: var(--sp-2) var(--sp-5);
   font-size: var(--fs-lg);
   font-weight: 600;
 }
 
+/* 紧凑按钮：和输入框、下拉同高（--h-ctl），这样一排控件并排是齐的 */
 .btn.mini {
-  padding: 3px 9px;
+  height: var(--h-ctl);
+  padding: 0 var(--sp-2);
   font-size: var(--fs-sm);
   border-radius: var(--r-md);
   background: var(--card);
@@ -963,7 +1009,7 @@ body,
 .field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--sp-1);
   font-size: var(--fs-md);
   color: var(--sub);
 }
@@ -971,7 +1017,14 @@ body,
 .input,
 .select,
 .textarea {
-  padding: 7px 10px;
+  /*
+   * 单行控件定高（--h-ctl），垂直 padding 归零靠 line-height 居中；
+   * textarea 是多行的，下面单独把 padding 加回来。
+   * 原来这里是 padding: var(--sp-2) var(--sp-2) —— 高度靠文字撑，字号一变高度就变，
+   * 而且各页还各自覆盖 height，于是同一个输入框出现了 26/28/33 三种。
+   */
+  height: var(--h-ctl);
+  padding: 0 var(--sp-2);
   /* 输入框的边比卡片深一档 —— 它要"看得见"，否则白底白框会消失 */
   border: 1px solid var(--line-strong);
   border-radius: var(--r-md);
@@ -989,7 +1042,10 @@ body,
   box-shadow: inset 0 0 0 1px rgba(44, 95, 132, 0.25);
 }
 
+/* 多行输入不定高：把上面给单行控件归零的 padding 加回来 */
 .textarea {
+  height: auto;
+  padding: var(--sp-2) var(--sp-2);
   resize: vertical;
   line-height: 1.6;
 }
@@ -1012,7 +1068,7 @@ table.grid {
 table.grid th,
 table.grid td {
   /* 7 → 9：60 行的表，行高太密时眼睛找不到横向的"轨道" */
-  padding: 9px 10px;
+  padding: var(--sp-2) var(--sp-2);
   text-align: left;
   border-bottom: 1px solid var(--line-soft);
   white-space: nowrap;
@@ -1034,6 +1090,14 @@ table.grid thead th {
   position: sticky;
   top: 0;
   z-index: 1;
+  /*
+   * 表头定高，不靠 padding 撑。
+   * 有的页表头带一行小字说明（hint）、有的不带，靠内容撑就会出现 37 / 41 两种高度 ——
+   * 同一套表格换个页面行高就变。垂直 padding 归零，靠 height + line-height 居中。
+   */
+  height: 36px;
+  padding-top: 0;
+  padding-bottom: 0;
   /* 表头是"次级块"，用 --bg-sub；原来 #f7f7f5 和卡片白、页面底各自一档，分不清层 */
   background: var(--bg-sub);
   font-size: var(--fs-sm);
@@ -1042,8 +1106,20 @@ table.grid thead th {
   border-bottom: 1px solid var(--line);
 }
 
+/*
+ * 表头里的补充说明（「考勤 10」里的 10、「在线 登录中」里的 登录中）。
+ *
+ * 原来 display: block —— 它把表头撑成两行，于是同一套表格：
+ *   有 hint 的页  表头 57px
+ *   没 hint 的页  表头 39px
+ * 两页并排看就是「行高不一样」。改成 inline 跟在标题后面，高度回到单行。
+ *
+ * 代价是 hint 不能太长（会撑宽列），所以列定义里只放「10」「登录中」这种短词，
+ * 一段话的说明别往这里塞。
+ */
 table.grid thead em {
-  display: block;
+  display: inline;
+  margin: var(--sp-1);
   font-style: normal;
   font-weight: 400;
   color: var(--dim);
@@ -1085,7 +1161,7 @@ td.num.bad {
 
 .tag {
   display: inline-block;
-  padding: 0 6px;
+  padding: 0 var(--sp-2);
   border-radius: var(--r-sm);
   border: 1px solid #ccd3d8;
   background: #f2f4f5;
@@ -1119,7 +1195,7 @@ td.num.bad {
 }
 
 .pill {
-  padding: 4px 11px;
+  padding: var(--sp-1) var(--sp-3);
   border-radius: var(--r-md);
   border: 1px solid var(--line);
   background: var(--card);
@@ -1169,8 +1245,8 @@ td.num.bad {
 .modal-foot {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 11px 16px;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
   background: #fbfbfa;
 }
 
@@ -1189,7 +1265,7 @@ td.num.bad {
 }
 
 .modal-body {
-  padding: 14px 16px;
+  padding: var(--sp-3) var(--sp-4);
   overflow: auto;
 }
 
@@ -1209,7 +1285,7 @@ td.num.bad {
   transform: translateX(-50%);
   z-index: 200;
   max-width: min(560px, calc(100vw - 32px));
-  padding: 10px 18px;
+  padding: var(--sp-2) var(--sp-4);
   border-radius: var(--r-md);
   background: #23272c;
   color: #f2f3f0;
@@ -1250,44 +1326,44 @@ td.num.bad {
 
 .md h1 {
   font-size: 24px;
-  margin: 8px 0 14px;
+  margin: var(--sp-2) 0 var(--sp-3);
   letter-spacing: 0.2px;
 }
 
 .md h2 {
   font-size: 19px;
-  margin: 30px 0 10px;
-  padding-left: 10px;
+  margin: var(--sp-6) 0 var(--sp-2);
+  padding: var(--sp-2);
   border-left: 3px solid #9fb3c2;
   line-height: 1.4;
 }
 
 .md h3 {
   font-size: 16.5px;
-  margin: 20px 0 8px;
+  margin: var(--sp-4) 0 var(--sp-2);
 }
 
 .md h4 {
   font-size: 15.5px;
-  margin: 16px 0 6px;
+  margin: var(--sp-4) 0 var(--sp-2);
   color: #333b43;
 }
 
 .md h5,
 .md h6 {
   font-size: var(--fs-lg);
-  margin: 14px 0 6px;
+  margin: var(--sp-3) 0 var(--sp-2);
   color: #4a525a;
 }
 
 .md p {
-  margin: 9px 0;
+  margin: var(--sp-2) 0;
 }
 
 .md ul,
 .md ol {
-  margin: 9px 0;
-  padding-left: 22px;
+  margin: var(--sp-2) 0;
+  padding: var(--sp-5);
 }
 
 .md li {
@@ -1310,12 +1386,12 @@ td.num.bad {
 .md hr {
   border: none;
   border-top: 1px solid var(--line);
-  margin: 26px 0;
+  margin: var(--sp-5) 0;
 }
 
 .md blockquote {
-  margin: 12px 0;
-  padding: 9px 14px;
+  margin: var(--sp-3) 0;
+  padding: var(--sp-2) var(--sp-3);
   border-left: 3px solid #ccd3d8;
   background: var(--bg-sub);
   color: #4a525a;
@@ -1332,15 +1408,15 @@ td.num.bad {
 .md code {
   font-family: Consolas, 'Cascadia Mono', Menlo, monospace;
   font-size: 0.9em;
-  padding: 1px 5px;
+  padding: 1px var(--sp-1);
   border-radius: var(--r-sm);
   background: var(--bg-sub);
   color: #8c3b32;
 }
 
 .md pre {
-  margin: 12px 0;
-  padding: 12px 14px;
+  margin: var(--sp-3) 0;
+  padding: var(--sp-3) var(--sp-3);
   border-radius: var(--r-md);
   background: #22262b;
   color: #dfe3e6;
@@ -1368,7 +1444,7 @@ td.num.bad {
 .md table {
   width: 100%;
   border-collapse: collapse;
-  margin: 12px 0;
+  margin: var(--sp-3) 0;
   font-size: var(--fs-md);
   background: var(--card);
   border: 1px solid var(--line);
@@ -1376,7 +1452,7 @@ td.num.bad {
 
 .md th,
 .md td {
-  padding: 7px 11px;
+  padding: var(--sp-2) var(--sp-3);
   border-bottom: 1px solid var(--line-soft);
   text-align: left;
   vertical-align: top;
@@ -1399,12 +1475,12 @@ td.num.bad {
 }
 
 .md .mermaid {
-  margin: 14px 0;
+  margin: var(--sp-3) 0;
   text-align: center;
   background: #fbfbf9;
   border: 1px dashed var(--line);
   border-radius: var(--r-md);
-  padding: 10px;
+  padding: var(--sp-2);
   overflow: auto;
 }
 
@@ -1446,7 +1522,7 @@ td.num.bad {
   --ws-left: 232px;
   --ws-right: 320px;
   display: grid;
-  gap: 14px;
+  gap: var(--sp-3);
   overflow: hidden;
   min-height: 0;
   align-items: stretch;
@@ -1537,18 +1613,24 @@ td.num.bad {
  * 中栏改成 overflow: hidden：如果让它自己滚，两个卡片就都撑成内容高度，
  * 内部滚动条不会出现，跟着跟着就整块滚走了。
  */
-.content.ws.side .ws-main {
+/*
+ * 注意类名：用 side-by-side 而不是 side。
+ * `.side` 已经是**侧栏**的类（width: 208px、background: var(--side-bg) 深灰）——
+ * 当初叫 `.content.ws.side` 的后果是整个内容区套上了侧栏的深灰底，
+ * 并排一开页面就"背景变黑"。
+ */
+.content.ws.side-by-side .ws-main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 12px;
+  gap: var(--sp-3);
   min-height: 0;
   overflow: hidden;
 }
-.content.ws.side .ws-main > .side-card {
+.content.ws.side-by-side .ws-main > .side-card {
   min-height: 0;
   overflow: auto;
   margin-bottom: 0;
-  padding-bottom: 32px;
+  padding: var(--sp-6);
 }
 
 /*
@@ -1581,7 +1663,7 @@ td.num.bad {
 .split {
   display: grid;
   grid-template-columns: 232px minmax(0, 1fr);
-  gap: 14px;
+  gap: var(--sp-3);
   align-items: stretch;
   min-height: 0;
   overflow: hidden;
@@ -1600,14 +1682,14 @@ td.num.bad {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 6px;
+  padding: var(--sp-2);
 }
 
 .lesson-list button {
   display: block;
   width: 100%;
   text-align: left;
-  padding: 7px 9px;
+  padding: var(--sp-2) var(--sp-2);
   border: none;
   border-radius: var(--r-sm);
   background: none;
@@ -1636,7 +1718,7 @@ td.num.bad {
 }
 
 .lesson-list .sep {
-  margin: 8px 9px 4px;
+  margin: var(--sp-2) var(--sp-2) var(--sp-1);
   font-size: var(--fs-xs);
   letter-spacing: 0.6px;
   color: #a3a9b0;
@@ -1654,12 +1736,12 @@ td.num.bad {
     position: static;
     flex-direction: row;
     align-items: center;
-    gap: 4px;
-    padding-right: 8px;
+    gap: var(--sp-1);
+    padding: var(--sp-2);
   }
 
   .side .brand {
-    padding: 10px 12px;
+    padding: var(--sp-2) var(--sp-3);
     border-bottom: none;
   }
 
@@ -1672,12 +1754,12 @@ td.num.bad {
   .side .nav {
     flex-direction: row;
     overflow: auto;
-    padding: 6px;
+    padding: var(--sp-2);
   }
 
   .side .nav a {
     white-space: nowrap;
-    padding: 6px 9px;
+    padding: var(--sp-2) var(--sp-2);
     border-left: none;
   }
 
@@ -1691,10 +1773,10 @@ td.num.bad {
   }
 
   .pagehead {
-    padding: 10px 14px;
+    padding: var(--sp-2) var(--sp-3);
   }
 
   .content {
-    padding: 12px 12px 36px;
+    padding: var(--sp-3) var(--sp-3) var(--sp-6);
   }
 }

@@ -802,8 +802,8 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, resetTo
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0 0 10px;
-  padding: 7px 10px;
+  margin: 0 0 var(--sp-2);
+  padding: var(--sp-2) var(--sp-2);
   border: 1px solid #2f7d92;
   border-left-width: 3px;
   border-radius: var(--r-md);
@@ -897,7 +897,7 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, resetTo
   flex-direction: column;
   /* 工作台是「越宽越好」的页面：不吃 .content 的 1520px 限宽，整屏铺满 */
   max-width: none;
-  padding-bottom: 14px;
+  padding: var(--sp-3);
 }
 
 
@@ -1266,7 +1266,7 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, resetTo
 .check {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   font-size: var(--fs-md);
   color: #475569;
   white-space: nowrap;
@@ -1277,7 +1277,7 @@ defineExpose({ editedFiles, allFiles, dirtyCount, bundle, run, resetAll, resetTo
 code {
   font-family: Consolas, monospace;
   background: #f1f4f9;
-  padding: 1px 5px;
+  padding: 1px var(--sp-1);
   border-radius: var(--r-sm);
   font-size: var(--fs-sm);
 }

@@ -90,14 +90,14 @@ const dimsTotal = computed(() => dimsTotalOf(props.item, v.dims))
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--sp-2);
   width: 100%;
 }
 
 .dims {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 
 .drow {
