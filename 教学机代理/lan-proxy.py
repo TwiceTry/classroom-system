@@ -2864,7 +2864,18 @@ class FollowHub(object):
                 time.sleep(0.5)
                 self.ensure_up(fresh)
             return
-        if kind in ('pgsync', 'spotlight', 'stuvis', 'follow', 'cast', 'spot'):
+        # 白名单透传：后端 broadcast 出来的这些类型，学生端要原样收到。
+        #
+        # ⚠ 新增广播类型时必须同步这里 —— 代理在局域网中间终结了 presence 通道，
+        #   不在名单里的消息会被**静默丢弃**（不报错、日志里也只有 got 计数不变），
+        #   症状是"服务端明明发了，学生端一点反应没有"。
+        #
+        # focus 是 2.2.x 加的「六态仲裁」总消息（{t:'focus', active, stopped}）：
+        # 学生端靠它更新页头的状态标签、并在被更高优先级挡住时收掉提示。
+        # 漏了这一条时，讲义/材料/作业页面的标签会一直停在初始值。
+        #
+        # exam 是考试开始/结束时的一条（{t:'exam', active}），发给学生端用于收屏幕。
+        if kind in ('pgsync', 'spotlight', 'stuvis', 'follow', 'cast', 'spot', 'focus', 'exam'):
             self.got += 1
             self._fan(msg)
 
