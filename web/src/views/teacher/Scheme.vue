@@ -164,7 +164,7 @@
           <span>简称（流水里显示）</span>
           <input v-model="cur.short" class="input" placeholder="留空 = 用名称" />
         </label>
-        <label class="field">
+        <label class="field field-sm">
           <span>满分</span>
           <input v-model.number="cur.full" class="input" type="number" min="0" step="0.5" />
         </label>
@@ -1189,10 +1189,37 @@ async function runPreview() {
   border-top: 1px solid var(--line-soft);
 }
 
+/*
+ * 两列字段网格。
+ *
+ * 间距分两档，这是「分组感」的来源（原来行列都是 8px，两组字段之间和组内一样宽，
+ * 眼睛看不出「名称/简称」和「满分/采集方式」是两件事）：
+ *   组内  行 12 / 列 16  —— 同一批字段互相贴近
+ *   组间  24            —— 换一组字段，明显断开
+ */
 .grid2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: var(--sp-2);
+  gap: var(--sp-3) var(--sp-4);
+}
+.grid2 + .grid2,
+.grid2 + h4,
+h4 + .grid2 {
+  margin-top: var(--sp-5);
+}
+
+/*
+ * 窄字段（数字、分值、日期）：输入框按内容收紧，不撑满整格。
+ * 「满分」是个两位数，占 400px 一整行的话，宽度就不携带任何信息了。
+ *
+ * 规则参数区（起始分、每次扣几分、几次归零）也一样 —— 那里全是数字，
+ * 原来每个都横跨一整行，一屏只能看到四五行，扫读很累。
+ */
+.field-sm .input,
+.field-sm .select,
+.params .pf .input,
+.params .pf .select {
+  max-width: var(--w-field-sm);
 }
 
 .detail h4 {

@@ -194,8 +194,16 @@
             <span class="spacer"></span>
             <span class="dim mini">{{ s.sid }}</span>
           </li>
-          <li v-if="!abnormalList.length" class="dim">
-            {{ students.length ? '全部出勤，没有异常。' : '还没有名单。' }}
+          <!--
+            空态不是「没数据」，是「这块是干什么的」—— 320px 的右栏只写一句
+            「全部出勤，没有异常」会显得像坏了。补一句它以后会在什么时候出现。
+          -->
+          <li v-if="!abnormalList.length" class="abn-empty">
+            <b>{{ students.length ? '这节没人迟到或缺勤' : '还没有名单' }}</b>
+            <span v-if="students.length">
+              点网格里的格子改成迟到 / 缺勤 / 请假，这里会立刻列出来，方便一眼看到谁没到。
+            </span>
+            <span v-else>先去「班级管理」导入名单，这里才有得看。</span>
           </li>
         </ul>
 
@@ -1056,10 +1064,29 @@ onUnmounted(() => {
 }
 .abn-tip {
   flex: none;
-  margin: 8px 0 0;
-  padding-top: 8px;
+  margin: var(--sp-2) 0 0;
+  padding-top: var(--sp-2);
   border-top: 1px dashed var(--line);
   line-height: 1.5;
+}
+
+/* 右栏空态：标题一句 + 说明一句，说清「这里什么时候会有东西」 */
+.abn-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-3) var(--sp-1);
+  line-height: 1.6;
+  border-bottom: none;
+}
+.abn-empty b {
+  font-weight: 600;
+  color: var(--ink);
+  font-size: var(--fs-md);
+}
+.abn-empty span {
+  font-size: var(--fs-sm);
+  color: var(--dim);
 }
 .abn li {
   display: flex;

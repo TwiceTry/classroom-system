@@ -370,7 +370,12 @@
               <a v-for="f in e.evidence || []" :key="f.url" :href="f.url" target="_blank" rel="noopener">{{ f.name }}</a>
             </div>
           </li>
-          <li v-if="!filteredEvents.length" class="empty">没有符合条件记录</li>
+          <!-- 空态说明「什么情况下会有」，不是干巴巴一句「没有记录」 -->
+          <li v-if="!filteredEvents.length" class="log-empty">
+            <b>{{ events.length ? '没有符合筛选条件的记录' : '这个班还没有记分记录' }}</b>
+            <span v-if="events.length">清掉上面的筛选试试，或者换个计分项。</span>
+            <span v-else>在左边的名单里点 +1 / +2 / −1 记分，这里会实时出现流水。</span>
+          </li>
         </ul>
       </section>
     </template>
@@ -1562,6 +1567,24 @@ th.on .sortmark {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* 右栏流水的空态：说清「为什么会空」和「怎么让它有内容」 */
+.log-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-3) var(--sp-1);
+  line-height: 1.6;
+}
+.log-empty b {
+  font-weight: 600;
+  color: var(--ink);
+  font-size: var(--fs-md);
+}
+.log-empty span {
+  font-size: var(--fs-sm);
+  color: var(--dim);
 }
 
 /* 卡片撑满右栏，列表吃掉剩余高度自己滚 —— 否则流水一多就把卡片撑破，一少底边又对不齐 */
