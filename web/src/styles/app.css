@@ -521,11 +521,27 @@ body,
   flex-direction: column;
 }
 
+/*
+ * 页头用 grid 而不是 flex。
+ *
+ * 两列：标题（吃剩余）+ 右侧控件组（宽度由内容定）。
+ * 为什么必须是 grid：flex 下右侧那组的左边界取决于它自己多宽，
+ * 各页按钮数量不同 → 整组左右横跳；而 grid 的「auto」列永远贴着右边界，
+ * 所以通用工具区的位置只由「窗口宽 - 它自己宽」决定，和是哪一页无关。
+ */
 .pagehead {
-  display: flex;
+  display: grid;
+  /*
+   * 第一列给一个下限（200px）。
+   *
+   * 原来是 minmax(0, 1fr)：右侧 auto 列可以一路吃过去，于是窄屏时
+   * 讲义页那种「专属区 725px（还带一个 280px 的跟随提示）」会把标题压成 0 ——
+   * 标题整个消失，只剩一排按钮。给个下限之后，右侧到 200px 就让无可让，
+   * 转而靠内部的 flex-wrap 换行。
+   */
+  grid-template-columns: minmax(200px, 1fr) auto;
   align-items: center;
   gap: var(--sp-3);
-  flex-wrap: wrap;
   padding: var(--sp-3) var(--sp-4);
   background: var(--card);
   border-bottom: 1px solid var(--line);
@@ -533,7 +549,7 @@ body,
   top: 0;
   z-index: 20;
   /* 给一个下限：副标题只有一句的页（课堂作业、大作业…）也不至于比别的页矮一截，
-     切页时顶部不会忽高忽低。76 = 标题 22 + 副标题一行 19 + 上下 padding 24 + 余量 */
+    切页时顶部不会忽高忽低。76 = 标题 22 + 副标题一行 19 + 上下 padding 24 + 余量 */
   min-height: 76px;
   box-sizing: border-box;
 }
@@ -581,40 +597,163 @@ body,
   overflow: hidden;
 }
 
+/* 右侧整组：专属区在左、通用工具在右，整体靠右 */
 .pagehead .right {
-  margin-left: auto;
   display: flex;
   gap: var(--sp-2);
   align-items: center;
-  flex-wrap: wrap;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
-/* ── 页头右半边：通用按钮区 + 页面专属区 ──────────────────────────
-   两区之间一条实线，字号和其它通用工具之间一条浅线：
-     纵深感上「整站设置」→「整站工具」→「本页操作」是三层，线也分两级。 */
+/*
+ * 页面专属区。
+ * 没有 #right 的页（我的分数、投屏设置）这里是个空 span —— **仍然占位**，
+ * 这样它右边那组通用工具的位置不会被"少了一块"推走。
+ */
+.pagehead .head-page {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+.pagehead .head-page:empty {
+  /* 空的也给一点点宽度，和右侧留出视觉间隔 */
+  margin-right: 0;
+}
+
+/* ── 通用工具区：四个槽位固定，宽度恒定 ─────────────────────────
+   恒定 = 字号组（A− 值 A+）+ 三个 28×28 图标。
+   为什么刻意不做「按需出现」：少了任何一个，整组就变窄、右边边界就跟着跳，
+   而这排东西的位置是"每页都在同一个地方"才有意义。 */
 .pagehead .head-tools {
   display: inline-flex;
   align-items: center;
-  gap: var(--sp-2);
-  padding: var(--sp-2);
-  border-right: 1px solid #e2e8ed;
+  gap: var(--sp-1);
+  padding-left: var(--sp-2);
+  border-left: 1px solid #e2e8ed;
+  flex: none;
 }
 
 .pagehead .tool-fs {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-1);
-  padding: var(--sp-2);
+  padding-right: var(--sp-2);
   margin-right: 2px;
   border-right: 1px solid #eef1f4;
+  flex: none;
 }
 
-/* 图标按钮：和文字按钮同高，但窄一点，一排四个不至于把标题挤没 */
+/* 字号值：定宽 + 等宽数字，从 15 跳到 16 时这一格不会变宽 */
+.pagehead .tool-fs .fs-val {
+  min-width: 20px;
+  text-align: center;
+  font-size: var(--fs-sm);
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 图标按钮：正方形 28×28，和 .btn.mini 同高、比文字按钮窄 */
 .pagehead .tool-ico {
-  min-width: 26px;
-  padding: 0 var(--sp-2);
-  font-size: var(--fs-md);
-  line-height: 1.6;
+  width: var(--h-ctl);
+  height: var(--h-ctl);
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.pagehead .tool-ico svg {
+  display: block;
+}
+
+/*
+ * 不能用时灰掉，但仍然占位。
+ * 刷新按钮在没注册 @reload 的页上就是这个状态 —— 看得见、点不动，
+ * 而不是"有的页有、有的页没有"。
+ */
+.pagehead .tool-ico:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.pagehead .tool-ico:disabled:hover {
+  background: var(--card);
+}
+
+/* ── 窄屏 ─────────────────────────────────────────────────────── */
+@media (max-width: 1240px) {
+  /*
+   * 窄屏改成**单列两行**：上面标题、下面控件。
+   *
+   * 原来是两列硬撑 —— 讲义页的专属区（切换 + 并排 + 导出导入 + 跟随提示）
+   * 加上通用工具一共 660px，900 宽的窗口扣掉侧栏只剩 660，
+   * 结果 .right 内部折成两行、整体高 100+，而标题按垂直居中排在了中间：
+   *
+   *      [按钮 一排]
+   *   讲义           ← 标题悬在中间
+   *               [图标 一排]
+   *
+   * 看着就是散的。改成单列之后是规整的两行：
+   *
+   *   讲义
+   *   [按钮…]              [图标…]
+   */
+  .pagehead {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: var(--sp-1);
+    align-items: start;
+  }
+  /*
+   * 标题区改成竖排、左对齐。
+   * 原来它是「标题 + 副标题」横排、副标题 flex:1 顶着 —— 窄屏下副标题会被推到
+   * 最右边，正好和下面那排按钮挨在一起，看着像按钮的一部分。
+   */
+  .pagehead .head-txt {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+  .pagehead .head-txt .sub {
+    flex: none;
+    width: 100%;
+  }
+  /*
+   * 右组不折行 —— 让「专属区」自己 wrap，通用工具始终贴在最右。
+   * 如果让 .right 整体 wrap，通用工具会掉到专属区下面另起一行，
+   * 那排图标的位置就又不固定了。
+   */
+  .pagehead .right {
+    flex-wrap: nowrap;
+    min-width: 0;
+    justify-content: flex-end;
+    width: 100%;
+  }
+  /*
+   * 专属区要能真的被压缩，不只是内部换行。
+   * flex: 1 1 auto + min-width: 0 才允许它让出宽度。
+   */
+  .pagehead .head-page {
+    flex: 1 1 auto;
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .pagehead .head-tools {
+    flex: none;
+  }
+}
+
+@media (max-width: 980px) {
+  /* 再窄就把副标题收掉，把那一行的注意力还给按钮 */
+  .pagehead .head-txt .sub {
+    display: none;
+  }
+  .pagehead {
+    min-height: 60px;
+  }
 }
 
 .pagehead .head-page {

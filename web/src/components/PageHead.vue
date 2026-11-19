@@ -2,75 +2,116 @@
   <!--
     所有页面的统一头部：标题 + 说明 + 工具区
 
-      右半边分**两组**，中间一条竖线隔开：
-        ┌─ 通用按钮区（全站固定，各页不用写）────────┐
-        │ A− 15 A+ │ ↻ 刷新 │ ⛶ 全屏 │ ↑ 顶部       │
-        └──────────────────────────────────────────┘
-        ┌─ 页面专属区（各页自己的 #right）───────────┐
+    右半边的排列（**顺序改动过，原因见下**）：
 
-    为什么这么分：通用的是「整个系统层面」的操作（字号、刷新、全屏、回到顶部），
-    每个页都该有、长得也一样；专属的是「这一页」的操作（新建/导入/点名…），
-    各页不一样。混在一起时分不清哪个按钮管什么。
+        ┌─ 页面专属（各页 #right）─┐ ┌─ 通用工具（全站固定）─┐
+        │ [作业目录] [＋新建作业]   │ │ A− 15 A+  ↻  ⛶  ↑   │
+        └──────────────────────────┘ └──────────────────────┘
 
-    刷新：各页可以注册自己的重载函数，避免 location.reload() 把没保存的表单冲掉：
-        <PageHead @reload="loadAll">      ← 只重拉数据
-        <PageHead>                        ← 没接就退回 location.reload()
-    实现见下面 doReload()：不声明 emits，直接读 $attrs.onReload 来判断有没有人接。
+    为什么把通用工具放到**最右**：
+      原来它在左边、专属区在右边。而专属按钮各页数量不同（讲义 6 个、
+      我的分数 0 个），于是通用工具的位置跟着页面左右横跳 ——
+      切页时那几个图标总在动，眼睛得重新找。
+      现在通用区贴着右边界、宽度恒定（4 个图标 + 字号组，尺寸都写死），
+      它的位置**只由窗口宽度决定**，跟哪一页无关。
+      专属区在它左边，数量变化时向**左**长，不推它。
+
+    图标的另外两条规矩（也是这次改的）：
+      · 一律用内联 SVG，不用 ↻ ⛶ ↑ 这种字符 —— 字符的字形和宽度取决于系统字体，
+        Windows / macOS / 安卓各不相同，一排图标对不齐
+      · **不能用时也存在，只是 disabled** —— 刷新按钮原来用 v-if，
+        没注册 @reload 的页根本不渲染它，于是那一排又短一截、又跳一次
 
     用法：
-      <PageHead>
+      <PageHead @reload="loadAll">
         <template #title>考核方案</template>
         <template #sub>有哪些考核项、各占多少分……</template>
         <template #right><button class="btn mini">保存</button></template>
       </PageHead>
+
+    刷新：各页可以注册自己的重载函数，避免 location.reload() 把没保存的表单冲掉。
+    实现见下面 doReload()：不声明 emits，直接读 $attrs.onReload 来判断有没有人接。
   -->
   <header class="pagehead" :class="{ 'is-full': isFull }">
     <div class="head-txt">
-      <!--
-        标题右边的状态标签（跟随讲义中 / 同步练习中 / 做作业中 / 点名中 / 考试中）。
-        放在标题这一行、固定尺寸 —— 每页同一个位置，切页时不用重新找。
-        只有学生端会拉 /api/student/focus，教师端这里永远是 idle，不渲染。
-      -->
-      <h2><slot name="title" /><FocusLabel /></h2>
+      <h2><slot name="title" /></h2>
       <p v-if="sub || $slots.sub" class="sub"><slot name="sub">{{ sub }}</slot></p>
     </div>
 
     <div class="right">
-      <!-- ① 通用按钮区：内容固定，各页不用管 -->
+      <!-- ① 页面专属区：各页自己的操作，没有就是空的（这一格仍然占位） -->
+      <span class="head-page"><slot name="right" /></span>
+
+      <!-- ② 通用工具区：四个槽位固定，不看页面 -->
       <span class="head-tools">
         <span class="tool-fs" title="全站字号：讲义、材料、代码一起变">
-          <button class="btn mini" @click="adjustDoc(-1)">A−</button>
-          <span class="dim">{{ docPx }}</span>
-          <button class="btn mini" @click="adjustDoc(1)">A+</button>
+          <button class="btn mini" title="缩小字号" @click="adjustDoc(-1)">A−</button>
+          <span class="fs-val">{{ docPx }}</span>
+          <button class="btn mini" title="放大字号" @click="adjustDoc(1)">A+</button>
         </span>
+
         <!--
-          这里原来挂过「课堂状态监视」（FocusMonitor）。
-          现在去掉了：它是个全局状态，却占着每个页面的通用区，
-          而真正需要看它的时刻（点名没反应 / 推代码学生没变）很少，
-          为它常驻一排按钮不划算。需要的话另找地方按需展开。
-        -->
-        <!--
-          只有「这一页真的有数据要重拉」时才出现。
-          判断依据是页面有没有注册 @reload —— 讲义、课程材料这种只读内容页
-          没有可刷新的东西，放个按钮纯属噪音；考勤、作业列表这种会随学生行为变的才有。
+          刷新：**始终存在**，页面没接 @reload 时是 disabled（灰掉、点不动）。
+          用 disabled 而不是 v-if —— 不渲染会让整排少一个格子、宽度变化，
+          切页时右边的图标全跟着平移。
         -->
         <button
-          v-if="$attrs.onReload"
           class="btn mini tool-ico"
-          title="刷新这一页（只重拉数据，不动你正在填的内容）"
+          :disabled="!$attrs.onReload"
+          :title="$attrs.onReload ? '刷新这一页（只重拉数据，不动你正在填的内容）' : '这一页没有可刷新的数据'"
           @click="doReload"
         >
-          ↻
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+            <path
+              d="M13 8a5 5 0 1 1-1.5-3.6M13 2.6V5.2h-2.6"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
         </button>
-        <button class="btn mini tool-ico" :title="isFull ? '退出全屏' : '全屏（讲课 / 投屏时用）'" @click="toggleFull">
-          ⛶
-        </button>
-        <button class="btn mini tool-ico" title="回到页面顶部" @click="backToTop">↑</button>
-      </span>
 
-      <!-- ② 页面专属区 -->
-      <span v-if="$slots.right" class="head-page">
-        <slot name="right" />
+        <button
+          class="btn mini tool-ico"
+          :title="isFull ? '退出全屏' : '全屏（讲课 / 投屏时用）'"
+          @click="toggleFull"
+        >
+          <svg v-if="!isFull" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+            <path
+              d="M6 2.6H2.6V6M10 2.6h3.4V6M6 13.4H2.6V10M10 13.4h3.4V10"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <svg v-else viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+            <path
+              d="M2.6 6h3.4V2.6M13.4 6H10V2.6M2.6 10h3.4v3.4M13.4 10H10v3.4"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
+
+        <button class="btn mini tool-ico" title="回到页面顶部" @click="backToTop">
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+            <path
+              d="M8 13V3.4M3.8 7.6 8 3.4l4.2 4.2"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
       </span>
     </div>
   </header>
@@ -79,7 +120,6 @@
 <script setup>
 import { onBeforeUnmount, onMounted, ref, useAttrs } from 'vue'
 import { useFontSize } from '../composables/useFontSize'
-import FocusLabel from './FocusLabel.vue'
 
 defineProps({
   /* 说明文字：写 slot 更灵活（可带标签/多段），只想给一句话时也可以直接传 sub */
@@ -105,8 +145,8 @@ const { docPx, adjustDoc } = useFontSize()
  */
 function doReload() {
   const fn = attrs.onReload
-  if (typeof fn === 'function') fn()
-  else location.reload()
+  if (typeof fn !== 'function') return
+  fn()
 }
 
 /* ---------------- 全屏 ---------------- */

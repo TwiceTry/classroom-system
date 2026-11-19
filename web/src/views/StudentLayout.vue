@@ -114,7 +114,7 @@ import { onPresenceMessage, startPresence, stopPresence, setCurrentPage, pingNow
 import { castWatch, startCastWatch, stopCastWatch, dismissCastWatch } from '../utils/castWatch'
 import { loadScheme, moduleIcon, scheme } from '../utils/scheme'
 import { clock, startClock, stopClock } from '../utils/timetable'
-import { setFocus } from '../composables/useFocus'
+
 
 const route = useRoute()
 const router = useRouter()
@@ -312,8 +312,15 @@ function onPresenceMsg(msg) {
   if (msg.t === 'stuvis') onVisMessage(msg)
   else if (msg.t === 'pgsync') onPgSync(msg)
   else if (msg.t === 'follow') onFollowMsg(msg)
-  /* 状态总闸：服务端仲裁完广播 { t:'focus', active }，页头标签读它 */
-  else if (msg.t === 'focus') setFocus(msg.active, msg.focus && msg.focus.payload)
+  /*
+   * focus 那条广播还在（服务端仲裁完会发），但学生端**不再拿它画页头标签**。
+   *
+   * 原因是「做作业中 / 考试中」是按班算的：focus 每个班只有一份，
+   * 甲在做作业时全班页头都会写着「做作业中」，而乙丙明明在材料页 —— 显示的是假信息。
+   * 讲义跟随和代码同步倒是全班一致，但那两种状态本来就会把学生切到对应页面，
+   * 页头再挂一个标签属于重复。
+   * 所以标签整个撤掉，focus 消息这里不用处理（保留分支位置，将来要按学生粒度做再说）。
+   */
 }
 
 function onVisMessage(msg) {
@@ -399,7 +406,16 @@ watch(
 async function refreshFocus() {
   try {
     const r = await api.get('/api/student/focus')
-    setFocus(r.kind, r.payload)
+    /*
+     * 只用来「补跳转」，不再存起来给页头画标签。
+     *
+     * 场景：学生刷新页面 / 断线重连，这时老师可能早就推了讲义或代码，
+     * 而广播不会重发 —— 问一次服务端，该去哪就去哪。
+     *
+     * 只有 follow / pgsync 会跳（这两种是全班一致的）；
+     * homework 不跳：那是「某个人在做作业」，不该因为班里有人在写就把别人拽走，
+     * exam 也不跳：正在考的人自己知道在哪，没在考的人更不该被带走。
+     */
     if (r.kind === 'follow') jumpToMaterials({ already: true })
     else if (r.kind === 'pgsync') jumpToPlayground({ already: true })
   } catch (e) {
@@ -433,16 +449,18 @@ function onLogin() {
 <style scoped>
 /* 老师把当前入口收起来时的一句提示（4 秒后自动消失） */
 /*
- * 学生端的三层消息，各管一件事，视觉上不串：
+ * 学生端的消息分两层，各管一件事：
  *
- *   ① 一次性操作反馈  Toast        底部居中 · 深色 · 2.5 秒          （保存成功、导入完成）
- *   ② 被动系统通知    .vis-notice  页头下方 · 浅蓝条 · 4~6 秒          （老师跟讲义/结束了同步）
- *   ③ 持续状态        FocusLabel   页头标题右侧 · 常驻 · 固定 104×22   （跟随讲义中 / 考试中）
+ *   ① 一次性操作反馈 / 报错  Toast        顶部居中 · 深色 · 4~8 秒   （保存成功、老师跟讲义）
+ *   ② 需要用户处理的状态     .vis-notice  页内常驻条                 （登录失效，去登录）
  *
- * ②和③都跟「老师现在在干什么」有关，但职责不同：
- *   ②是「刚刚发生了一件事」——会消失，学生错过也没关系；
- *   ③是「现在处于什么状态」——一直在，随时能确认。
- * 所以②不重复③的内容（不再说「已有讲义跟随」），只说发生了什么 + 怎么回去。
+ * 原来还有第三层「持续状态」——页头标题右侧的一个状态标签
+ * （跟随讲义中 / 同步练习中 / 做作业中 / 点名中 / 考试中）。撤掉了：
+ *   · 做作业 / 考试是**按人**的状态，而服务端的 focus 是**按班**存的，
+ *     甲在做作业时全班页头都写着「做作业中」，乙丙明明在材料页 —— 显示的是假信息
+ *   · 讲义跟随 / 代码同步倒是全班一致，但那两种会把学生直接切到对应页面，
+ *     页头再挂一个标签只是重复
+ * 需要「老师正在干什么」的提示时，走 ① 那条 Toast 就够。
  */
 .vis-notice {
   display: flex;
