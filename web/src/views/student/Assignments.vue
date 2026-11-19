@@ -26,7 +26,10 @@
           截止时间。学生最关心的其实是「还来不来得及」，所以除了时间点还带剩余量，
           24 小时内标橙、过了截止标红。
         -->
-        <p v-if="a.dueAt" class="due" :class="dueTone(a)">{{ dueText(a) }}</p>
+        <p v-if="a.dueAt" class="due" :class="dueTone(a)">
+          <b class="left">{{ dueLeftText(a) }}</b>
+          <span class="when">{{ dueWhen(a) }}</span>
+        </p>
         <p v-if="a.note" class="note">{{ a.note }}</p>
         <p v-else class="note dim">按老师的要求改代码，改完点提交。</p>
 
@@ -142,15 +145,27 @@ function dueLeft(a) {
  * 「11-20 23:59 是什么时候」，而是「现在还来不来得及」。
  * 一天以内按小时、一小时以内按分钟，超过一天才说天数。
  */
-function dueText(a) {
+/*
+ * 拆成两段，因为它们的**重要程度差一个量级**：
+ *
+ *   「还剩 3 小时」  ← 学生扫一眼就想知道的，用 --fs-proj-lg(21) 单独一行
+ *   「截止 11-20」   ← 想核对时才看，小字跟在下面
+ *
+ * 原来挤在一句括号里（「截止 11-20 00:32（还剩 3 小时）」），
+ * 两个信息一样重、一样小，等于都没有分量。
+ */
+function dueLeftText(a) {
   if (!a.dueAt) return ''
   const left = dueLeft(a)
-  const at = '截止 ' + fmtAt(a.dueAt)
-  if (left <= 0) return at + (a.allowLate ? '（已过 · 可迟交）' : '（已截止）')
+  if (left <= 0) return a.allowLate ? '已过截止 · 仍可交' : '已截止'
   const mins = Math.round(left / 60000)
-  if (mins < 60) return at + '（还剩 ' + mins + ' 分钟）'
-  if (mins < 1440) return at + '（还剩 ' + Math.round(mins / 60) + ' 小时）'
-  return at + '（还剩 ' + Math.round(mins / 1440) + ' 天）'
+  if (mins < 60) return '还剩 ' + mins + ' 分钟'
+  if (mins < 1440) return '还剩 ' + Math.round(mins / 60) + ' 小时'
+  return '还剩 ' + Math.round(mins / 1440) + ' 天'
+}
+
+function dueWhen(a) {
+  return a.dueAt ? '截止 ' + fmtAt(a.dueAt) : ''
 }
 
 /** 紧迫程度：过了截止红、24 小时内橙、其余常规 */
@@ -174,27 +189,49 @@ function dueTone(a) {
  * 截止时间这一行。
  * 用 tabular-nums：一堆卡片并排时，时间里的数字等宽，看起来才齐。
  */
+/*
+ * 截止提示拆两行：
+ *   .left  「还剩 3 小时」  --fs-proj-lg(21) —— 学生扫卡片时只想看这一个数
+ *   .when  「截止 11-20」   12.5px 灰，想核对时才看
+ *
+ * 21px 是投影档的第二档（第一档 17 给考勤格子的姓名）。
+ * 用在这里的理由和那边一样：这不是"老师凑近看的表格"，
+ * 是学生在一堆卡片里扫一眼就要判断"来不来得及"。
+ */
 .hw .due {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
   margin: 2px 0 0;
-  font-size: var(--fs-sm);
-  color: #5b6673;
   font-variant-numeric: tabular-nums;
 }
-/* 24 小时内：提醒但不刺眼 */
-.hw .due.soon {
+.hw .due .left {
+  font-size: var(--fs-proj-lg);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.2px;
+  color: #3c4650;
+}
+.hw .due .when {
+  font-size: var(--fs-sm);
+  color: #8b95a1;
+}
+
+/* 24 小时内：提醒但不刺眼（只染倒计时那个数，时间点保持安静） */
+.hw .due.soon .left {
   color: #a15c00;
-  font-weight: 600;
 }
 /* 过了截止：红 */
-.hw .due.over {
+.hw .due.over .left {
   color: var(--err);
 }
 
+/* 左右和 .card 统一成 16（原来 12，比其它卡片窄 4px） */
 .hw {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px var(--sp-3);
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
 }
 
 .hw.shut {

@@ -9,7 +9,18 @@
       <!-- 只读内容页：没有「要重拉的数据」，所以不注册 @reload，页头也就不会有「↻」 -->
       <PageHead>
         <template #title>讲义</template>
-        <template #sub>讲义与课程材料是同一批小节 · 切换视图不打断「跟随」，学生端仍按小节跳</template>
+        <!--
+          副标题改放进度：讲到第几课。
+
+          原来写的是「讲义与课程材料是同一批小节 · 切换视图不打断跟随」——
+          那是解释这个页面的机制，老师看第二遍就不需要了。
+          而"我们讲到哪了"这件事，原来全页只有左栏目录的高亮能回答。
+        -->
+        <template #sub>
+          <span :title="'讲义与课程材料是同一批小节 · 切换视图不打断「跟随」，学生端仍按小节跳'">
+            {{ lecSub }}
+          </span>
+        </template>
         <template #right>
           <!-- 并排时两边都在，切换就没意义了，收起来 -->
           <div v-if="!sideBySide" class="seg">
@@ -74,9 +85,19 @@
     <aside class="lesson-list">
     <template v-for="(l, i) in lessons" :key="l.id">
     <div v-if="l.kind !== 'lesson' && (i === 0 || lessons[i - 1].kind === 'lesson')" class="sep">补充资料</div>
-    <button :class="{ on: l.id === activeId }" @click="open(l.id)">
-    <span class="no">{{ l.kind === 'lesson' ? '第' + String(l.no).padStart(2, '0') + '课' : '' }}</span>
-    {{ l.title }}
+    <!--
+      目录项三态：正在看（on）、已经翻过去（past）、还没到（常态）。
+
+      原来是两态（只有 on）。一节课讲到第 12 课，左栏 25 条长得一模一样 ——
+      老师想确认"我们讲到哪了"只能靠回忆，或者翻正文找。
+      现在翻过的压暗，当前位置高亮，**进度本身就是目录的形状**。
+
+      「讲过」是拿序号比的（比当前小就是翻过了）：讲义本来就是一课一课往后推的，
+      没有单独的"已完成"数据 —— 硬造一个字段出来，老师还得额外点一下标记，不划算。
+    -->
+    <button :class="{ on: l.id === activeId, past: isPast(l) }" @click="open(l.id)">
+    <span class="no">{{ l.kind === 'lesson' ? String(l.no).padStart(2, '0') : '' }}</span>
+    <span class="tt">{{ l.title }}</span>
     <span v-if="!l.hasLecture" class="tag mute" style="float: right">无讲义</span>
     </button>
     </template>
@@ -151,6 +172,32 @@ import { currentClassId } from '../../utils/classSel'
 
 const lessons = computed(() => state.lessons)
 const activeId = ref(localStorage.getItem('lecture-id') || '')
+
+/** 当前在看第几课（用来判断哪些已经翻过去了） */
+const activeNo = computed(() => {
+  const a = lessons.value.find((l) => l.id === activeId.value)
+  return a && a.kind === 'lesson' ? Number(a.no) || 0 : 0
+})
+
+/** 目录项：比当前课序号小的，就是已经讲过的 */
+function isPast(l) {
+  return l.kind === 'lesson' && activeNo.value > 0 && Number(l.no) < activeNo.value
+}
+
+/**
+ * 页头副标题：讲到第几课。
+ *
+ * 例：`第 12 课 / 共 25 课 · 组件通信下`
+ * 一节课上老师最常需要确认的就是这个数 —— 原来它只在左栏高亮里藏着，
+ * 而页头那行写的是"讲义和课程材料是同一批小节"。
+ */
+const lecSub = computed(() => {
+  const total = lessons.value.filter((l) => l.kind === 'lesson').length
+  if (!total) return '没有读到讲义'
+  const cur = lessons.value.find((l) => l.id === activeId.value)
+  if (!cur || cur.kind !== 'lesson') return '共 ' + total + ' 课'
+  return '第 ' + cur.no + ' 课 / 共 ' + total + ' 课 · ' + cur.title
+})
 // 'lecture' = 讲义原文（含讲稿批注）；'materials' = 学生手上那一份
 const view = ref(localStorage.getItem('lecture-view') === 'materials' ? 'materials' : 'lecture')
 

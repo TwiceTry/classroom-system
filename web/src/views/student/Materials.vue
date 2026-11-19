@@ -4,7 +4,13 @@
       <!-- 只读内容页：没有「要重拉的数据」，所以不注册 @reload，页头也就不会有「↻」 -->
       <PageHead>
         <template #title>课程材料</template>
-        <template #sub>每课一份，随时回看</template>
+        <!--
+          副标题改放位置：看到第几课、一共几课。
+          学生打开这一页想知道的是「我落到哪儿了」，不是「每课一份」（那是说明）。
+        -->
+        <template #sub>
+          <span :title="'每课一份，随时回看'">{{ matSub }}</span>
+        </template>
         <!-- 专属区：搜课名 + 跟随状态。刷新走通用区的「↻」（重新拉当前这一课） -->
         <template #right>
           <span v-if="following" class="tag ok" :title="'老师正在讲：' + following">
@@ -123,6 +129,14 @@ async function applyFollow(f, animate) {
 }
 
 const lessons = computed(() => state.lessons.filter((l) => l.hasMaterials))
+
+/** 页头副标题：看到第几课、一共几课 */
+const matSub = computed(() => {
+  const total = lessons.value.length
+  if (!total) return '这门课还没有材料'
+  const cur = lessons.value.find((l) => l.id === activeId.value)
+  return cur ? '第 ' + cur.no + ' 课 / 共 ' + total + ' 课 · ' + cur.title : '共 ' + total + ' 课'
+})
 const filtered = computed(() => {
   const kw = q.value.trim()
   if (!kw) return lessons.value

@@ -3,7 +3,15 @@
     <template #head>
       <PageHead>
         <template #title>我的分数</template>
-        <template #sub>每一项都有给分理由和时间；有疑问当堂找老师核对</template>
+        <!--
+          副标题改放自己的位置：总评多少、班里第几。
+          学生点进这一页想知道的就这两件；原来写的是「每一项都有给分理由和时间」。
+        -->
+        <template #sub>
+          <span :title="'每一项都有给分理由和时间；有疑问当堂找老师核对'">
+            {{ scoreSub }}
+          </span>
+        </template>
         <template #right>
           <button class="btn mini" :disabled="loading" @click="load">刷新</button>
         </template>
@@ -63,7 +71,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { api } from '../../api'
 import PageHead from '../../components/PageHead.vue'
 import PageShell from '../../components/PageShell.vue'
@@ -71,6 +79,21 @@ import PageShell from '../../components/PageShell.vue'
 const data = ref(null)
 const loading = ref(false)
 const error = ref('')
+
+/**
+ * 页头副标题：我在班里的位置。
+ *
+ * 例：`总评 9 / 100 · 班级第 42 / 57`
+ * 学生点进这一页就为这一个数 —— 原来这里写的是「每一项都有给分理由和时间」。
+ */
+const scoreSub = computed(() => {
+  const d = data.value
+  if (!d) return '还没有分数记录'
+  const parts = []
+  if (d.total !== undefined && d.total !== null) parts.push('总评 ' + d.total + ' / 100')
+  if (d.rank) parts.push('班级第 ' + d.rank.index + ' / ' + d.rank.count)
+  return parts.length ? parts.join(' · ') : '还没有分数记录'
+})
 
 onMounted(load)
 

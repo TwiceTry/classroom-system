@@ -13,6 +13,28 @@
           >
             {{ clockLine }}
           </p>
+
+          <!--
+            节次条。
+
+            原来「第几节」只挤在上面那一行小字里，而且全站只有侧栏这一处提到节次 ——
+            考勤页要选节次得用下拉、讲义页根本不知道自己讲到第几节。
+            课表本来就是按节次排的，它该是一个**能一眼扫到的东西**，不是一句话。
+
+            10 个小格：上过的压暗、当前节高亮、还没到的常规。
+            数据来自 /api/timetable 的 periods（no/start/end），按服务器时间算，机房机器时间不准也不影响。
+          -->
+          <div v-if="clock.ready && clock.periods && clock.periods.length" class="periods" :title="clock.text">
+            <b
+              v-for="p in clock.periods"
+              :key="p.no"
+              class="pd"
+              :class="{ on: clock.period && clock.period.no === p.no, past: p.end && clock.clock >= p.end }"
+              :title="'第' + p.no + '节 ' + p.start + '–' + p.end"
+            >
+              {{ p.no }}
+            </b>
+          </div>
         </div>
         <button class="fold" :title="collapsed ? '展开侧栏' : '收起侧栏（只留图标）'" @click="toggleSide">
           <Icon :name="collapsed ? 'chevron-right' : 'chevron-left'" />

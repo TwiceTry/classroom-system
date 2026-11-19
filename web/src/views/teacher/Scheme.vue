@@ -1096,9 +1096,14 @@ async function runPreview() {
   }
 }
 
+/*
+ * 左右原先是 var(--sp-3)（12），比全站卡片的 16 少 4 ——
+ * 同一列上下两张卡（「考核项」和「变更日志」）内容左边界差 4px，
+ * 一页里自己就对不齐。跟 .card 统一成 12/16。
+ */
 .list,
 .detail {
-  padding: 12px var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
 }
 
 .items {

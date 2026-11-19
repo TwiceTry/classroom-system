@@ -3,7 +3,15 @@
     <template #head>
       <PageHead @reload="loadAll">
         <template #title>{{ moduleTitle }}</template>
-        <template #sub>新建 → 点「开始」收作业 → 学生交一份这里就多一条，按时间顺序排，边看边打分</template>
+        <!--
+          副标题改放批阅进度：交了几份、还有几份没批。
+          操作流程（新建 → 开始 → 边看边打分）挪到 title。
+        -->
+        <template #sub>
+          <span :title="'新建 → 点「开始」收作业 → 学生交一份这里就多一条，按时间顺序排，边看边打分'">
+            {{ hwSub }}
+          </span>
+        </template>
         <!-- 专属区：只有这一页有的操作。刷新走通用区那个「↻」，这里不再重复放 -->
         <template #right>
           <button class="btn mini" @click="openLib" title="作业设计目录：已导入 / 新建的设计都可以在这里挑、导入、导出">
@@ -160,13 +168,30 @@
     </DataTable>
     </div>
 
-    <!-- 未交名单 -->
+    <!--
+      未交名单：默认**收起**。
+
+      原来一进来就铺开 —— 一个跨两个班的作业「未交 117 人」，
+      8 行 × 15 列全是名字和学号，把下面「提交记录」挤到看不见。
+      而老师此刻不能对这 117 人做任何事：名单只在「快截止了、想点几个名字」
+      的时候才有用，那时候才需要展开。
+
+      收起之后标题那一行就说完了该说的：多少人、跨几个班。
+    -->
     <div v-if="d.stats.missing.length" class="card">
     <CardHead>
-      <template #title>未交 · {{ d.stats.missing.length }} 人</template>
-      <div class="right dim mini">按当前班级筛选</div>
+      <template #title>
+        <button class="misstoggle" @click="showMiss = !showMiss">
+          <span class="tri">{{ showMiss ? '▾' : '▸' }}</span>
+          未交 · {{ d.stats.missing.length }} 人
+        </button>
+      </template>
+      <div class="right dim mini">
+        {{ missSummary }}
+        <button class="linkish" @click="showMiss = !showMiss">{{ showMiss ? '收起' : '看名单' }}</button>
+      </div>
     </CardHead>
-    <div class="miss">
+    <div v-if="showMiss" class="miss">
       <span v-for="m in d.stats.missing" :key="m.classId + m.sid" class="missi">
         {{ m.name }}<em>{{ m.sid }}</em>
       </span>
@@ -480,6 +505,40 @@ const lib = reactive({ open: false, busy: false, err: '' })
 /* ---------------- 批阅进度 ---------------- */
 const prog = ref(null)
 const showMissing = ref(false)
+
+/**
+ * 页头副标题：当前这份作业收到什么程度了。
+ *
+ * 例：`已交 3 / 57 人 · 待批 2`
+ * 没有选中作业时退回作业总数（老师刚进来，还没点开哪一份）。
+ *
+ * 原来这行写的是「新建 → 点开始 → 学生交一份这里就多一条」——
+ * 第一次用有用，之后每次进页面都在占着最显眼的位置。
+ */
+/** 未交名单默认收起（117 个名字铺开时下面什么都看不见） */
+const showMiss = ref(false)
+
+/** 未交的人跨了几个班 —— 收起状态下这一句比 117 个名字有用 */
+const missSummary = computed(() => {
+  const list = (d.value && d.value.stats && d.value.stats.missing) || []
+  if (!list.length) return ''
+  const n = new Set(list.map((x) => x.classId)).size
+  return n > 1 ? '跨 ' + n + ' 个班' : '按当前班级'
+})
+
+const hwSub = computed(() => {
+  if (prog.value && prog.value.studentCount) {
+    const p = prog.value
+    const parts = ['已交 ' + p.submitted + ' / ' + p.studentCount + ' 人']
+    if (p.pending) parts.push('待批 ' + p.pending)
+    else if (p.graded && p.graded === p.submitted) parts.push('都批完了')
+    if (p.missing && p.missing.length) parts.push('未交 ' + p.missing.length)
+    return parts.join(' · ')
+  }
+  const n = list.value.length
+  if (!n) return '还没有作业'
+  return n + ' 份作业 · 点开一份看批阅进度'
+})
 const missingText = computed(() => {
   if (!prog.value) return ''
   return prog.value.missing.map((m) => m.name).join('、')
@@ -1070,6 +1129,33 @@ async function clearGrade() {
   flex: 0 0 auto;
 }
 
+/*
+ * 「未交 · N 人」的折叠开关。
+ * 标题本身就是按钮 —— 比在旁边再放一个「看名单」更省地方，
+ * 而且卡片标题天然是"点这里展开"的期待。
+ */
+.misstoggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.misstoggle:hover {
+  color: #1f6feb;
+}
+/* 三角：定宽，展开/收起时标题不左右跳 */
+.misstoggle .tri {
+  display: inline-block;
+  width: 10px;
+  font-size: 10px;
+  color: #8b95a1;
+}
+
 .linkish {
   border: none;
   background: none;
@@ -1128,12 +1214,13 @@ async function clearGrade() {
   background: #94a3b8;
 }
 
+/* 左右和 .card 统一成 16（原来 12，比同页其它卡片窄 4px） */
 .ctrl {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
-  padding: 12px var(--sp-3);
-  margin-bottom: 12px;
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-3);
 }
 
 .ctrl-l {

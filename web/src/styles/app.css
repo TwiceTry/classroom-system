@@ -41,6 +41,19 @@
   --fs-lg: 15px; /* 区块标题 */
   --fs-xl: 20px; /* 大数字 */
 
+  /*
+   * 投影档：给「后排学生抬头看」的场合。
+   *
+   * 现有字阶是照桌面工具建的，最大 20px 是给"统计大数字"的。
+   * 但考勤网格、学生端首页这些要投在教室幕布上 ——
+   * 1080p 投 3 米宽，12px 字在 8 米外大约 1.1cm 高，后排认不出自己的名字。
+   *
+   * 只用在这两处，不要往表格、工具栏、下拉里放 ——
+   * 那些是老师一个人凑近看的，放大只会挤掉信息。
+   */
+  --fs-proj: 17px; /* 考勤格子里的姓名 */
+  --fs-proj-lg: 21px; /* 学生端的关键信息（此刻该干什么） */
+
   /* 圆角：3 档，按块的大小分，不按心情 */
   --r-sm: 4px; /* 标签、小格子 */
   --r-md: 6px; /* 按钮、输入框 */
@@ -314,11 +327,29 @@ body,
   gap: 1px;
 }
 
+/*
+ * 分组标题。
+ *
+ * 侧栏两组性质完全不同：
+ *   上面「讲课」  = 现在正在上的这节课（每几分钟就切一次）
+ *   下面「管理」  = 配置（改一次管一学期）
+ * 原来两者只靠 2px 字号差区分，上课时手忙脚乱点错一次就进了课程管理。
+ *
+ * 现在给「管理」上方加一条硬线 —— 线是分组里最省的做法：
+ * 用 border 不占高度，但切得比字号差狠得多。
+ */
 .side .nav .group {
   padding: var(--sp-3) var(--sp-2) var(--sp-1);
-  font-size: var(--fs-xs);
-  letter-spacing: 0.6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.9px;
   color: var(--side-dim);
+}
+
+.side .nav .group:not(:first-child) {
+  margin-top: var(--sp-2);
+  padding-top: var(--sp-3);
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
 }
 
 .side .nav a {
@@ -367,6 +398,49 @@ body,
 }
 
 .side.collapsed .now-line {
+  display: none;
+}
+
+/*
+ * 节次条：1–10 一格一个，当前节高亮、已过的压暗。
+ *
+ * 为什么做成条而不是继续写「第8节」三个字：
+ * 课表本来就是按节次排的，"现在是第几节、还剩几节"是一眼该看出来的东西。
+ * 写成一句话的话，老师得先读字再换算；做成条之后，位置本身就是信息。
+ *
+ * 5 列 × 2 行，208px 的侧栏刚好放下，每个格子还能点（title 里有起止时间）。
+ */
+.side .periods {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 3px;
+  margin-top: var(--sp-2);
+}
+.side .pd {
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  text-align: center;
+  padding: 4px 0;
+  border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.07);
+  color: #93a4b4;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+  transition: background 0.12s, color 0.12s;
+}
+/* 已经上过的：压暗，让"讲到哪"从余光里就能分辨 */
+.side .pd.past {
+  background: rgba(255, 255, 255, 0.03);
+  color: #5d6a77;
+}
+/* 正在上的这一节：唯一高亮 */
+.side .pd.on {
+  background: var(--brand);
+  color: #fff;
+  font-weight: 700;
+}
+.side.collapsed .periods {
   display: none;
 }
 
@@ -983,12 +1057,24 @@ body,
  * 边框退到 --line-soft（几乎看不见），加一层 4% 的阴影，
  * 卡片才有"放在页面上"的感觉，而不是"画在纸上的框"。
  */
+/*
+ * 卡片容器。
+ *
+ * 规格只有一条：**容器负责留白，卡片只管自己下边距。**
+ *
+ * 原来 margin 是四边 12，问题是它和 .content 的 16px padding 叠加：
+ *   卡片距容器边 = 16 + 12 = 28px，比一个间距还宽
+ * 而且两张相邻卡片各自带 12 —— 在 flex 容器里 margin 不折叠，间距变成 24。
+ * 结果同一套卡片在页面上出现了 8 / 20 / 24 三种间距（各页还各自覆盖过）。
+ *
+ * 现在左右上下都交给容器，卡片只留「和下一张的距离」。
+ */
 .card {
   background: var(--card);
   border: 1px solid var(--line-soft);
   border-radius: var(--radius);
   padding: var(--sp-3) var(--sp-4);
-  margin: var(--sp-3);
+  margin: 0 0 var(--sp-3);
   box-shadow: 0 1px 2px rgba(20, 40, 60, 0.045);
 }
 
@@ -1003,12 +1089,21 @@ body,
   border-color: var(--line);
 }
 
+/*
+ * 卡片标题行。
+ *
+ * 原来 margin 是四边 8 —— 而卡片自己已经有 12/16 的 padding：
+ *   标题左边界 = 16 + 8 = 24，正文 16
+ * 于是**全站每张卡片的标题都比正文往右偏 8px**，一页页翻过去总觉得哪里松了一下。
+ *
+ * 现在左右归零（跟着正文走），只留和内容的距离。
+ */
 .card-head {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
   flex-wrap: wrap;
-  margin: var(--sp-2);
+  margin: 0 0 var(--sp-3);
 }
 
 .card-head h3 {
@@ -1890,12 +1985,49 @@ td.num.bad {
   font-weight: 600;
 }
 
+/*
+ * 序号块。
+ *
+ * 原来这里是「第01课」四个字、灰色内联 —— 25 条目录扫下来全是同一种灰，
+ * 分不出哪条在看、哪条翻过了。改成一个窄方块，位置和宽度都固定，
+ * 和侧栏那条节次条是同一套语言（数字装在方块里）。
+ */
 .lesson-list .no {
-  display: inline-block;
-  min-width: 26px;
-  color: var(--dim);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 17px;
+  margin-right: var(--sp-2);
+  border-radius: var(--r-sm);
+  background: var(--bg-sub);
+  color: #8b95a1;
+  font-size: 11px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
-  font-size: var(--fs-sm);
+  vertical-align: 1px;
+}
+
+/* 正文里那条 title 要能截断 —— 有的小节名很长，不截会把序号挤走 */
+.lesson-list .tt {
+  display: inline;
+}
+
+/* 已经翻过去的：整条压暗，序号块退成透明 —— 进度从目录的形状就能读出来 */
+.lesson-list button.past {
+  color: #9aa3ad;
+}
+.lesson-list button.past .no {
+  background: transparent;
+  color: #c2c9d1;
+  font-weight: 400;
+}
+
+/* 正在看的那一条：序号块跟着变成实心，位置感最强 */
+.lesson-list button.on .no {
+  background: var(--brand);
+  color: #fff;
+  font-weight: 600;
 }
 
 .lesson-list .sep {

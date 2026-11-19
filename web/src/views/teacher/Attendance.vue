@@ -4,8 +4,18 @@
     <template #head>
       <PageHead @reload="reload">
         <template #title>考勤点名</template>
-        <template #sub>点一下就存：网格点格子循环，列表点行内按钮；只记异常，回到「出勤」= 撤销。
-          随机点名可随机 / 顺序，也能按状态筛；抽到谁，学生端会同步弹大字提示。</template>
+        <!--
+          副标题原来是操作说明（「点一下就存：网格点格子循环…」）。
+          那是**第一次用**才需要的，用过两遍就成了噪音 ——
+          而它占着页头唯一能放「现在什么情况」的位置。
+
+          现在放状态：第几节、出勤多少、谁异常。说明挪到 title，鼠标停一下能看到。
+        -->
+        <template #sub>
+          <span :title="'网格：点格子循环切换状态；列表：点行内按钮直接落库。只记异常，回到「出勤」= 撤销。'">
+            {{ attSub }}
+          </span>
+        </template>
         <!--
           刷新走通用区那个「↻」（这一页最需要它：在线人数和名单一直在变）。
 
@@ -134,7 +144,13 @@
     </b>
     <span class="sid">{{ s.sid }}</span>
     <span class="mark">{{ kindOf(s.sid) }}</span>
-    <span class="score">{{ scoreOf(s.sid) }} / {{ full }}</span>
+    <!--
+      这里原来还有一行「5 / 10」（考勤分）。
+      去掉的原因：点名那一刻老师关心的是「谁没到」，不是「他考勤几分」——
+      分数是结果，不是现在要做的判断。它占掉一行、把格子撑高，
+      而这一行在投影上恰恰是"后排认不出名字"的那部分空间。
+      要看分数去「班级管理」，那儿有整张表。
+    -->
     </button>
     </div>
 
@@ -203,7 +219,12 @@
           "
           @undo="undoRecent"
         >
-          <template #at="{ row }">{{ row.slot }} {{ clockOf(row.at) }}</template>
+          <!--
+            右栏只有 210px 宽，时间到秒会把「请假」这种两字原因挤掉。
+            同一节课内的记录，秒没有意义 —— 只要到分。
+            clock() 本身不动：提交时间那些地方需要秒。
+          -->
+          <template #at="{ row }">{{ row.slot }} {{ clockOf(row.at).slice(0, 5) }}</template>
         </EventFeed>
 
         <!-- 异常压成一行摘要：谁没到还是要一眼能看到，但不占一整块 -->
@@ -377,6 +398,25 @@ const onlineMap = reactive({})
 
 const abnormalCount = computed(() => Object.values(picked).filter((k) => k && k !== '出勤').length)
 const onlineCount = computed(() => students.value.filter((s) => onlineMap[s.sid]).length)
+
+/**
+ * 页头副标题：这一节的考勤现状。
+ *
+ * 老师上课时抬头看这一行，想知道的是「现在几点了、还有谁没到」，
+ * 不是「这个功能怎么用」。
+ *
+ * 例：`第8节 · 出勤 55 / 57 · 1 迟到 · 1 缺勤`
+ */
+const attSub = computed(() => {
+  if (!students.value.length) return '这个班还没有名单'
+  const total = students.value.length
+  const bad = abnormalList.value.length
+  const parts = []
+  if (slot.value) parts.push(slot.value)
+  parts.push('出勤 ' + (total - bad) + ' / ' + total)
+  if (bad) parts.push(abnormalSummary.value)
+  return parts.join(' · ')
+})
 
 /** 状态越靠前越「要紧」：缺勤 > 早退 > 迟到 > 请假 > 出勤 */
 const SEVERITY = { 缺勤: 0, 早退: 1, 迟到: 2, 请假: 3, 出勤: 9 }
@@ -984,12 +1024,18 @@ onUnmounted(() => {
   margin: var(--sp-2);
 }
 
-/* 两行：第一行选数据（班级/日期/节次），第二行看结果（各状态计数） */
+/*
+ * 两行：第一行选数据（班级/日期/节次），第二行看结果（各状态计数）。
+ *
+ * 注意这里**只排内部**，不碰外边距 ——
+ * 这个元素的 class 是 `card bar`，`.bar` 的 margin 会覆盖掉 `.card` 的 margin，
+ * 结果这一页的首卡比别的页往右 8px、往上 8px（实测 left 232 vs 224），
+ * 切页时内容左边缘会跳一下。卡片外边距统一由 .card 负责。
+ */
 .bar {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
-  margin: var(--sp-2);
 }
 
 .bar-row {
@@ -1142,11 +1188,18 @@ onUnmounted(() => {
  * 不要再写 max-height：那是按视口硬算的，页头一变高就错。
  */
 /* 网格本身不再管滚动 —— 外层 .scroll-body 才是滚动容器（见 .content.ws.fixed-top） */
+/*
+ * 名册网格。
+ *
+ * 158 → 140：姓名字号提到 17px 之后每格变高，一屏从 60 人掉到 42 人，
+ * 57 人的班要滚一屏半。收到 140 就能一行放 7 个，一屏 49 人，基本够。
+ * 140 的余量算过：10 位学号在 12.5px 下约 75px，加左右 padding 16 = 91，不挤。
+ */
 .roster {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
-  gap: 8px;
-  padding-bottom: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: var(--sp-2);
+  padding-bottom: var(--sp-2);
 }
 
 /* 右栏：本节异常。卡片撑满整栏，列表自己滚，底部说明钉住 */
@@ -1200,12 +1253,22 @@ onUnmounted(() => {
   color: var(--ink);
 }
 
+/*
+ * 点名格子。
+ *
+ * 尺寸按**投影**定，不按桌面工具定：这一页上课时是投在幕布上的，
+ * 后排学生要认出自己的名字、看清自己是什么状态。
+ * 姓名用 --fs-proj（17px），学号和状态也不再是 11.5px 的角标字。
+ *
+ * 一行三格：姓名 / 学号 / 状态。原来还有第四行「5/10 考勤分」，去掉了 ——
+ * 点名时要判断的是「谁没到」，分数是结果，占着投影上最贵的那点空间。
+ */
 .stu {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 1px;
-  padding: 8px var(--sp-2);
+  gap: 3px;
+  padding: 10px var(--sp-2);
   border: 1px solid #d8dee6;
   border-left-width: 4px;
   border-radius: var(--r-sm);
@@ -1223,26 +1286,29 @@ onUnmounted(() => {
   opacity: 0.55;
 }
 
+/* 姓名：投影上最该看清的那一行 */
 .stu b {
-  font-size: var(--fs-md);
-  color: #1f2937;
+  font-size: var(--fs-proj);
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: #111827;
+  line-height: 1.25;
 }
 
+/* 学号：老师核对用（重名的时候靠它），比姓名弱一档但不要缩成角标 */
 .stu .sid {
-  font-size: var(--fs-xs);
-  color: #94a3b8;
+  font-size: var(--fs-sm);
+  color: #9aa5b4;
   font-variant-numeric: tabular-nums;
+  line-height: 1.2;
 }
 
+/* 状态：这是点名的结论，要能远远看出来 */
 .stu .mark {
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
+  font-weight: 500;
   color: #475569;
-}
-
-.stu .score {
-  font-size: var(--fs-xs);
-  color: #94a3b8;
-  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
 }
 
 .dot {

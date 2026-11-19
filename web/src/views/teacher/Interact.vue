@@ -4,8 +4,16 @@
     <template #head>
       <PageHead @reload="() => reload(true)">
         <template #title>课堂互动</template>
-        <template #sub>抽人 → 提问 → 记分：点快捷按钮会自动抽一个本轮没抽过的学生并记分，
-          抽到谁学生端同步弹「课堂点名」；也能在名单里直接加减分，实时写进「{{ itemName }}」。</template>
+        <!--
+          副标题改放状态：这一场抽了几个、还剩几个没抽过。
+          操作说明（抽人 → 提问 → 记分…）挪到 title。
+        -->
+        <template #sub>
+          <span :title="'抽人 → 提问 → 记分：点快捷按钮会自动抽一个本轮没抽过的学生并记分。'">
+            {{ intSub }}
+          </span>
+        </template>
+
         <!-- 专属区：点名相关。刷新走通用区的「↻」（重新抽一轮不影响当前抽到的人） -->
         <!--
           点名入口与状态合一：没点名时是「随机点名」按钮，点名中是「● 点名中 · 张三」胶囊。
@@ -94,7 +102,8 @@
         empty-text="在名单里点 +1 / −1 记分，这里会实时出现流水，点 × 能撤回。"
         @undo="undo"
       >
-        <template #at="{ row }">{{ clock(row.at) }}</template>
+        <!-- 只到分：右栏 210px，秒会把「抢答加分」这种原因挤掉 -->
+        <template #at="{ row }">{{ clock(row.at).slice(0, 5) }}</template>
       </EventFeed>
     </section>
     </template>
@@ -232,12 +241,23 @@ const spotWho = computed(() => {
 })
 
 /* 名单表 */
+/*
+ * 列的顺序照「老师认人的顺序」排，不照数据库字段排。
+ *
+ * 原来学号在最左（104px 的 10 位数字），姓名排在它右边 ——
+ * 可互动时老师认的是脸和名字，学号只在重名时才需要。
+ * 现在姓名第一列、加粗放大；学号退到第二列、弱一档。
+ *
+ * 这和考勤页的格子是同一套优先级（姓名 > 状态/分数 > 学号），
+ * 所以老师在两个页面之间来回切时，眼睛落点是一致的。
+ */
 const listCols = [
-  { key: 'sid', label: '学号', width: '104px' },
-  { key: 'name', label: '姓名', width: '78px' },
+  { key: 'name', label: '姓名', width: '96px', tdClass: 'who' },
+  { key: 'sid', label: '学号', width: '104px', tdClass: 'sidcol' },
   { key: 'online', label: '在线', num: true, width: '52px' },
-  { key: 'score', label: '互动分', num: true, width: '62px', tdClass: 'score' },
+  /* 次数在分数左边：老师心里数的是「我点过他几次」，分是它算出来的结果 */
   { key: 'count', label: '次数', num: true, width: '46px' },
+  { key: 'score', label: '互动分', num: true, width: '62px', tdClass: 'score' },
   { key: 'actions', label: '当场记', width: '132px' },
 ]
 const drawing = ref(false)
@@ -248,6 +268,23 @@ const toast = ref('')
 
 /* 统计也跟着 onlineMap 走 —— 否则会出现「列表全暗、上面写着在线 6」 */
 const onlineCount = computed(() => students.value.filter((s) => onlineMap[s.sid]).length)
+
+/**
+ * 页头副标题：这一场互动到哪一步了。
+ *
+ * 例：`已抽 3 人 · 还剩 54 · 在线 12`
+ * 老师关心的是「还有谁没被抽到」，不是「这个页面怎么操作」。
+ */
+const intSub = computed(() => {
+  if (!students.value.length) return '这个班还没有名单'
+  const total = students.value.length
+  const picked = Number(roll.pickedCount || 0)
+  const parts = ['已抽 ' + picked + ' 人']
+  /* 抽过一轮之后 remaining 会回到总数，「还剩」就没意义了 */
+  if (picked > 0 && picked < total) parts.push('还剩 ' + (total - picked))
+  parts.push('在线 ' + onlineCount.value + ' / ' + total)
+  return parts.join(' · ')
+})
 const visible = computed(() => {
   const q = search.value.trim()
   return q ? students.value.filter((s) => s.sid.indexOf(q) >= 0 || s.name.indexOf(q) >= 0) : students.value
@@ -496,12 +533,16 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/*
+ * 只排内部，不碰外边距 —— 这个元素的 class 是 `card bar`，
+ * `.bar` 的 margin 会盖掉 `.card` 的，首卡比别的页往右/往上 8px。
+ * 卡片外边距统一由 .card 负责。
+ */
 .bar {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
   flex-wrap: wrap;
-  margin: var(--sp-2);
 }
 
 .classes {
@@ -588,6 +629,29 @@ onUnmounted(() => {
 
 .grid td.score {
   font-weight: 600;
+}
+
+/*
+ * 姓名列：互动时老师认的是脸和名字，这一列该最重。
+ * 用 --fs-lg(15) 而不是考勤格子那档 17 —— 表格一行 40px 高，
+ * 17 会把行撑开，一屏少看四五个人。差这两像素换来多看见几个人更划算。
+ *
+ * **必须 :deep()**：这些 <td> 是 DataTable 子组件渲染的，
+ * 拿不到 Interact 自己的 data-v 属性 —— 写成 `.grid td.who` 一条都不生效
+ * （实测字号还是 13.5 / 字重 400，等于没改）。
+ */
+:deep(.grid td.who) {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: #111827;
+}
+
+/* 学号列：只在重名时才需要，弱一档、等宽对齐 */
+:deep(.grid td.sidcol) {
+  font-size: var(--fs-sm);
+  color: #9aa5b4;
+  font-variant-numeric: tabular-nums;
 }
 
 .grid .dot,
