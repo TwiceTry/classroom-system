@@ -16,45 +16,102 @@
         登录已失效，请重新登录。登录后会自动回到刚才那一页。
       </p>
 
-      <form v-if="tab === 'student'" class="form" @submit.prevent="loginStudent">
-        <label class="field">
-          <span>课程</span>
-          <select v-model="form.courseId" class="select">
-            <option value="" disabled>请选择课程</option>
-            <option v-for="c in courses" :key="c.id" :value="c.id">{{ c.name }}</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>{{ authMode === 'kg' ? '账号' : '学号' }}</span>
-          <input
-            v-model.trim="form.sid"
-            class="input"
-            :placeholder="authMode === 'kg' ? '请输入账号' : '名单上的学号'"
-            autocomplete="off"
-          />
-        </label>
-        <!--
-          两种校验方式由老师在「课程管理 → 学生登录方式」里切换：
-          local 用姓名，kg 用账号+密码。登录页只按后端给的 mode 显示表单。
-        -->
-        <label v-if="authMode === 'local'" class="field">
-          <span>姓名</span>
-          <input v-model.trim="form.name" class="input" placeholder="名单上的姓名" autocomplete="off" />
-        </label>
-        <label v-else class="field">
-          <span>密码</span>
-          <input
-            v-model="form.stuPwd"
-            type="password"
-            class="input"
-            placeholder="请输入密码"
-            autocomplete="current-password"
-          />
-        </label>
-        <p v-if="authMode === 'local'" class="note">学号和姓名要和名单一致。登录后只能看到自己的分数。</p>
-        <button class="btn primary" :disabled="busy || !canSubmit">
-          {{ busy ? '正在登录…' : '进入课堂' }}
-        </button>
+      <!--
+        学生登录分两步。
+        为什么：登录方式可以**按人**设置（大部分跟随全局，个别单独指定），
+        所以在拿到学号之前，前端根本不知道该画"姓名"还是"密码"。
+        原来一进来就问全局 mode —— 「全局学号+姓名、但这个人要账号密码」时，
+        页面只显示姓名框，学生输完点登录才被告知要密码，而他没看到密码框。
+
+        现在：填学号 → 问服务端这个人怎么登 → 再画对应表单。
+      -->
+      <form v-if="tab === 'student'" class="form" @submit.prevent="onStudentStep">
+        <!-- 第一步：课程 + 学号 -->
+        <template v-if="step === 1">
+          <label class="field">
+            <span>课程</span>
+            <select v-model="form.courseId" class="select">
+              <option value="" disabled>请选择课程</option>
+              <option v-for="c in courses" :key="c.id" :value="c.id">{{ c.name }}</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>学号</span>
+            <input
+              v-model.trim="form.sid"
+              class="input"
+              placeholder="名单上的学号"
+              autocomplete="off"
+              @keyup.enter="probe"
+            />
+          </label>
+          <p class="note">先填学号，下一步按你的账号要求显示对应的输入框。</p>
+          <button class="btn primary" :disabled="busy || !form.courseId || !form.sid">
+            {{ busy ? '正在查询…' : '下一步' }}
+          </button>
+        </template>
+
+        <!-- 第二步：按查到的登录方式显示凭证 -->
+        <template v-else>
+          <div class="confirmed">
+            <span class="mono">{{ form.sid }}</span>
+            <button type="button" class="linkbtn" @click="backToStep1">改学号</button>
+          </div>
+
+          <!--
+            凭证输入框：**照着插件声明的字段渲染**，不是写死的「姓名 / 密码」。
+            插件的 credentials 里写几个，这里就出现几个；type 决定用不用密码框。
+          -->
+          <label v-for="(f, i) in fields" :key="f.key" class="field">
+            <span>{{ f.label }}</span>
+            <input
+              :type="f.type === 'password' ? 'password' : 'text'"
+              :value="credValues[f.key] || ''"
+              :placeholder="f.placeholder || ''"
+              :autocomplete="f.autocomplete || 'off'"
+              :autofocus="i === 0"
+              class="input"
+              @input="credValues[f.key] = $event.target.value"
+            />
+          </label>
+
+          <!--
+            图形验证码。
+            只有当服务端说「自动识别没过，请你来填」时才出现 ——
+            平时学生完全看不到这一块，感觉和以前一样。
+          -->
+          <div v-if="captcha" class="capbox">
+            <!-- 服务端给的话（「自动识别没能通过，请自己输入图中的字符」），灰字不是红字 -->
+            <p v-if="captchaMsg" class="cap-msg">{{ captchaMsg }}</p>
+            <span class="cap-label">验证码</span>
+            <div class="cap-row">
+              <img :src="captcha.image" alt="验证码" class="cap-img" title="看不清？点一下换一张" @click="refreshCaptcha" />
+              <button type="button" class="btn mini" :disabled="captchaBusy" @click="refreshCaptcha">
+                {{ captchaBusy ? '…' : '换一张' }}
+              </button>
+            </div>
+            <input
+              v-model.trim="captchaCode"
+              class="input cap-input"
+              maxlength="8"
+              placeholder="输入图中字符"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+            />
+          </div>
+
+          <!-- 说明文字也是插件给的（每个字段的 tip / fallbackTip），系统不替它编 -->
+          <template v-for="f in fields" :key="f.key + '-tip'">
+            <p v-if="f.tip" class="note">{{ f.tip }}</p>
+            <p v-if="f.fallbackTip" class="note tip">{{ f.fallbackTip }}</p>
+          </template>
+
+          <button class="btn primary" :disabled="busy || !canSubmit">
+            {{ busy ? '正在登录…' : '进入课堂' }}
+          </button>
+        </template>
+
         <p v-if="!courses.length" class="note warn">老师还没有建课程。</p>
         <p v-if="err" class="note err">{{ err }}</p>
       </form>
@@ -121,26 +178,140 @@ const courseCountText = computed(() => {
 const form = reactive({ courseId: '', sid: '', name: '', password: '', stuPwd: '' })
 
 /**
- * 学生登录用哪种校验：local（学号+姓名，默认）/ kg（账号+密码）。
- * 由老师在课程管理页切换；这里只决定显示哪个输入框。
- * 取不到就按 local 走 —— 宁可退回老方式，也不要让学生卡在登录页。
+ * 登录方式：现在是**插件 key**（local / kg / 以后别的）。
+ *
+ * 注意它**不再从全局配置读**。因为可以按人设置（auth_overrides），
+ * 全局值只代表"默认"，不代表这个学生 —— 必须拿到学号之后问服务端。
+ * 所以初始值是空的，第二步才填。
  */
-const authMode = ref('local')
+const authMode = ref('')
 
-async function loadAuthMode() {
+/**
+ * 这个登录方式要填哪些字段（由插件声明，服务端在 probe 时给）。
+ *
+ * 每一项形如 { key:'password', label:'密码', type:'password', required:true, tip:'…' }。
+ * **第二步的表单是照着它渲染的** —— 不再写「kg 就显示密码框」那种 if。
+ * 加一个新插件（要工号 + 短信码、或者扫码那种一个字段都不填），这里一行都不用改。
+ */
+const fields = ref([])
+
+/**
+ * 学生已经填的值，按字段 key 存（{ name:'…' } 或 { password:'…' }）。
+ *
+ * 用普通 reactive 对象而不是每个字段一个 ref：字段是运行时才知道的，
+ * 没法提前声明。
+ */
+const credValues = reactive({})
+
+/** 1 = 填课程+学号；2 = 填凭证 */
+const step = ref(1)
+
+/**
+ * 第一步 → 问服务端这个学号该怎么登。
+ *
+ * 失败不拦人：查不到就按 local 先让进（老方式能进总比卡住好），
+ * 真不对后端会在第二步给出准确提示。
+ */
+async function probe() {
+  const sid = String(form.sid || '').trim()
+  if (!form.courseId || !sid) return
+  busy.value = true
+  err.value = ''
   try {
-    const res = await api.get('/api/auth/student-mode')
-    authMode.value = res && res.mode === 'kg' ? 'kg' : 'local'
+    const r = await api.post('/api/auth/student-probe', { sid })
+    authMode.value = (r && r.provider) || 'local'
+    fields.value = Array.isArray(r && r.credentials) ? r.credentials : []
+    step.value = 2
+    /*
+     * 插件声明了 credentials: [] —— 意思是「不需要当场输任何东西」
+     * （扫码、或者纯靠学号认人的方式）。那样第二步没有可填的，
+     * 直接提交，别让「下一步」点完一片空白。
+     */
+    if (!fields.value.length) await loginStudent()
   } catch (e) {
     authMode.value = 'local'
+    fields.value = [{ key: 'name', label: '姓名', type: 'text', required: true }]
+    step.value = 2
+  } finally {
+    busy.value = false
   }
 }
 
-const canSubmit = computed(() =>
-  authMode.value === 'kg'
-    ? !!(form.courseId && form.sid && form.stuPwd)
-    : !!(form.courseId && form.sid && form.name)
-)
+function backToStep1() {
+  step.value = 1
+  authMode.value = ''
+  fields.value = []
+  for (const k of Object.keys(credValues)) delete credValues[k]
+  captcha.value = null
+  captchaCode.value = ''
+  captchaMsg.value = ''
+  err.value = ''
+}
+
+/** 表单提交：第一步走 probe，第二步才真的登录 */
+function onStudentStep() {
+  if (step.value === 1) probe()
+  else loginStudent()
+}
+
+/*
+ * 第二步的提交可用性：课程和学号在第一步已经确认过，这里只看凭证填了没。
+ * 出现验证码时，码也必须填 —— 否则会发一个注定 401 的请求，
+ * 白白多打一次平台、多消耗对方的失败计数。
+ */
+const canSubmit = computed(() => {
+  if (!fields.value.length) return false
+  /* 插件声明为 required 的字段都得有值 */
+  for (const f of fields.value) {
+    if (f.required && !String(credValues[f.key] || '').trim()) return false
+  }
+  /* 出现验证码时，码也必须填 —— 否则发一个注定失败的请求，白打一次平台 */
+  if (captcha.value && !String(captchaCode.value || '').trim()) return false
+  return true
+})
+
+/* ---------------- 图形验证码 ---------------- */
+
+/**
+ * 验证码状态。
+ *
+ * captcha 为 null = 现在不需要学生填（首次提交、或者平台根本不要）。
+ * 后端返回 { needCaptcha, challenge:{ image, handle } } 时才填上。
+ */
+const captcha = ref(null)
+const captchaCode = ref('')
+/** 验证码区自己的提示（灰字）；不是错误，别走 err */
+const captchaMsg = ref('')
+const captchaBusy = ref(false)
+
+/**
+ * 换一张。
+ *
+ * 用当前的 handle 去换 —— 服务端靠 handle 反查是哪份平台会话，
+ * 所以换出来的图仍然和这次登录是同一个会话（验证码必须和会话配套）。
+ */
+async function refreshCaptcha() {
+  if (!captcha.value || captchaBusy.value) return
+  captchaBusy.value = true
+  try {
+    const r = await api.post('/api/auth/captcha/refresh', { handle: captcha.value.handle })
+    if (r && r.ok && r.challenge) {
+      captcha.value = r.challenge
+      captchaCode.value = ''
+      err.value = ''
+    } else {
+      /* 换不出来就别留个空白框：收掉，让学生重新提交一次 */
+      captcha.value = null
+      captchaCode.value = ''
+      err.value = '验证码已过期，请重新点「进入课堂」'
+    }
+  } catch (e) {
+    captcha.value = null
+    err.value = '换验证码失败，请重新点「进入课堂」'
+  } finally {
+    captchaBusy.value = false
+  }
+}
 
 onMounted(async () => {
   // 已登录就直接进对应的家
@@ -157,8 +328,12 @@ onMounted(async () => {
    */
   if (!courses.value.length) await loadCourses()
   if (courses.value.length && !form.courseId) form.courseId = courses.value[0].id
-  // 学生该用哪种校验方式，由后端说了算（老师随时可切）
-  await loadAuthMode()
+  /*
+   * 注意这里**不预取登录方式**。
+   * 登录方式可以按人设置，没有学号之前问不出结果 ——
+   * 预取回来的只是全局默认值，用它画表单就会在"个人覆盖"时画错（见文档头）。
+   * 真正的询问发生在第一步点「下一步」时（probe）。
+   */
 })
 
 function switchTab(t) {
@@ -171,17 +346,51 @@ async function loginStudent() {
   busy.value = true
   err.value = ''
   try {
-    // 按当前模式带上对应凭据：local 要姓名，kg 要密码
-    const payload =
-      authMode.value === 'kg'
-        ? { sid: form.sid, password: form.stuPwd }
-        : { sid: form.sid, name: form.name }
+    /*
+     * 凭证按插件声明的字段平铺到请求体（{ sid, name } 或 { sid, password }）。
+     * 服务端那边按同一份声明从 body 取，所以字段名只有一个来源 —— 插件的 credentials。
+     */
+    const payload = { sid: form.sid }
+    for (const f of fields.value) {
+      payload[f.key] = String(credValues[f.key] || '')
+    }
+    if (captcha.value) {
+      payload.captcha = { code: String(captchaCode.value || '').trim(), handle: captcha.value.handle }
+    }
+
     const res = await api.post('/api/auth/login/student', payload)
+
+    /*
+     * 要验证码 —— 这不是失败，是还差一步（后端以 200 返回）。
+     * 不能当成错误处理：一抛错就会把 err 显示成红字，学生以为密码错了。
+     */
+    if (res && res.needCaptcha) {
+      captcha.value = res.challenge || null
+      captchaCode.value = ''
+      /*
+       * 提示走 captchaMsg（灰字），**不进 err**（红字）。
+       * 「请自己输入图中的字符」不是错误，用红字会让学生以为密码错了。
+       */
+      captchaMsg.value = res.message || ''
+      /* 图没拿到就别卡在这：收掉验证码区，让他重新提交 */
+      if (!captcha.value) {
+        captchaMsg.value = ''
+        err.value = '验证码暂时取不到，请稍后再试'
+      }
+      return
+    }
+
     applyLogin(res)
     await refresh()
     router.replace(route.query.next || '/student/materials')
   } catch (e) {
     err.value = e.message
+    /*
+     * 提交失败时把验证码清掉：平台那边的码通常是一次性的，
+     * 同一张图再提交一次必然还是错，不如让下一次请求走「自动识别」重来。
+     */
+    captcha.value = null
+    captchaCode.value = ''
   } finally {
     busy.value = false
   }
@@ -275,6 +484,99 @@ async function loginTeacher() {
   font-size: var(--fs-sm);
   line-height: 1.65;
   color: var(--dim);
+}
+
+/*
+ * 第二步顶部那条「学号 2515270201  改学号」。
+ * 让学生随时能退回去改 —— 输错学号是很常见的，没有这个只能刷新页面。
+ */
+.confirmed {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--bg-sub);
+  font-size: var(--fs-md);
+}
+.confirmed .mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+  color: var(--ink);
+}
+.linkbtn {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--brand);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.linkbtn:hover {
+  color: var(--brand-ink);
+}
+
+/*
+ * 图形验证码。
+ *
+ * 图定宽高（不跟着图片原始尺寸走）—— 平台的验证码图大小不一，
+ * 不定死的话每次换图整个表单会跟着跳一下。
+ * 点图本身也能换：很多人第一反应就是点图，不点「换一张」。
+ */
+.capbox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--bg-sub);
+  border: 1px solid var(--line);
+}
+.cap-msg {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--sub);
+}
+.cap-label {
+  font-size: var(--fs-sm);
+  color: var(--sub);
+}
+.cap-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.cap-img {
+  width: 132px;
+  height: 40px;
+  object-fit: contain;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-strong);
+  background: #fff;
+  cursor: pointer;
+  /* 换图时别闪一下白 */
+  transition: opacity 0.12s;
+}
+.cap-img:hover {
+  opacity: 0.85;
+}
+.cap-input {
+  width: 132px;
+  letter-spacing: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-transform: uppercase;
+}
+
+/* 「一直登不进去？」那条兜底提示：比普通说明再弱一档，别喧宾夺主 */
+.note.tip {
+  margin-top: calc(-1 * var(--sp-1));
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--dim);
+  opacity: 0.85;
 }
 
 .note.warn {

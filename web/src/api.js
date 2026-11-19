@@ -127,6 +127,7 @@ export const api = {
   get: (p) => request(p),
   post: (p, body) => request(p, { method: 'POST', body }),
   patch: (p, body) => request(p, { method: 'PATCH', body }),
+  put: (p, body) => request(p, { method: 'PUT', body }),
   del: (p) => request(p, { method: 'DELETE' }),
 }
 

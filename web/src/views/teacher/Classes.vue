@@ -186,51 +186,91 @@
         </template>
       </CardHead>
 
+      <!--
+        登录方式：**按插件清单生成**，不写死。
+        后端扫 auth-providers/ 目录，这里就渲染几个选项；
+        往那个目录丢一个新插件，这一块自动多一项。
+      -->
       <div class="lgrow">
-        <label class="lgopt">
-          <input v-model="login.mode" type="radio" value="local" @change="setLoginMode('local')" />
+        <label v-for="p in providers" :key="p.key" class="lgopt">
+          <input
+            type="radio"
+            :checked="login.provider === p.key"
+            :value="p.key"
+            @change="setLoginMode(p.key)"
+          />
           <span>
-            <b>学号 + 姓名</b>
-            <em class="dim mini">和名单比对，不联网；学生只要知道学号就能进</em>
+            <b>{{ p.name }}</b>
+            <em class="dim mini">{{ p.desc }}</em>
           </span>
         </label>
-        <label class="lgopt">
-          <input v-model="login.mode" type="radio" value="kg" @change="setLoginMode('kg')" />
-          <span>
-            <b>账号 + 密码</b>
-            <em class="dim mini">能登上学校平台才放行；第一次核验后记住，之后本地比对</em>
-          </span>
-        </label>
+        <p v-if="!providers.length" class="dim mini">没有可用的登录方式（插件都没加载成功，看启动日志）。</p>
       </div>
 
-      <p v-if="login.mode === 'kg'" class="dim mini">
+      <!--
+        配置项同样由插件声明驱动：它声明 settings，这里按 type 渲染。
+        没有配置项的插件（比如「学号+姓名」）整块不出现。
+      -->
+      <template v-if="curSettings.length">
+        <h4 class="lgh4">{{ curProvider.name }} 的设置</h4>
+
+        <div v-for="s in curSettings" :key="s.key" class="lgfield">
+          <!-- 开关 -->
+          <template v-if="s.type === 'bool'">
+            <label class="chkrow">
+              <input
+                type="checkbox"
+                :checked="setValOf(s.key) === true"
+                @change="saveSetting(s.key, $event.target.checked)"
+              />
+              <span>
+                <b>{{ s.label }}</b>
+                <em v-if="s.hint" class="dim mini">{{ s.hint }}</em>
+              </span>
+            </label>
+          </template>
+
+          <!-- 多个地址（轮询分流） -->
+          <template v-else-if="s.type === 'url-list'">
+            <span class="lgf-label">{{ s.label }}</span>
+            <div class="lgbases">
+              <label v-for="(b, i) in setValOf(s.key) || []" :key="i" class="lgbase">
+                <span class="dim mini">{{ i + 1 }}</span>
+                <input
+                  class="input"
+                  :value="b"
+                  placeholder="http://ip:port"
+                  @input="setBase(i, $event.target.value)"
+                  @blur="saveBases"
+                />
+                <button class="btn mini" title="删掉这个入口" @click="dropBase(i)">×</button>
+              </label>
+              <button class="btn mini" @click="addBase">＋ 加一个</button>
+            </div>
+            <p v-if="s.hint" class="dim mini">{{ s.hint }}</p>
+          </template>
+
+          <!-- 其余按单行文本处理（text / url / number / select 以后再分） -->
+          <template v-else>
+            <span class="lgf-label">{{ s.label }}</span>
+            <input
+              class="input"
+              :value="setValOf(s.key) || ''"
+              :placeholder="s.placeholder || ''"
+              @blur="saveSetting(s.key, $event.target.value)"
+            />
+            <p v-if="s.hint" class="dim mini">{{ s.hint }}</p>
+          </template>
+        </div>
+      </template>
+
+      <p v-if="login.provider === 'kg'" class="dim mini lgwarn">
         连错 <b>3</b> 次本系统就暂停该账号登录（不会让它数到外部的 5 次上限）——
         这样最坏只是「进不了课堂系统」，而不是「学校账号被锁」。
       </p>
 
-      <template v-if="login.mode === 'kg'">
-        <label class="chkrow">
-          <input v-model="login.verifyEachTime" type="checkbox" @change="saveVerifyEach" />
-          <span>
-            <b>每次登录都向平台核验</b>
-            <em class="dim mini">
-              关闭（默认）：第一次通过后记住密码，之后本地比对 ——
-              学生登录快（50 毫秒级），也少消耗平台的失败次数。
-              打开：每次都问平台（1 秒多），最准，但每次都在消耗它的失败计数。
-              这个区别学生看不到，他只需要输账号 + 密码。
-            </em>
-          </span>
-        </label>
-
-        <div class="lgbases">
-          <label v-for="(b, i) in login.kgBases" :key="i" class="lgbase">
-            <span class="dim mini">入口 {{ i + 1 }}</span>
-            <input v-model="login.kgBases[i]" class="input" placeholder="http://ip:port" @blur="saveBases" />
-          </label>
-        </div>
-        <p class="dim mini">
-          两个入口内容一样，按请求轮询分流。失败不会换另一个重试（换了也只是多消耗一次失败次数）。
-        </p>
+      <!-- 只要本班有人走账号密码，「记住的密码」这块就成立（不管是单独设的还是跟随全局） -->
+      <template v-if="anyKg">
 
         <div class="lgcreds">
           <span class="dim mini">
@@ -242,16 +282,46 @@
         </div>
       </template>
 
+      <!--
+        批量设置：勾几行、选个方式、应用。
+        单个改直接用行内下拉，不用先勾选 —— 两种粒度都常用。
+      -->
+      <div class="lgbar">
+        <span class="dim mini">
+          已选 <b>{{ picked.size }}</b> 人
+          <template v-if="!picked.size">（勾左边方框可批量设置）</template>
+        </span>
+        <span class="spacer"></span>
+        <select v-model="batchMode" class="select" style="width: 168px" :disabled="!picked.size">
+          <option value="">跟随全局（{{ providerName(login.provider) }}）</option>
+          <option value="local">学号 + 姓名</option>
+          <option value="kg">账号 + 密码</option>
+        </select>
+        <button class="btn mini primary" :disabled="!picked.size" @click="applyBatch">
+          {{ batchMode ? '应用到所选' : '清掉所选覆盖' }}
+        </button>
+      </div>
+
       <table class="lgtbl">
         <thead>
           <tr>
+            <th class="pickcol">
+              <input
+                type="checkbox"
+                :checked="loginRows.length > 0 && picked.size >= loginRows.length"
+                title="全选 / 全不选"
+                @change="togglePickAll"
+              />
+            </th>
             <th>学号</th>
             <th>姓名</th>
+            <!-- 按人设置：默认跟随全局，个别可以单独指定 -->
+            <th class="modecol">登录方式</th>
             <!--
-              只有「账号 + 密码」模式才会记住密码；「学号 + 姓名」模式下这一列永远是 —，
-              既占宽度又让人以为是坏了。跟着模式一起藏。
+              只要本班有人走「账号 + 密码」就显示这列 —— 不能只看全局 mode：
+              全局是学号+姓名、但有学生单独设成账号密码时，他们的密码也存在这里。
             -->
-            <th v-if="login.mode === 'kg'">记住的密码</th>
+            <th v-if="anyKg">记住的密码</th>
             <th class="num">本系统失败</th>
             <th class="num">平台自报输错</th>
             <th>状态</th>
@@ -259,15 +329,34 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="s in loginRows" :key="s.sid">
+          <tr v-for="s in loginRows" :key="s.sid" :class="{ picked: picked.has(s.sid) }">
+            <td class="pickcol">
+              <input type="checkbox" :checked="picked.has(s.sid)" @change="togglePick(s.sid)" />
+            </td>
             <td class="mono">{{ s.sid }}</td>
             <td>{{ s.name }}</td>
+            <!--
+              登录方式。空值 = 跟随全局（下拉里直接写出全局值，省得老师切到设置页去看）。
+              单独设过的那一行有个小圆点，否则分不清「跟随全局」和「恰好设成了一样」。
+            -->
+            <td class="modecol">
+              <span v-if="isOverride(s.sid)" class="ovdot" title="这个学生单独设置过，不跟随全局"></span>
+              <select
+                class="select mode-sel"
+                :value="overridesMap.get(s.sid) || ''"
+                @change="setMode(s.sid, $event.target.value)"
+              >
+                <option value="">跟随全局（{{ providerName(login.provider) }}）</option>
+                <option value="local">学号 + 姓名</option>
+                <option value="kg">账号 + 密码</option>
+              </select>
+            </td>
             <!--
               记住的密码：默认打码，点眼睛才显示。
               学生忘了自己当初填的是什么、或者要核对是不是和青果一致时用。
               上一版存的是 scrypt 派生值（还原不出来），那些显示「旧记录」。
             -->
-            <td v-if="login.mode === 'kg'" class="pwdcol">
+            <td v-if="anyKg" class="pwdcol">
               <span v-if="!credOf(s.sid)" class="dim">—</span>
               <span v-else class="pwdshow">
                 <!-- 旧记录（scrypt 那版）看不到原文，但照样能删 -->
@@ -336,7 +425,8 @@
             </td>
           </tr>
           <tr v-if="!loginRows.length">
-            <td :colspan="login.mode === 'kg' ? 7 : 6" class="empty">这个班没有学生</td>
+            <!-- 列数：勾选 + 学号 + 姓名 + 登录方式 + (记住的密码) + 失败 + 输错 + 状态 + 操作 -->
+            <td :colspan="anyKg ? 9 : 8" class="empty">这个班没有学生</td>
           </tr>
         </tbody>
       </table>
@@ -663,7 +753,9 @@ const tab = ref(['board', 'log', 'login'].indexOf(route.query.tab) >= 0 ? route.
 
 /* ---------------- 登录管理 ---------------- */
 const login = reactive({
-  mode: 'local',
+  /** 全局默认用哪个插件（值就是插件 key，比如 local / kg） */
+  provider: 'local',
+  mode: 'local', // 旧字段，和 provider 同步，别处还在读
   verifyEachTime: false,
   kgBases: [],
   rememberedCount: 0,
@@ -671,29 +763,204 @@ const login = reactive({
   students: [],
 })
 
-/** 改「每次登录都核验」 */
-async function saveVerifyEach() {
+/* ---------------- 登录插件 ---------------- */
+
+/**
+ * 可选的登录方式（由后端按 auth-providers/ 目录扫出来）。
+ *
+ * 每一项除了元信息还带 settings（老师要配什么）和 values（当前值）——
+ * 设置页照 settings 渲染表单，**加新插件时这里一行都不用改**。
+ */
+const providers = ref([])
+
+/** 当前选中的那个插件的声明（用来渲染它的配置项） */
+const curProvider = computed(() => providers.value.find((p) => p.key === login.provider) || null)
+
+/** 只有「有配置项」的插件才渲染设置区，local 那种没得配就不占地方 */
+const curSettings = computed(() => (curProvider.value && curProvider.value.settings) || [])
+
+/** 某个配置项当前的值 */
+function setValOf(key) {
+  const v = (curProvider.value && curProvider.value.values) || {}
+  return v[key]
+}
+/** 写回本地缓存的值（避免改一个字段就整表重拉） */
+function patchVal(key, value) {
+  const list = providers.value.map((p) => {
+    if (p.key !== login.provider) return p
+    return Object.assign({}, p, { values: Object.assign({}, p.values || {}, { [key]: value }) })
+  })
+  providers.value = list
+}
+
+/** 插件 key → 显示名（表格里「跟随全局（青果平台）」那处用） */
+function providerName(key) {
+  const p = providers.value.find((x) => x.key === key)
+  return p ? p.name : key || '—'
+}
+
+async function loadProviders() {
   try {
-    await api.patch('/api/settings/student-auth', { verifyEachTime: login.verifyEachTime })
-    toast.value = login.verifyEachTime
-      ? '已开启：每次登录都向平台核验'
-      : '已关闭：记住密码后本地比对'
+    const r = await api.get('/api/settings/student-auth/providers')
+    providers.value = r.providers || []
+    login.provider = r.current || 'local'
+    login.mode = login.provider
+  } catch (e) {
+    providers.value = []
+  }
+}
+
+/**
+ * 保存某个插件的某一项配置。
+ *
+ * 统一走 `providers: { [key]: { [field]: value } }` —— 加一个字段不用改后端，
+ * 因为 setStudentAuth 是按 key 合并的。
+ */
+async function saveSetting(field, value) {
+  const key = login.provider
+  if (!key) return
+  patchVal(field, value)
+  try {
+    await api.patch('/api/settings/student-auth', { providers: { [key]: { [field]: value } } })
+    toast.value = '已保存'
   } catch (e) {
     toast.value = '保存失败：' + e.message
+    await loadProviders()
+  }
+}
+
+/**
+ * 换一种登录方式。
+ *
+ * 只改**全局默认** —— 单独设置过的学生不受影响（他们各自按 auth_overrides 走），
+ * 所以切完要提醒一句有多少人例外。
+ */
+async function setLoginMode(key) {
+  const ovCount = overridesMap.value.size
+  const p = providers.value.find((x) => x.key === key)
+  try {
+    await api.patch('/api/settings/student-auth', { provider: key })
+    login.provider = key
+    login.mode = key
+    await loadLogin()
+    toast.value =
+      '已切换：学生现在用「' +
+      ((p && p.name) || key) +
+      '」登录' +
+      (ovCount ? '（' + ovCount + ' 个学生单独设置过，不受影响）' : '')
+  } catch (e) {
+    toast.value = '切换失败：' + e.message
+    await loadProviders()
+  }
+}
+
+/* 多入口（url-list 类型）：一项一个输入框 + 增删 */
+function addBase() {
+  const list = (setValOf('bases') || []).concat([''])
+  saveSetting('bases', list)
+}
+function setBase(i, v) {
+  const list = (setValOf('bases') || []).slice()
+  list[i] = v
+  patchVal('bases', list)
+}
+async function saveBases() {
+  await saveSetting('bases', (setValOf('bases') || []).filter((x) => String(x || '').trim()))
+}
+function dropBase(i) {
+  const list = (setValOf('bases') || []).slice()
+  list.splice(i, 1)
+  saveSetting('bases', list)
+}
+
+/* ---------------- 按人设置登录方式 ---------------- */
+
+/**
+ * sid → 单独设置的登录方式（'local' | 'kg'）。
+ * 没在这个 Map 里 = 跟随全局（login.mode）。
+ *
+ * 只拉「有覆盖」的那些：一个班 60 人里通常只有两三个需要单独设，
+ * 逐行传一遍纯属浪费。
+ */
+const overridesMap = ref(new Map())
+/** 勾选中的行（批量设置用） */
+const picked = ref(new Set())
+
+/** 这个学生实际用哪种方式 */
+function modeOf(sid) {
+  return overridesMap.value.get(sid) || login.mode
+}
+/** 是不是单独设过（表格里标一下，否则分不清「跟随全局」和「恰好一样」） */
+function isOverride(sid) {
+  return overridesMap.value.has(sid)
+}
+/** 班里有没有人走账号密码 —— 有才显示「记住的密码」那一列 */
+const anyKg = computed(() => loginRows.value.some((s) => modeOf(s.sid) === 'kg'))
+
+function togglePick(sid) {
+  const s = new Set(picked.value)
+  if (s.has(sid)) s.delete(sid)
+  else s.add(sid)
+  picked.value = s
+}
+function togglePickAll() {
+  if (picked.value.size >= loginRows.value.length) picked.value = new Set()
+  else picked.value = new Set(loginRows.value.map((s) => s.sid))
+}
+
+/**
+ * 改一个人的登录方式。
+ *
+ * 传空串 = 清除覆盖（回到跟随全局）。
+ * 改完立刻回写本地 Map，不整表重拉 —— 重拉会把「哪几行正显示明文密码」清空。
+ */
+async function setMode(sid, mode) {
+  try {
+    await api.put('/api/settings/student-auth/overrides', { sids: [sid], mode })
+    const m = new Map(overridesMap.value)
+    if (mode) m.set(sid, mode)
+    else m.delete(sid)
+    overridesMap.value = m
+    toast.value = mode
+      ? '已设为' + (mode === 'kg' ? '账号 + 密码' : '学号 + 姓名')
+      : '已恢复为跟随全局'
+  } catch (e) {
+    toast.value = '设置失败：' + e.message
     await loadLogin()
   }
 }
 
-/** 改平台入口（两个内容一样，轮询分流） */
-async function saveBases() {
+/** 批量应用（工具栏那个「应用」） */
+async function applyBatch() {
+  const sids = [...picked.value]
+  if (!sids.length) return
+  const mode = batchMode.value
   try {
-    await api.patch('/api/settings/student-auth', { kgBases: login.kgBases })
-    toast.value = '入口已保存'
+    const r = await api.put('/api/settings/student-auth/overrides', { sids, mode })
+    const m = new Map(overridesMap.value)
+    for (const s of sids) {
+      if (mode) m.set(s, mode)
+      else m.delete(s)
+    }
+    overridesMap.value = m
+    picked.value = new Set()
+    toast.value = mode
+      ? '已把 ' + sids.length + ' 个学生设为' + (mode === 'kg' ? '账号 + 密码' : '学号 + 姓名')
+      : '已把 ' + sids.length + ' 个学生恢复为跟随全局'
   } catch (e) {
-    toast.value = '保存失败：' + e.message
-    await loadLogin()
+    toast.value = '批量设置失败：' + e.message
   }
 }
+
+/** 批量工具栏选的目标方式 */
+const batchMode = ref('')
+
+/*
+ * 这里原来有 saveVerifyEach() 和 saveBases() 两个写死的方法，
+ * 分别 PATCH `{ verifyEachTime }` 和 `{ kgBases }`。
+ * 插件化之后配置项由插件声明，统一走 saveSetting(field, value) ——
+ * 加一个配置字段不用再写一个方法。
+ */
 
 /** 清空所有记住的密码（学生改过密码、或怀疑泄露时用） */
 async function clearCreds() {
@@ -782,15 +1049,34 @@ async function loadLogin() {
   if (!activeId.value) return
   try {
     const r = await api.get('/api/classes/' + activeId.value + '/login-admin')
-    login.mode = r.mode === 'kg' ? 'kg' : 'local'
-    login.verifyEachTime = r.verifyEachTime === true
-    login.kgBases = Array.isArray(r.kgBases) ? r.kgBases : []
+    login.provider = r.mode === 'kg' ? 'kg' : 'local'
+    login.mode = login.provider
+    /* 配置项由插件声明，这一份只是给「表头提示」之类的地方快速取用 */
+    await loadProviders()
     login.rememberedCount = Number(r.rememberedCount || 0)
     login.blockedCount = Number(r.blockedCount || 0)
     login.students = Array.isArray(r.students) ? r.students : []
 
-    /* 记住的密码（明文，按本班过滤）。只有账号密码模式才有这列，别的模式不用拉 */
-    if (login.mode === 'kg') {
+    /* 按人设置的登录方式（只有覆盖过的才回，大多数跟随全局） */
+    try {
+      const ov = await api.get('/api/settings/student-auth/overrides?classId=' + activeId.value)
+      const m = new Map()
+      for (const it of ov.items || []) m.set(it.sid, it.mode)
+      overridesMap.value = m
+    } catch (e) {
+      overridesMap.value = new Map()
+    }
+    picked.value = new Set()
+
+    /*
+     * 记住的密码（明文，按本班过滤）。
+     *
+     * 判断「要不要拉」不能只看全局 mode：有人单独设成 kg 时，
+     * 全局是 local 也得拉 —— 那些学生的密码就存在这里。
+     * 所以条件放宽成「全局是 kg，或者本班有人覆盖成 kg」。
+     */
+    const hasKg = login.mode === 'kg' || [...overridesMap.value.values()].includes('kg')
+    if (hasKg) {
       try {
         const c = await api.get('/api/settings/student-auth/creds?classId=' + activeId.value)
         const m = new Map()
@@ -809,17 +1095,11 @@ async function loadLogin() {
   }
 }
 
-/** 切登录方式：和课程管理页是同一个配置，改哪边都一样 */
-async function setLoginMode(mode) {
-  try {
-    await api.patch('/api/settings/student-auth', { mode, verifyEachTime: login.verifyEachTime })
-    toast.value = '已切换：学生现在用' + (mode === 'kg' ? '账号 + 密码' : '学号 + 姓名') + '登录'
-    await loadLogin()
-  } catch (e) {
-    toast.value = '切换失败：' + e.message
-    await loadLogin()
-  }
-}
+/*
+ * 这里原来还有一个 setLoginMode(mode)：只 PATCH `{ mode }`，
+ * 和图省写死的两种方式配套。插件化之后由上面那个统一的 setLoginMode(key) 接管 ——
+ * 两个同名函数会让编译直接报重复声明。
+ */
 
 /* 切班级时如果正停在登录管理页，跟着刷新那份数据 */
 watch(activeId, () => {
@@ -1834,6 +2114,38 @@ th.on .sortmark {
   color: #475569;
 }
 /* 登录管理 */
+
+/*
+ * 插件配置区（按插件声明的 settings 渲染）。
+ * 换了一个登录方式，它的配置项就出现在这下面 —— 没有配置项的插件整块不出现。
+ */
+.lgh4 {
+  margin: var(--sp-4) 0 var(--sp-2);
+  padding-top: var(--sp-3);
+  border-top: 1px dashed var(--line);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: #4a525a;
+}
+.lgfield {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-3);
+}
+.lgf-label {
+  font-size: var(--fs-sm);
+  color: var(--sub);
+}
+/* 「连错 3 次就暂停」那条说明，和配置区之间留一口气 */
+.lgwarn {
+  margin: var(--sp-3) 0 var(--sp-4);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--bg-sub);
+  line-height: 1.6;
+}
+
 .lgrow {
   display: flex;
   gap: var(--sp-3);
@@ -1909,13 +2221,23 @@ th.on .sortmark {
   gap: var(--sp-2);
   margin: 8px 0 4px;
 }
+/*
+ * 一行一个入口：序号 + 输入框 + 删除，**横排**。
+ * 原来是竖排（旧版把标签放输入框上方），换成横排之后控件挤不下会掉行，所以显式 nowrap。
+ */
 .lgbase {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: nowrap;
 }
 .lgbase .input {
-  width: 220px;
+  width: 200px;
+}
+.lgbase .btn.mini {
+  flex: none;
+  padding: 0 7px;
 }
 /*
  * 记住的密码这一列：默认打码，点眼睛显示明文。
@@ -1924,6 +2246,69 @@ th.on .sortmark {
 /* 160：够放「Pwd-Alpha-111」这种 13 字符的明文 + 两个 20px 图标 */
 .lgtbl .pwdcol {
   width: 160px;
+}
+
+/* ---------------- 按人设置登录方式 ---------------- */
+
+/* 批量工具栏：和下面的表格同宽，贴在表头上方 */
+.lgbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-2) var(--sp-2) 0;
+  margin-bottom: var(--sp-2);
+  border-bottom: 1px dashed var(--line);
+}
+.lgbar .spacer {
+  flex: 1;
+}
+
+/* 勾选列：窄，内容居中 */
+.lgtbl .pickcol {
+  width: 34px;
+  text-align: center;
+  padding-left: var(--sp-2);
+  padding-right: 0;
+}
+.lgtbl .pickcol input {
+  cursor: pointer;
+  width: 14px;
+  height: 14px;
+}
+
+/* 登录方式列 */
+.lgtbl .modecol {
+  width: 176px;
+}
+/* 行内的下拉比标准控件小一号 —— 它是「表格里的一个格子」，不该比同行文字重 */
+.lgtbl .mode-sel {
+  width: 150px;
+  height: 24px;
+  font-size: var(--fs-sm);
+  padding: 0 6px;
+}
+
+/*
+ * 单独设置过的小圆点。
+ * 光看下拉分不清「跟随全局」和「恰好设成了跟全局一样」——
+ * 而这两件事以后的行为不同（全局改了，前者跟着变、后者不变）。
+ */
+.lgtbl .ovdot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--brand);
+  margin-right: 5px;
+  vertical-align: middle;
+}
+
+/* 勾选中的行：浅底提示，避免"选了哪些"看不出来 */
+.lgtbl tbody tr.picked {
+  background: var(--brand-wash);
+}
+.lgtbl tbody tr.picked:hover {
+  background: #e6eef4;
 }
 .lgtbl .pwdshow {
   display: inline-flex;

@@ -9,6 +9,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import Fastify from 'fastify'
 import * as errlog from './lib/errlog.js'
+import { loadProviders } from './lib/auth-providers/index.js'
 import fastifyStatic from '@fastify/static'
 import fastifyWebsocket from '@fastify/websocket'
 import { config } from './config.js'
@@ -209,6 +210,14 @@ export async function buildApp(opts = {}) {
     }
     done()
   })
+
+  /*
+   * 登录插件：启动时扫一遍 auth-providers/。
+   * 加载失败只记日志、跳过那个插件 —— 某人写错一个文件不该让整套登录挂掉。
+   */
+  const pr = await loadProviders((o) => errlog.write(Object.assign({ kind: 'app' }, o || {})))
+  app.log.info('登录插件：' + (pr.ok.join(', ') || '（无）'))
+  if (pr.failed.length) app.log.warn('登录插件加载失败：' + pr.failed.map((x) => x.dir).join(', '))
 
   /* ---------------- 业务路由 ---------------- */
   await app.register(fastifyWebsocket) // 投屏中继 /ws 要先于 cast 路由注册

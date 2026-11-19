@@ -224,6 +224,22 @@ export const config = {
 /** 青果两个入口（内容一样，轮询分流） */
 export const DEFAULT_KG_BASES = ['http://117.159.97.151:8888', 'http://117.159.97.151:9999']
 
+/**
+ * 读学生登录配置。
+ *
+ * 结构演进过一次（插件化），这里做**读时兼容**：
+ *
+ *   旧（还在线上升级前写的机器上）     新
+ *   studentAuth.mode: 'kg'        →   studentAuth.provider: 'kg'
+ *   studentAuth.kgBases: [...]    →   studentAuth.providers.kg.bases: [...]
+ *   studentAuth.verifyEachTime    →   studentAuth.providers.kg.verifyEachTime
+ *
+ * 不去改盘上的旧文件 —— 老师下次在界面上保存时自然写成新结构。
+ * 这样「教学机上那份 config.json 还没动」和「已经改过」两种机器跑起来一模一样。
+ *
+ * 返回值里 mode / kgBases / verifyEachTime 三个旧字段仍然保留：
+ * 路由层和插件都在读它们，一次性全改风险没必要。
+ */
 export function getStudentAuth() {
   let c = {}
   try {
@@ -232,10 +248,16 @@ export function getStudentAuth() {
     c = {}
   }
   const sa = (c && c.studentAuth) || {}
-  const mode = sa.mode === 'kg' ? 'kg' : 'local'
-  const bases = Array.isArray(sa.kgBases)
-    ? sa.kgBases.map((x) => String(x || '').trim()).filter((x) => /^https?:\/\//i.test(x)).slice(0, 5)
-    : []
+
+  /* provider 优先；老配置只有 mode */
+  const provider = String(sa.provider || sa.mode || '') === 'kg' ? 'kg' : 'local'
+
+  /* 各插件自己的配置：新结构在 providers[key]，老结构平铺在 studentAuth 上 */
+  const pc = (sa.providers && typeof sa.providers === 'object' && sa.providers) || {}
+  const kgRaw = (pc.kg && typeof pc.kg === 'object' && pc.kg) || sa
+
+  const rawBases = Array.isArray(kgRaw.bases) ? kgRaw.bases : Array.isArray(sa.kgBases) ? sa.kgBases : []
+  const bases = rawBases.map((x) => String(x || '').trim()).filter((x) => /^https?:\/\//i.test(x)).slice(0, 5)
   /*
    * verifyEachTime：每次登录都去问青果，不用本地记住的密码。
    *
@@ -245,30 +267,81 @@ export function getStudentAuth() {
    * 这是**老师**的决定，学生端不该看见这个区别：
    * 学生永远只输「学号 + 密码」，错了就是「学号或密码不对」。
    */
-  const verifyEachTime = sa.verifyEachTime === true
-  return { mode, kgBases: bases.length ? bases : DEFAULT_KG_BASES.slice(), verifyEachTime }
+  const verifyEachTime = kgRaw.verifyEachTime === true
+
+  const providers = {
+    kg: { bases: bases.length ? bases : DEFAULT_KG_BASES.slice(), verifyEachTime },
+    local: {},
+  }
+
+  return {
+    mode: provider, // 旧字段，等同 provider
+    provider,
+    kgBases: providers.kg.bases, // 旧字段，等同 providers.kg.bases
+    verifyEachTime,
+    providers,
+  }
 }
 
-/** 改学生登录方式；只动 studentAuth 这一个键，别的配置原样保留 */
+/**
+ * 某个插件自己的配置（直接喂给它的 verify/settings）。
+ *
+ * 没有配置的插件返回空对象 —— 插件自己判「没配好」并回 CONFIG_ERROR，
+ * 系统层不该替它决定哪些字段是必填的。
+ */
+export function providerSettings(key) {
+  const sa = getStudentAuth()
+  return (sa.providers && sa.providers[String(key || '')]) || {}
+}
+
+/**
+ * 改学生登录配置。只动 studentAuth 这一个键，别的配置原样保留。
+ *
+ * 两种入参都认：
+ *   新  { provider: 'kg', providers: { kg: { bases: [...], verifyEachTime: true } } }
+ *   旧  { mode: 'kg', kgBases: [...], verifyEachTime: true }      ← 老前端 / 脚本
+ *
+ * 写出去的一律是新结构（盘上不再有 kgBases 那种平铺字段）。
+ */
 export function setStudentAuth(patch = {}) {
   const cur = readConfigFile()
-  const prev = (cur && cur.studentAuth) || {}
-  const mode = patch.mode === 'kg' ? 'kg' : patch.mode === 'local' ? 'local' : prev.mode === 'kg' ? 'kg' : 'local'
+  const before = getStudentAuth() // 已经做过旧→新的兼容，拿它当基准最省事
 
-  let bases
-  if (Array.isArray(patch.kgBases)) {
-    bases = patch.kgBases.map((x) => String(x || '').trim()).filter((x) => /^https?:\/\//i.test(x)).slice(0, 5)
-  } else if (Array.isArray(prev.kgBases) && prev.kgBases.length) {
-    bases = prev.kgBases
-  } else {
-    bases = DEFAULT_KG_BASES.slice()
+  /* provider：新字段优先，其次旧 mode，其次保持不变 */
+  const want = String(patch.provider || patch.mode || '')
+  const provider = want === 'kg' ? 'kg' : want === 'local' ? 'local' : before.provider
+
+  /* 各插件的配置：以现有值为底，用 patch.providers 里给的覆盖 */
+  const providers = JSON.parse(JSON.stringify(before.providers || {}))
+  const inProviders = patch.providers && typeof patch.providers === 'object' ? patch.providers : {}
+  for (const key of Object.keys(inProviders)) {
+    const v = inProviders[key]
+    if (!v || typeof v !== 'object') continue
+    providers[key] = Object.assign({}, providers[key] || {}, v)
   }
-  if (!bases.length) bases = DEFAULT_KG_BASES.slice()
 
-  const verifyEachTime =
-    patch.verifyEachTime === undefined ? prev.verifyEachTime === true : patch.verifyEachTime === true
+  /*
+   * 旧字段的平铺写法：落到 kg 那一份里。
+   * 保留它是为了让还没更新的前端（和手写脚本）不至于静默失效。
+   */
+  if (Array.isArray(patch.kgBases)) {
+    providers.kg = Object.assign({}, providers.kg || {}, {
+      bases: patch.kgBases.map((x) => String(x || '').trim()).filter((x) => /^https?:\/\//i.test(x)).slice(0, 5),
+    })
+  }
+  if (patch.verifyEachTime !== undefined) {
+    providers.kg = Object.assign({}, providers.kg || {}, { verifyEachTime: patch.verifyEachTime === true })
+  }
 
-  const next = Object.assign({}, cur, { studentAuth: { mode, kgBases: bases, verifyEachTime } })
+  /* 入口不能空：空了插件会直接回「没配好」，但更可能是老师清空后忘了填 */
+  const kg = providers.kg || {}
+  const bases = (Array.isArray(kg.bases) ? kg.bases : []).filter((x) => /^https?:\/\//i.test(String(x || '')))
+  providers.kg = Object.assign({}, kg, {
+    bases: bases.length ? bases : DEFAULT_KG_BASES.slice(),
+    verifyEachTime: kg.verifyEachTime === true,
+  })
+
+  const next = Object.assign({}, cur, { studentAuth: { provider, providers } })
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2), 'utf8')
   return getStudentAuth()
 }

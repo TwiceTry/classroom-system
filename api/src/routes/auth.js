@@ -6,7 +6,11 @@
  * 不接受前端再传 sid（这样改 URL 也看不到别人的东西）。
  */
 import { issue, revoke, checkPassword } from '../lib/auth.js'
-import { config, setPassword, getStudentAuth, setStudentAuth } from '../config.js'
+import * as overrides from '../lib/auth-overrides.js'
+import { providerFor, buildContext, runVerify, listProviders, getProvider } from '../lib/auth-providers/index.js'
+import { countsAsFailure, peekPending } from '../lib/auth-providers/types.js'
+import * as errlog from '../lib/errlog.js'
+import { config, setPassword, getStudentAuth, setStudentAuth, providerSettings } from '../config.js'
 import { requireAuth } from '../plugins/auth.js'
 import { badRequest, unauthorized, forbidden } from '../lib/errors.js'
 import * as repo from '../lib/repo.js'
@@ -40,6 +44,25 @@ function matchSid(account, sids) {
   return hit
 }
 
+/**
+ * 按插件声明的 credentials 从请求体里收集凭证。
+ *
+ * 为什么不直接传 req.body：插件只该拿到它自己声明过的字段。
+ * 把整个 body 递过去，等于让它有机会摸到别人的字段（比如 sid、captcha），
+ * 而"这个插件需要什么"应该是**它自己声明、系统照着给**。
+ *
+ * 缺的字段给空串而不是 undefined —— 插件里写 `ctx.credentials.password` 时，
+ * 空串能被 `if (!password)` 拦住，undefined 更容易在拼接时变成字符串 "undefined"。
+ */
+function collectCreds(plugin, body) {
+  const out = {}
+  for (const f of (plugin && plugin.credentials) || []) {
+    if (!f || !f.key) continue
+    out[f.key] = String((body && body[f.key]) ?? '')
+  }
+  return out
+}
+
 export default async function authRoutes(app) {
   /** 教师登录 */
   app.post('/api/auth/login/teacher', {
@@ -71,6 +94,17 @@ export default async function authRoutes(app) {
           sid: { type: 'string', maxLength: 40 },
           name: { type: 'string', maxLength: 40 },
           password: { type: 'string', maxLength: 128 },
+          /*
+           * 学生自己填的图形验证码（上一轮登录接口返回 needCaptcha 时才会有）。
+           * handle 是服务端给的不透明串，用来找回当时那一份平台会话。
+           */
+          captcha: {
+            type: 'object',
+            properties: {
+              code: { type: 'string', maxLength: 12 },
+              handle: { type: 'string', maxLength: 64 },
+            },
+          },
         },
       },
     },
@@ -99,7 +133,15 @@ export default async function authRoutes(app) {
       if (manualBlocked) throw unauthorized('这个账号已被老师禁止登录，请联系老师')
 
       const sa = getStudentAuth() // 读一次：mode 和青果入口来自同一份配置
-      const mode = sa.mode
+      /*
+       * 这个学生实际用哪种方式：先看他有没有单独设置，没有才回落到全局。
+       *
+       * 为什么需要按人覆盖：一节课上两种方式并存是常态 ——
+       * 大部分学生走青果账号密码，个别学生青果密码老对不上（或者账号被锁），
+       * 老师想让他先用「学号 + 姓名」进来上课。
+       * 反过来也有：默认学号+姓名，但个别要交作业的要求必须走青果。
+       */
+      const mode = overrides.modeFor(sid, sa.mode)
 
       if (mode === 'kg') {
         const account = sid // 青果账号，可能不等于学号
@@ -144,19 +186,54 @@ export default async function authRoutes(app) {
         const local = sa.verifyEachTime ? null : creds.verify(account, password)
 
         if (local !== true) {
-          const { verifyStudent } = await import('../lib/kg-auth.js')
-          const r = await verifyStudent(account, password, { bases: sa.kgBases })
-          if (!r.ok) {
-            const m = String(r.message || '')
+          /*
+           * 走 kg 插件。
+           *
+           * 原来这里是 `verifyStudent()` + 一串中文正则去猜「算不算凭证错」。
+           * 插件化之后不用猜了：插件给 reason，`countsAsFailure()` 说该不该记。
+           * 这比正则可靠 —— 平台改一次文案，正则就悄悄失效，而 code 不会。
+           */
+          const p = providerFor('kg', sa.mode === 'kg' ? 'kg' : '')
+          if (!p) throw unauthorized('登录服务还没配好，请联系老师')
 
-            /*
-             * 凭据错 → 本地记一次。网络类问题（超时/连不上/服务不可用）不记：
-             * 那是我们的问题，不该算到学生头上。
-             */
-            if (!/超时|连不上|不可用/.test(m)) {
-              // 顺手认一下学号（认不出就算了），这样班级管理页能按学号显示这条失败记录
+          const logFn = (o) =>
+            errlog.write(Object.assign({ kind: 'kg-login', sid: account, target: (sa.kgBases || [])[0] || '' }, o || {}))
+
+          const out = await runVerify(
+            p,
+            buildContext({
+              /* 这里传 account（可能带 WP 前缀），不是匹配出来的 sid —— 平台认的是账号 */
+              sid: account,
+              credentials: collectCreds(p, req.body),
+              /* 学生上一轮填的图形码（首次提交时为 null） */
+              captcha: req.body.captcha && req.body.captcha.code ? req.body.captcha : null,
+              /* 插件自己的配置（bases / verifyEachTime），不再由系统层拼 */
+              settings: providerSettings(p.key),
+              repo,
+              request: { ip: req.ip, ua: req.headers['user-agent'] || '' },
+              log: logFn,
+            }),
+            logFn
+          )
+
+          /*
+           * 要图形验证码 —— 这**不是失败**，是还差一步。
+           * 以 200 返回，前端据此显示图片 + 输入框；
+           * 用 401 会走统一的错误处理，把学生踢回第一步。
+           */
+          if (out.outcome === 'challenge') {
+            return {
+              needCaptcha: true,
+              challenge: out.challenge || null,
+              message: out.message || '请输入图中的字符',
+            }
+          }
+
+          if (out.outcome !== 'ok') {
+            /* 只有「凭证错」才记失败。平台挂了 / 要短信验证 / 配置错，都不算学生的错 */
+            if (countsAsFailure(out.reason)) {
               const guess = matchSid(account, repo.listAllSids())
-              const st = fails.bump(account, r.counter, guess)
+              const st = fails.bump(account, out.counter, guess)
               if (st.justBlocked) {
                 throw unauthorized(
                   '这个账号已连续输错 ' +
@@ -165,14 +242,10 @@ export default async function authRoutes(app) {
                 )
               }
             }
-
-            /*
-             * 只说该说的：锁定 / 短信验证 / 输错次数 —— 这些是学生必须知道的后果。
-             * 其余（验证没通过、服务异常…）一律收敛成「账号或密码不对」。
-             */
-            throw unauthorized(/锁定|短信|次数|超时|连不上/.test(m) ? m : '账号或密码不对')
+            throw unauthorized(out.message || '账号或密码不对')
           }
-          // 青果认了 → 记下来，下次本地比对
+
+          // 平台认了 → 记下来，下次本地比对（省一次 1.3 秒的往返）
           try {
             creds.remember(account, password)
           } catch (e) {
@@ -197,15 +270,40 @@ export default async function authRoutes(app) {
           throw unauthorized('这个账号还没有加入本课程班级，请联系老师')
         }
       } else {
-        const name = String(req.body.name || '').trim()
-        if (!name) throw badRequest('学号与姓名都要填')
+        /*
+         * 走插件。
+         *
+         * 原来这里是一段写死的「查名册比对姓名」。
+         * 换成插件之后，这段逻辑搬进了 auth-providers/local/index.js ——
+         * 系统层不再知道「学号+姓名」这件事是怎么实现的，只认插件返回的 Outcome。
+         *
+         * 注意 kg 分支暂时还留着原样：它的插件（含验证码两阶段）还没搬完，
+         * 半吊子接进来比不接更危险。等 kg 插件就绪、回归测试过了再切。
+         */
+        /*
+         * 用**这个学生实际该用的插件**，而不是写死 'local'。
+         *
+         * 原来这里传 'local' 是因为 else 分支本身就代表「学号+姓名」。
+         * 但插件化之后，"不是 kg" 不等于 "就是 local" —— 可能还有第三个、第四个插件。
+         * 这一个参数决定了新插件能不能跑起来。
+         */
+        const p = providerFor(mode, getStudentAuth().provider || 'local')
+        if (!p) throw unauthorized('登录服务还没配好，请联系老师')
 
-        const cls0 = repo.findClassBySid(sid)
-        if (!cls0) throw unauthorized('这个学号不在任何班级名册里，找老师确认一下')
-        const stu0 = repo.findStudent(cls0.id, sid)
-        if (!stu0 || String(stu0.name).trim() !== name) {
-          throw unauthorized('学号与姓名对不上（注意姓名要和名册完全一致）')
-        }
+        const r = await runVerify(
+          p,
+          buildContext({
+            sid,
+            credentials: collectCreds(p, req.body),
+            settings: {},
+            repo,
+            request: { ip: req.ip, ua: req.headers['user-agent'] || '' },
+            log: (o) => errlog.write(Object.assign({ kind: 'auth-plugin', plugin: p.key, sid }, o || {})),
+          }),
+          (o) => errlog.write(Object.assign({ kind: 'auth-plugin', plugin: p.key, sid }, o || {}))
+        )
+
+        if (r.outcome !== 'ok') throw unauthorized(r.message || '登录失败，请重试')
       }
 
       const cls = repo.findClassBySid(sid)
@@ -243,11 +341,71 @@ export default async function authRoutes(app) {
    * 学生登录页要知道该显示哪种表单（学号+姓名 / 学号+密码）。
    * 公开接口，**只回 mode** —— 不回青果地址，没必要让外面知道入口。
    */
-  app.get('/api/auth/student-mode', async (req, reply) => {
-    // 老师随时可能切模式，这个响应不能被任何一层缓存住
-    reply.header('Cache-Control', 'no-store, must-revalidate')
-    return { mode: getStudentAuth().mode }
-  })
+  /*
+   * 原来这里有个 GET /api/auth/student-mode（只回全局 mode），**已删除**。
+   *
+   * 删它是因为它现在会说错话：登录方式可以按人设置了，
+   * 全局值只代表"默认"，不代表某个具体学生。谁再拿它去画登录表单，
+   * 就会在"个人覆盖"的班上画出错误的输入框（只给姓名框、其实要密码）。
+   * 正确的入口是下面的 student-probe —— 先给学号，再问方式。
+   */
+
+  /**
+   * 学生登录第一步：这个学号该用哪种方式登。
+   *
+   *   POST /api/auth/student-probe  { sid }
+   *   → { mode: 'local' | 'kg', needPassword: boolean }
+   *
+   * 为什么需要这一步：登录方式可以**按人设置**了（auth_overrides），
+   * 全局值不再代表「这个学生」。原来登录页一进来就问全局 mode，
+   * 于是「全局学号+姓名、但这个人被设成账号密码」时，页面只显示姓名框 ——
+   * 学生输完姓名点登录，才被告知要密码，而他根本没看到密码框。
+   *
+   * 所以顺序反过来：先拿到学号 → 问服务端 → 再决定画什么表单。
+   *
+   * 三条约束：
+   *   · 不缓存（老师刚改完就生效）
+   *   · 学号不存在时也回全局 mode —— 否则这个接口变成「学号是否存在」的探针
+   *   · 不回姓名/班级等信息，只回"要不要密码"
+   */
+  app.post(
+    '/api/auth/student-probe',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          required: ['sid'],
+          properties: { sid: { type: 'string', maxLength: 64 } },
+        },
+      },
+    },
+    async (req, reply) => {
+      reply.header('Cache-Control', 'no-store, must-revalidate')
+      const sid = String(req.body.sid || '').trim()
+      const sa = getStudentAuth()
+      /* 空学号直接按全局回，别让前端卡在这一步 */
+      const key = sid ? overrides.modeFor(sid, sa.provider) : sa.provider
+      const p = providerFor(key, sa.provider)
+      if (!p) return { mode: 'local', provider: 'local', needPassword: false, credentials: [], name: '' }
+
+      /*
+       * 把插件声明的**表单字段**一并回给前端 —— 前端照着 credentials 渲染第二步，
+       * 不再写「kg 就显示密码框」那种 if。
+       * 加一个新插件（比如要工号 + 短信码、或者扫码那种 credentials: []）时，
+       * 登录页一行都不用改。
+       */
+      return {
+        /* mode 是旧字段（前端还在读），provider 是新的 */
+        mode: p.key,
+        provider: p.key,
+        name: p.name,
+        desc: p.desc || '',
+        credentials: p.credentials || [],
+        captcha: p.captcha || { kind: 'none' },
+        needPassword: (p.credentials || []).some((f) => f.type === 'password'),
+      }
+    }
+  )
 
   /** 教师看当前学生登录校验方式 */
   app.get('/api/settings/student-auth', { preHandler: requireAuth('teacher') }, async (req, reply) => {
@@ -268,8 +426,121 @@ export default async function authRoutes(app) {
     } catch (e) {
       blockedCount = 0
     }
-    return Object.assign({}, sa, { rememberedCount, blockedCount })
+    return Object.assign({}, sa, { rememberedCount, blockedCount, overrideCount: overrides.count() })
   })
+
+  /**
+   * 换一张图形验证码。
+   *
+   *   POST /api/auth/captcha/refresh  { handle }
+   *   → { ok: true, challenge: { image, handle } } | { ok: false, reason: 'expired' }
+   *
+   * 前端只传 handle，**不传"当前是哪个登录方式"** ——
+   * 用 peekPending 从暂存里反查插件，避免让客户端决定用哪个插件跑。
+   *
+   * 换不出来（handle 过期 / 插件不支持）时前端应该提示「重新获取」，
+   * 而不是给一个空白框 —— 那比不显示还糟。
+   */
+  app.post(
+    '/api/auth/captcha/refresh',
+    {
+      schema: { body: { type: 'object', required: ['handle'], properties: { handle: { type: 'string', maxLength: 64 } } } },
+    },
+    async (req, reply) => {
+      reply.header('Cache-Control', 'no-store, must-revalidate')
+      const handle = String(req.body.handle || '')
+      const pk = peekPending(handle)
+      if (!pk) return { ok: false, reason: 'expired' }
+      const p = providerFor(pk.key, pk.key)
+      if (!p || typeof p.refresh !== 'function') return { ok: false, reason: 'unsupported' }
+      try {
+        const ch = await p.refresh({ handle })
+        return ch ? { ok: true, challenge: ch } : { ok: false, reason: 'expired' }
+      } catch (e) {
+        errlog.write({ kind: 'auth-plugin', plugin: pk.key, msg: '刷新验证码失败：' + e.message })
+        return { ok: false, reason: 'error' }
+      }
+    }
+  )
+
+  /**
+   * 有哪些登录方式可选、各自要配什么。
+   *
+   *   GET /api/settings/student-auth/providers
+   *   → { current: 'kg', providers: [ { key, name, desc, settings, values, ... } ] }
+   *
+   * 设置页照 settings 渲染配置表单 —— 加新插件时前端一行不用改。
+   * values 是每个插件**当前存着的配置**，直接回填到表单里。
+   */
+  app.get('/api/settings/student-auth/providers', { preHandler: requireAuth('teacher') }, async (req, reply) => {
+    reply.header('Cache-Control', 'no-store, must-revalidate')
+    const sa = getStudentAuth()
+    const providers = listProviders().map((p) =>
+      Object.assign({}, p, { values: (sa.providers && sa.providers[p.key]) || {} })
+    )
+    return { current: sa.provider, providers }
+  })
+
+  /* ---------------- 学生登录方式：按人单独设置 ---------------- */
+
+  /**
+   * 看这个班有哪些学生单独设过。
+   *
+   *   GET /api/settings/student-auth/overrides?classId=xxx
+   *   → { items: [{ sid, mode }], globalMode, total }
+   *
+   * 只回**有覆盖**的那些（大多数学生跟随全局，没必要逐行传）。
+   * globalMode 一并给出，前端可以在下拉里显示「跟随全局 · 账号+密码」。
+   */
+  app.get('/api/settings/student-auth/overrides', { preHandler: requireAuth('teacher') }, async (req, reply) => {
+    reply.header('Cache-Control', 'no-store, must-revalidate')
+    const classId = String(req.query.classId || '')
+    let sids = null
+    if (classId) {
+      const repo = await import('../lib/repo.js')
+      sids = (repo.rosterOf(classId) || []).map((s) => s.sid)
+    }
+    const map = overrides.listOf(sids)
+    const items = [...map.entries()].map(([sid, mode]) => ({ sid, mode }))
+    return { items, total: items.length, globalMode: getStudentAuth().mode }
+  })
+
+  /**
+   * 批量设置（单个也是传一个元素的数组，后端只有一条路径）。
+   *
+   *   PUT /api/settings/student-auth/overrides
+   *   body: { sids: ["2515270201", ...], mode: "local" | "kg" | "" }
+   *
+   * mode 传空串 = **清除覆盖**，回到跟随全局。
+   * 上限 500 个一次：全选一整个年级也就这个量级，再多就该分班点了。
+   */
+  app.put(
+    '/api/settings/student-auth/overrides',
+    {
+      preHandler: requireAuth('teacher'),
+      schema: {
+        body: {
+          type: 'object',
+          required: ['sids'],
+          properties: {
+            sids: { type: 'array', items: { type: 'string' }, maxItems: 500 },
+            mode: { type: 'string' },
+          },
+        },
+      },
+    },
+    async (req) => {
+      const mode = String(req.body.mode || '').trim()
+      /*
+       * 合法性交给加载器判断，这里不再写死 local / kg。
+       * 写死的话，新插件的 key 会被这里挡掉 —— 而且报错信息还会骗人
+       * （"只能是 local / kg"，可明明界面上列出来第三种了）。
+       */
+      if (mode && !getProvider(mode)) throw badRequest('没有这个登录方式：' + mode + '（留空表示跟随全局）')
+      const r = overrides.setMany(req.body.sids || [], mode)
+      return Object.assign({ ok: true, mode }, r)
+    }
+  )
 
   /**
    * 教师解锁「输错太多次被本地禁止」的账号。

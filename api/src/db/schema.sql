@@ -176,6 +176,24 @@ CREATE TABLE IF NOT EXISTS student_login_fails (
   updated_at     TEXT    NOT NULL DEFAULT ''
 );
 
+-- 学生登录方式的单独设置
+--
+-- 全局设置（data/config.json 的 studentAuth.mode）决定「默认怎么验」，
+-- 这张表存「谁不按默认来」。没有记录 = 跟随全局。
+--
+-- 主键用 sid 而不是 (class_id, sid)：学生登录时只知道自己的学号，
+-- 不知道老师是按哪个班算的；而且一个人重修、同时在两个班时，
+-- 他的登录方式本来就该是同一套。
+--
+-- 为什么不塞进 config.json：那里是「这台机器怎么验学生」的配置
+-- （青果入口、要不要每次核验），而「谁用哪种方式」是数据 ——
+-- 会随名单增删、要按班查、要能批量改。
+CREATE TABLE IF NOT EXISTS auth_overrides (
+  sid        TEXT PRIMARY KEY,
+  mode       TEXT NOT NULL,                    -- 'local'（学号+姓名）| 'kg'（账号+密码）
+  updated_at TEXT NOT NULL DEFAULT ''
+);
+
 -- 迁移版本（谁跑过哪些脚本）
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version    TEXT PRIMARY KEY,
