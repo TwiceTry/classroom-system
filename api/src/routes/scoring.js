@@ -309,9 +309,22 @@ export default async function scoringRoutes(app) {
         countMap.set(e.sid, (countMap.get(e.sid) || 0) + 1)
       }
 
-      // 最近几条操作（页面上「刚给谁加了分」用）
+      /*
+       * 右栏「本次课记录」：**这一项**的计分流水，最新的在上。
+       *
+       * 三处原来都不对：
+       *   ① 没按 item 过滤 —— 课堂上点过名（attend）的记录会混进「课堂互动」那栏，
+       *      老师看到一堆不是自己刚点的东西
+       *   ② filter(e => !e.voided) 把撤销过的藏了 —— 可 UI 明明有 .voided 的灰显样式
+       *      和一个「×」撤回按钮。撤销之后那一条直接从列表消失，
+       *      老师会以为「我点错了？还是撤销没生效？」。灰着保留才对：看得见、不能再撤。
+       *   ③ 没给 reason —— 前端 r.reason 一直是 undefined，那一列空白
+       *
+       * events 是按时间升序的（limit 1000 取最近 1000 条），所以 slice(-50) 拿到
+       * 最后 50 条 = 最新 50 条，再 reverse 就是倒序。
+       */
       const recent = events
-        .filter((e) => !e.voided)
+        .filter((e) => String(e.item) === itemKey)
         .slice(-50)
         .reverse()
         .map((e) => ({
@@ -320,7 +333,15 @@ export default async function scoringRoutes(app) {
           name: (roster.find((s) => s.sid === e.sid) || {}).name || '',
           item: e.item,
           delta: e.delta,
-          at: e.at,
+          /* 扣分也要说清楚为什么扣 —— 只写「−1」老师事后想不起来 */
+          reason: String(e.reason || e.kind || ''),
+          /*
+           * 字段名是 createdAt，不是 at —— events 表里就没 at 这列。
+           * 原来写 e.at 拿到 undefined，前端那一列时间一直空着
+           * （只有刚点完、本地插进去的那条有值，一刷新就没了）。
+           */
+          at: e.createdAt,
+          voided: !!e.voided,
         }))
 
       // 点名抽取进度：前端「本轮已抽 N 人 · 还剩 M 人」从这里来。

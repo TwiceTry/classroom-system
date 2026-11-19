@@ -175,45 +175,47 @@
     </div>
 
     <!--
-      右栏：本节异常。
-      60 人的网格里，迟到/缺勤那几个混在一片出勤色里要靠肉眼找；
-      这里单列一遍，上课时一眼知道"这节课谁没到"。
+      右栏：本次课记录（这一天的考勤流水，最新的在上，能逐条撤回）。
+
+      原来这里是「本节异常」——一张迟到/缺勤名单。那个信息网格里其实一眼就有
+      （格子带颜色和状态标签），而**这次课都点了谁**在网格里是看不出来的：
+      格子上只有当前状态，看不出「刚才把张三从缺勤改回了出勤」这种过程。
+      所以右栏让给流水，异常压成底部一行摘要。
+
+      和「课堂互动」右栏是同一个形状、同一个行为 —— 换页面不用重新学。
     -->
     <template #right>
       <section class="card">
         <CardHead>
-          <template #title>本节异常</template>
+          <template #title>本次课记录</template>
           <template #meta>
-            <span class="dim mini">{{ abnormalList.length }} 人</span>
+            <span class="dim mini">{{ recent.length }} 条</span>
           </template>
         </CardHead>
-        <ul class="abn">
-          <li v-for="s in abnormalList" :key="s.sid">
-            <b>{{ s.name }}</b>
-            <span class="tag" :class="kindTag(kindOf(s.sid))">{{ kindOf(s.sid) }}</span>
-            <span class="spacer"></span>
-            <span class="dim mini">{{ s.sid }}</span>
-          </li>
-          <!--
-            空态不是「没数据」，是「这块是干什么的」—— 320px 的右栏只写一句
-            「全部出勤，没有异常」会显得像坏了。补一句它以后会在什么时候出现。
-          -->
-          <li v-if="!abnormalList.length" class="abn-empty">
-            <b>{{ students.length ? '这节没人迟到或缺勤' : '还没有名单' }}</b>
-            <span v-if="students.length">
-              点网格里的格子改成迟到 / 缺勤 / 请假，这里会立刻列出来，方便一眼看到谁没到。
-            </span>
-            <span v-else>先去「班级管理」导入名单，这里才有得看。</span>
-          </li>
-        </ul>
 
-        <!--
-          原来这三行说明贴在名单下面（占着正文的底边，一滚就跟着跑）。
-          它是"怎么操作"的说明，不是数据，放右栏底部更合适：一直在，又不挡名单。
-          右栏只有 320 宽，所以拆成短句 + title 里放全文。
-        -->
-        <p class="abn-tip dim mini" :title="'网格：点格子循环（' + kinds.map((k) => k.kind).join(' → ') + ' → 回「出勤」）。列表：点行内按钮直接落库、再点同一状态可取消。记录都能在「班级管理 → 全班流水」里看到。排序只改显示顺序，标记不会丢。'">
-          点格子循环切换状态；列表点行内按钮。记录见「班级管理 → 全班流水」。
+        <EventFeed
+          :items="recent"
+          :empty-title="students.length ? '今天还没有考勤记录' : '还没有名单'"
+          :empty-text="
+            students.length
+              ? '点网格里的格子改状态，或者用随机点名，这里会实时出现流水，点 × 能撤回。'
+              : '先去「班级管理」导入名单，这里才有得看。'
+          "
+          @undo="undoRecent"
+        >
+          <template #at="{ row }">{{ row.slot }} {{ clockOf(row.at) }}</template>
+        </EventFeed>
+
+        <!-- 异常压成一行摘要：谁没到还是要一眼能看到，但不占一整块 -->
+        <p v-if="abnormalList.length" class="abn-tip dim mini">
+          {{ abnormalList.length }} 人异常：{{ abnormalSummary }}（网格里标着色）
+        </p>
+        <p
+          v-else
+          class="abn-tip dim mini"
+          :title="'网格：点格子循环（' + kinds.map((k) => k.kind).join(' → ') + ' → 回「出勤」）。列表：点行内按钮直接落库、再点同一状态可取消。'"
+        >
+          点格子循环切换状态；列表点行内按钮。全部记录见这里，能逐条撤回。
         </p>
       </section>
     </template>
@@ -273,11 +275,26 @@ import { api } from '../../api'
 import Toast from '../../components/Toast.vue'
 import { currentClassId, setClassId } from '../../utils/classSel'
 import { clock, startClock } from '../../utils/timetable'
+/*
+ * 注意别名：utils/timetable 的 `clock` 是个 **ref 对象**（当前节次时钟的状态），
+ * 不是格式化函数。上面那行一直在 import 它（给节次判断用）。
+ * 显示「这条记录是几点」要用 utils/time 里的 clock(iso) —— 两个同名，
+ * 不别名的话模板里 `clock(row.at)` 等于调用一个 ref，直接
+ * "xxx is not a function"，整页崩掉。
+ */
+import { clock as clockOf } from '../../utils/time'
 import { spotLock, setSpotLock } from '../../utils/spotlight'
 import PageHead from '../../components/PageHead.vue'
 import DataTable from '../../components/DataTable.vue'
 import PageShell from '../../components/PageShell.vue'
 import RollCallModal from '../../components/RollCallModal.vue'
+import EventFeed from '../../components/EventFeed.vue'
+/*
+ * CardHead 一直没 import —— 模板里写着 <CardHead>，但它是未知元素，
+ * 于是 <template #title> 整块不渲染（右栏只显示 meta 那一行）。
+ * 之前没人发现是因为右栏标题区本来就空着也不显眼。
+ */
+import CardHead from '../../components/CardHead.vue'
 
 const props = defineProps({
   itemKey: { type: String, default: '' },
@@ -297,6 +314,32 @@ const classes = ref([])
 const activeId = ref('')
 const students = ref([])
 const marks = ref([])
+
+/**
+ * 这一天的考勤流水（右栏「本次课记录」）。
+ *
+ * 和「课堂互动」右栏同一个形状：{id, sid, name, kind, delta, reason, at, slot, voided}。
+ * 后端按时间升序给，这里直接用（已经是倒序了，见 routes/attendance.js）。
+ */
+const recent = ref([])
+
+/**
+ * 撤回一条流水。
+ *
+ * 撤销是「打 voided 标记」而不是删行（events 表 append-only），
+ * 所以撤完那条还在列表里、只是灰掉 —— 老师能看出「点过、撤了」，
+ * 而不是以为没点上。
+ */
+async function undoRecent(r) {
+  if (!r || r.voided) return
+  try {
+    await api.post(base('/events/' + encodeURIComponent(r.id) + '/void'), {})
+    await reload()
+    toast.value = '已撤销 ' + (r.name || r.sid) + ' 的那一条'
+  } catch (e) {
+    error.value = e.message
+  }
+}
 const slotStats = ref([])
 const day = ref(new Date().toISOString().slice(0, 10))
 const slot = ref(slotOptions[0])
@@ -437,6 +480,7 @@ async function reload() {
     )
     students.value = res.students || []
     marks.value = res.marks || []
+    recent.value = res.recent || []
     slotStats.value = res.slotStats || []
     kinds.value = res.kinds || kinds.value
     itemName.value = res.itemName || '考勤'
@@ -504,6 +548,42 @@ async function mark(sid, kind) {
     picked[sid] = res.kind || next
     // 服务端会回这一项的新分值；万一没回，保留原值，绝不清零
     if (res && res.score !== undefined) scoreMap[sid] = res.score
+
+    /*
+     * 右栏「本次课记录」就地更新。
+     *
+     * 原来这里只同步了 marks / slotStats / picked / scoreMap，**没管 recent** ——
+     * 于是老师点完格子，网格里的状态变了，右栏列流水却纹丝不动，
+     * 非要切到别的 tab 再切回来（触发 reload）才看得到。
+     *
+     * 不整页 reload 是为了不闪：reload 会重建整个网格、丢掉滚动位置，
+     * 而这是个「点一下看看」的高频操作。
+     *
+     * 两件事：
+     *   ① 这个学生**本节**的旧条目标成已撤（服务端 voidSlot 已经撤了）
+     *   ② 新状态不是「出勤」就插到最前面
+     */
+    {
+      const list = recent.value.map((r) =>
+        r.sid === sid && r.slot === slot.value && !r.voided ? Object.assign({}, r, { voided: true }) : r
+      )
+      if (next !== '出勤' && res.eventId) {
+        const stu = students.value.find((x) => x.sid === sid)
+        list.unshift({
+          id: res.eventId,
+          sid,
+          name: (stu && stu.name) || '',
+          kind: next,
+          delta: res.delta,
+          reason: next,
+          at: new Date().toISOString(),
+          slot: slot.value,
+          voided: false,
+        })
+      }
+      /* 和列表容量保持一致（后端取最近 50 条） */
+      recent.value = list.slice(0, 50)
+    }
     // 本地同步这一节的记录清单（顶部的「1-2节 · n」跟着变）
     const others = marks.value.filter((m) => m.sid !== sid)
     if (next !== '出勤') others.push({ sid, kind: next, delta: res.delta, slot: slot.value, eventId: res.eventId })
@@ -585,7 +665,23 @@ const abnormalList = computed(() =>
   }),
 )
 
-/** 考勤状态 → 标签配色（右栏异常列表用） */
+/**
+ * 异常的一行摘要（「1 迟到 · 2 缺勤」）。
+ *
+ * 右栏让给计分流水之后，异常只剩这一行了 —— 但「谁没到」还是得一眼看到，
+ * 所以按状态分组计数，比列一串名字省地方。
+ */
+const abnormalSummary = computed(() => {
+  const m = new Map()
+  for (const s of abnormalList.value) {
+    const k = kindOf(s.sid)
+    if (!k || k === '出勤') continue
+    m.set(k, (m.get(k) || 0) + 1)
+  }
+  return [...m.entries()].map(([k, n]) => n + ' ' + k).join(' · ')
+})
+
+/** 考勤状态 → 标签配色 */
 function kindTag(k) {
   if (k === '迟到' || k === '早退') return 'warn'
   if (k === '缺勤') return 'err'

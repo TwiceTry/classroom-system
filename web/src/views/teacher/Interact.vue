@@ -88,17 +88,14 @@
       <CardHead>
         <template #title>本次课记录</template>
       </CardHead>
-      <ul class="recent">
-        <li v-for="r in recent" :key="r.id" :class="{ voided: r.voided }">
-          <b>{{ r.name }}</b>
-          <span class="d" :class="{ minus: r.delta < 0 }">{{ r.delta > 0 ? '+' + r.delta : r.delta }}</span>
-          <span class="why dim">{{ r.reason }}</span>
-          <span class="spacer"></span>
-          <span class="dim mini">{{ clock(r.at) }}</span>
-          <button v-if="!r.voided" class="mini-btn danger" title="撤销这条" @click="undo(r)">×</button>
-        </li>
-        <li v-if="!recent.length" class="dim">还没有记录。</li>
-      </ul>
+      <EventFeed
+        :items="recent"
+        empty-title="这一项还没有记录"
+        empty-text="在名单里点 +1 / −1 记分，这里会实时出现流水，点 × 能撤回。"
+        @undo="undo"
+      >
+        <template #at="{ row }">{{ clock(row.at) }}</template>
+      </EventFeed>
     </section>
     </template>
 
@@ -181,6 +178,7 @@ import DataTable from '../../components/DataTable.vue'
 import CardHead from '../../components/CardHead.vue'
 import PageShell from '../../components/PageShell.vue'
 import RollCallModal from '../../components/RollCallModal.vue'
+import EventFeed from '../../components/EventFeed.vue'
 
 /** 方案里没配预设时的兜底按钮（还能用下面的自定义分值） */
 const FALLBACK_PRESETS = [

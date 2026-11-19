@@ -67,7 +67,19 @@ export default async function attendanceRoutes(app) {
       if (!item) throw badRequest('考核方案里没有考勤项（form = attendance）')
 
       const { days, map } = attendanceDays(cls.id, item.key)
-      const day = String(req.query.date || '') || days[0] || ''
+      /*
+       * 默认看哪一天 = **今天**（问的那天优先）。
+       *
+       * 原来兜底是 days[0]（最近一个有未撤销记录的天）。两个问题：
+       *   ① days 只含「还有未撤销记录的」天 —— 把今天最后一条撤掉，
+       *      days 就空了，day 变成空串，整页数据全跟着空
+       *   ② 就算不空，也会跳到**昨天**去 —— 老师明明在做今天的考勤，
+       *      右栏却显示昨天的记录，而且今天的操作全看不见了（实测踩到）
+       *
+       * 考勤是「当场记」的东西，默认今天没有任何异议。要看历史就点日期。
+       */
+      const today = dayOf(new Date().toISOString())
+      const day = String(req.query.date || '') || today
       const dayEvents = map.get(day) || []
       const slot = String(req.query.slot || '')
       const picked = slot ? dayEvents.filter((e) => slotOf(e) === slot) : dayEvents
@@ -88,6 +100,55 @@ export default async function attendanceRoutes(app) {
         ),
         days: days.slice(0, 30),
         marks: picked.map((e) => ({ sid: e.sid, kind: e.kind, delta: e.delta, slot: slotOf(e), eventId: e.id })),
+        /*
+         * 右栏「本次课记录」：这一天的考勤流水，最新的在上。
+         *
+         * 和「课堂互动」那边同一个形状（recent[]），这样两个页面的右栏
+         * 长得一样、行为一样（都能点 × 撤回）。
+         *
+         * 为什么是「这一天」而不是「这一节」：老师改考勤常常跨节次补录
+         * （第三节发现第二节没点），只看当前 slot 会看不到刚补的那条。
+         * slot 仍然带在每条上，前端显示得出来是哪一节。
+         *
+         * voided 也保留：撤销过的灰着放那儿，老师才知道「点了、撤了」，
+         * 直接消失会让他以为是没点上。
+         */
+        /*
+         * 「本次课记录」= **这一天**这一项的流水，最新的在上，不过滤 voided。
+         *
+         * 「这一天」是必须的：右栏标题就叫「本次课记录」，那是今天这节课的事。
+         * 跨天混进来之后，老师过了几周再打开，看到的是上周的记录排在最上面，
+         * 会以为是刚才点的。
+         *
+         * 两个坑都别再踩：
+         *   ① 不能用 map.get(day) —— attendanceDays() 为算「当前有效状态」已经把
+         *      voided 滤掉了，复用它的话老师一撤销那条就从列表消失，
+         *      看着像「我是不是没点上」
+         *   ② day 必须有「今天」兜底（见上面）—— 否则撤掉当天最后一条之后
+         *      day 会变空串，整个列表跟着空
+         */
+        recent: repo
+          .eventsOf(cls.id, { limit: 1000 })
+          .items.filter((e) => String(e.item) === item.key && dayOf(e.createdAt) === day)
+          .slice(-50)
+          .reverse()
+          .map((e) => ({
+            id: e.id,
+            sid: e.sid,
+            name: (roster.find((s) => s.sid === e.sid) || {}).name || '',
+            kind: String(e.kind || ''),
+            delta: e.delta,
+            /*
+             * 显示「迟到」「缺勤」，不要 e.reason —— 那是记账用的
+             * 「2026-11-19 第8节 考勤」，一长串塞进 320px 的右栏只剩省略号。
+             * kind 才是老师想看的那个词。
+             */
+            reason: String(e.kind || e.reason || ''),
+            /* 字段名是 createdAt（events 表没有 at 列），写成 e.at 会一直是 undefined */
+            at: e.createdAt,
+            slot: slotOf(e),
+            voided: !!e.voided,
+          })),
         students: roster,
         scores: board.list.map((r) => ({
           sid: r.student.sid,
