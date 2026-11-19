@@ -22,6 +22,11 @@
         </div>
 
         <p class="dim mini meta">{{ a.dirTitle }}</p>
+        <!--
+          截止时间。学生最关心的其实是「还来不来得及」，所以除了时间点还带剩余量，
+          24 小时内标橙、过了截止标红。
+        -->
+        <p v-if="a.dueAt" class="due" :class="dueTone(a)">{{ dueText(a) }}</p>
         <p v-if="a.note" class="note">{{ a.note }}</p>
         <p v-else class="note dim">按老师的要求改代码，改完点提交。</p>
 
@@ -70,7 +75,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { api } from '../../api'
 import Toast from '../../components/Toast.vue'
-import { when } from '../../utils/time'
+import { when, at as fmtAt } from '../../utils/time'
 import { onPresenceMessage } from '../../utils/presence'
 import { loadScheme, scheme } from '../../utils/scheme'
 import PageHead from '../../components/PageHead.vue'
@@ -121,13 +126,68 @@ function tagOf(a) {
   if (a.status === 'open') return 'ok'
   return a.started ? 'mute' : 'warn'
 }
+
+/* ---------------- 截止时间 ---------------- */
+
+/** 还剩多少毫秒（没设截止返回 0） */
+function dueLeft(a) {
+  const t = Date.parse(a.dueAt || '')
+  return t ? t - Date.now() : 0
+}
+
+/**
+ * 截止提示。
+ *
+ * 不只给时间点，还给「还剩多久」—— 学生扫一眼卡片时想的不是
+ * 「11-20 23:59 是什么时候」，而是「现在还来不来得及」。
+ * 一天以内按小时、一小时以内按分钟，超过一天才说天数。
+ */
+function dueText(a) {
+  if (!a.dueAt) return ''
+  const left = dueLeft(a)
+  const at = '截止 ' + fmtAt(a.dueAt)
+  if (left <= 0) return at + (a.allowLate ? '（已过 · 可迟交）' : '（已截止）')
+  const mins = Math.round(left / 60000)
+  if (mins < 60) return at + '（还剩 ' + mins + ' 分钟）'
+  if (mins < 1440) return at + '（还剩 ' + Math.round(mins / 60) + ' 小时）'
+  return at + '（还剩 ' + Math.round(mins / 1440) + ' 天）'
+}
+
+/** 紧迫程度：过了截止红、24 小时内橙、其余常规 */
+function dueTone(a) {
+  if (!a.dueAt) return ''
+  const left = dueLeft(a)
+  if (left <= 0) return 'over'
+  if (left < 86400000) return 'soon'
+  return ''
+}
 </script>
 
 <style scoped>
 .grid2 {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
-  gap: 12px;
+  gap: var(--sp-3);
+}
+
+/*
+ * 截止时间这一行。
+ * 用 tabular-nums：一堆卡片并排时，时间里的数字等宽，看起来才齐。
+ */
+.hw .due {
+  margin: 2px 0 0;
+  font-size: var(--fs-sm);
+  color: #5b6673;
+  font-variant-numeric: tabular-nums;
+}
+/* 24 小时内：提醒但不刺眼 */
+.hw .due.soon {
+  color: #a15c00;
+  font-weight: 600;
+}
+/* 过了截止：红 */
+.hw .due.over {
+  color: var(--err);
 }
 
 .hw {

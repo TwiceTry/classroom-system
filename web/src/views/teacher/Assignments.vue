@@ -300,7 +300,8 @@
           <div v-for="x in designs" :key="x.id" class="lib-row">
             <div class="lib-main">
               <b>{{ x.title }}</b>
-              <span class="dim mini">{{ x.fileCount }} 个文件 · 权重 {{ x.weight }}<template v-if="x.dueAt"> · 截止 {{ when(x.dueAt) }}</template></span>
+              <!-- 截止用 fmtAt（不带秒）：「今天 02:23:21」对一个未来时刻很怪 -->
+              <span class="dim mini">{{ x.fileCount }} 个文件 · 权重 {{ x.weight }}<template v-if="x.dueAt"> · 截止 {{ fmtAt(x.dueAt) }}</template></span>
             </div>
             <div class="lib-acts">
               <button class="btn mini" @click="useDesign(x)">用这个建作业</button>
@@ -400,7 +401,7 @@ import { api, download, getCourse, getToken } from '../../api'
 import CodeViewer from '../../components/CodeViewer.vue'
 import GradeBox from '../../components/GradeBox.vue'
 import Toast from '../../components/Toast.vue'
-import { clock, when } from '../../utils/time'
+import { clock, when, at as fmtAt } from '../../utils/time'
 import { buildPreviewDoc, ensureSfcSrcdoc, isNpmProject, pagesOf } from '../../utils/pgPreview'
 import { loadScheme, scheme } from '../../utils/scheme'
 import PageHead from '../../components/PageHead.vue'
