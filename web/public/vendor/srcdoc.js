@@ -58,10 +58,48 @@
     });
   }
 
+  /*
+   * 把「内存字典里有的本地 <script src>」就地换成内联脚本。
+   *
+   * 为什么必须做这一步：<script src="./helper.js"> 是**浏览器原生请求**，
+   * 它不经过 sfc-boot 的 getFile 字典 —— 于是新建的 helper.js
+   * 会按真实路径请求 /api/example-files/…/helper.js，而那边只有课件原始文件
+   * → 404。学生看到的就是「新建的文件引用不了」。
+   *
+   * 只处理「字典里查得到」且「不含 import / export」的：
+   *   · 查不到 → 原样保留（vue.global.js、sfc-boot.js 这些本来就不在字典里）
+   *   · 含 import/export → 是 ES 模块，内联成普通脚本会 SyntaxError，
+   *     而内联成 type="module" 又会让它内部的相对 import 重新走真实请求。
+   *     这一类正确的用法本来就是 `import` 语句（那条路 getFile 能查字典）。
+   *
+   * defer / async 对内联脚本没有意义，顺手去掉。
+   */
+  function inlineLocalScripts(src, files) {
+    return String(src).replace(
+      /<script\b([^>]*?)\bsrc\s*=\s*["']([^"']+)["']([^>]*)>\s*<\/script>/gi,
+      function (tag, pre, href, post) {
+        if (/^(https?:)?\/\//i.test(href)) return tag;                   // 外链不动
+        var key = normalizeKey(href);
+        var code = has(files, key) ? files[key] : files[key.split('/').pop()];
+        if (typeof code !== 'string') return tag;                        // 不在内存里 → 保留
+        if (/^[ \t]*(import|export)\b/m.test(code)) return tag;          // ES 模块 → 保留
+        var attrs = (pre + ' ' + post)
+          .replace(/\bsrc\s*=\s*["'][^"']*["']/gi, '')
+          .replace(/\b(defer|async)\b(\s*=\s*["'][^"']*["'])?/gi, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+        /* 脚本内容里可能出现 </script>，必须断开，否则提前闭合 */
+        var body = String(code).replace(/<\/script/gi, '<\\/script');
+        return '<script' + (attrs ? ' ' + attrs : '') + '>\n' + body + '\n</script>';
+      }
+    );
+  }
+
   // pageSource：该课 HTML 页面源码；files：{ 'App.vue': '源码', 'main.mjs': '源码', 'style.css': '…' }
   function buildFromPage(pageSource, files) {
     var map = files || {};
-    var src = inlineLocalStyles(pageSource == null ? '' : pageSource, map);
+    /* 先内联样式表，再内联脚本 —— 两步都是「字典里有就地展开」，顺序不影响对方 */
+    var src = inlineLocalScripts(inlineLocalStyles(pageSource == null ? '' : pageSource, map), map);
     var data = escapeForInlineScript(JSON.stringify(map));
     var inject = '<script>window.__SFC_FILES__=' + data + ';<\/script>\n';
 
@@ -81,6 +119,7 @@
   global.SfcSrcdoc = {
     buildFromPage: buildFromPage,
     inlineLocalStyles: inlineLocalStyles,
+    inlineLocalScripts: inlineLocalScripts,
     escapeForInlineScript: escapeForInlineScript
   };
 })(typeof window !== 'undefined' ? window : globalThis);
