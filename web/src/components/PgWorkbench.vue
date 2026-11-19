@@ -340,6 +340,18 @@ function addFile(rawName) {
    */
   nextTick(() => openFile(name))
   flushEdits()
+  /*
+   * 立刻重跑一次预览。
+   *
+   * 不跑的话：__SFC_FILES__ 里没有这个新文件 ——
+   * 学生接下来在别的文件里 `import './MyCard.vue'`，加载器查字典查不到，
+   * 只能按真实路径去请求（/api/example-files/.../MyCard.vue），
+   * 而后端那份是**课件的原始文件**，当然没有他刚建的 → 报「加载失败」。
+   *
+   * openFile 里的自动重跑指望不上：它只在「点的是页面文件」或
+   * 「这个文件被某个页面引用」时才触发，而刚建的文件两者都不是。
+   */
+  if (autoRun.value) scheduleRun()
   return { ok: true, why: '' }
 }
 
@@ -355,6 +367,8 @@ function removeFile(p) {
   }
   /* 删除同样立刻落盘：延时存的话，删完马上刷新又能看到它 */
   flushEdits()
+  /* 删完也要重跑：否则 __SFC_FILES__ 里还留着它，预览会继续跑一个已经不存在的文件 */
+  if (autoRun.value) scheduleRun()
   return { ok: true, why: '' }
 }
 
