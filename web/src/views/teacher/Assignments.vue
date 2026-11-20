@@ -49,9 +49,14 @@
       :class="{ on: a.id === curId }"
       @click="select(a.id)"
       >
-      <i class="led" :class="a.status === 'open' ? 'on' : a.started ? 'off' : ''"></i>
+      <!--
+        状态读 collecting（实际还在收），不读 status。
+        到期之后不需要老师手动点「结束」，这里自己就翻成「已截止」。
+        区分「时间到」和「老师停的」：前者要告诉老师还能改截止时间再开。
+      -->
+      <i class="led" :class="collectingOf(a) ? 'on' : a.started ? 'off' : ''"></i>
       {{ a.title }}
-      <span class="dim">{{ a.status === 'open' ? '进行中' : a.started ? '已结束' : '未开始' }}</span>
+      <span class="dim">{{ stateOf(a).text }}</span>
       <span v-if="a.weight && Number(a.weight) !== 1" class="cnt" :title="'权重 ' + a.weight">×{{ a.weight }}</span>
       <span class="cnt">{{ a.studentCount }}</span>
     </button>
@@ -64,9 +69,7 @@
       <div class="ctrl-l">
         <h3>
           {{ d.assignment.title }}
-          <span class="tag" :class="d.assignment.status === 'open' ? 'ok' : d.assignment.started ? 'mute' : 'warn'">
-            {{ d.assignment.status === 'open' ? '进行中' : d.assignment.started ? '已结束' : '未开始' }}
-          </span>
+          <span class="tag" :class="stateOf(d.assignment).tone">{{ stateOf(d.assignment).text }}</span>
         </h3>
         <p class="dim mini">
           {{ d.assignment.selfCode ? '作业自带代码（建作业时复制了一份）' : '对应示例：' + d.assignment.dirTitle }}
@@ -79,8 +82,12 @@
         </p>
       </div>
       <div class="ctrl-r">
-        <button v-if="d.assignment.status !== 'open'" class="btn primary" @click="start">
-          ▶ 开始作业（学生可以交了）
+        <!--
+          按钮也按 collecting 走。到期之后自动变成「再收一轮」——
+          老师想延长不用先去改状态，直接点它（会提示改截止时间）。
+        -->
+        <button v-if="!collectingOf(d.assignment)" class="btn primary" @click="start">
+          ▶ {{ d.assignment.started ? '再收一轮' : '开始作业（学生可以交了）' }}
         </button>
         <button v-else class="btn danger" @click="stop">■ 结束作业（停止收卷）</button>
         <button class="btn mini" @click="openEditor('edit')">改标题 / 说明</button>
@@ -138,7 +145,7 @@
     </CardHead>
 
     <div v-if="!d.submissions.length" class="empty">
-      {{ d.assignment.status === 'open' ? '还没有人交，等一会儿再看。' : '这次作业没有提交记录。' }}
+      {{ collectingOf(d.assignment) ? '还没有人交，等一会儿再看。' : '这次作业没有提交记录。' }}
     </div>
 
     <DataTable
@@ -710,20 +717,69 @@ function onPreviewMessage(e) {
   previewError.value = m.l ? m.m + '（行 ' + m.l + '）' : m.m
 }
 
+/*
+ * 切回来立刻刷一次。
+ *
+ * 轮询里有 document.hidden 的判断（切走的标签页不该继续发请求），
+ * 但代价是：老师切去别的窗口待了一会儿再回来，看到的还是离开时的状态，
+ * 最多要等 8 秒才对 —— 而「这次作业到没到期」正是他切回来要确认的事。
+ */
+function onVisible() {
+  if (!document.hidden) {
+    nowTick.value = Date.now()
+    loadList()
+    if (curId.value) loadDetail(true)
+  }
+}
+
 onMounted(async () => {
   window.addEventListener('message', onPreviewMessage)
+  document.addEventListener('visibilitychange', onVisible)
   await loadAll()
-  // 学生交作业是随时发生的，老师这边靠轮询兜住（WS 只发给学生端）
+  /*
+   * 学生交作业随时发生，老师这边靠轮询兜住（WS 只发给学生端）。
+   *
+   * 三件事都要刷：
+   *   list    —— 「进行中 / 已截止」是现算的，**到点得自己翻过去**
+   *               （原来只刷详情，胶囊和小灯永远停在「进行中」，
+   *                老师不点「结束」就不认账）
+   *   detail  —— 提交记录、统计
+   *   progress—— 批阅进度条
+   */
   timer = setInterval(() => {
+    /*
+     * 先推时钟 —— 纯本地，不发请求，所以放在 hidden 判断之前。
+     * 这样即使标签页在后台（不轮询网络），切回来那一刻状态也是对的。
+     */
+    nowTick.value = Date.now()
     if (document.hidden) return
+    loadList()
     if (d.value && curId.value && !viewing.value) loadDetail(true)
   }, 8000)
 })
 
 onUnmounted(() => {
   window.removeEventListener('message', onPreviewMessage)
+  document.removeEventListener('visibilitychange', onVisible)
   if (timer) clearInterval(timer)
 })
+
+/**
+ * 只刷作业列表（轻量）。
+ *
+ * 和 loadAll 的区别：不重拉考核方案、目录、班级 —— 那些一学期都不变，
+ * 每 8 秒重拉一遍纯属浪费。轮询只需要列表，因为
+ * **「进行中 / 已截止」是每次读的时候现算的**（collecting 依赖当前时间），
+ * 到点之后列表里这几条要能自己翻过去，而不用老师手动点「结束」。
+ */
+async function loadList() {
+  try {
+    const res = await api.get('/api/assignments?itemKey=' + encodeURIComponent(props.itemKey))
+    list.value = res.items || []
+  } catch (e) {
+    /* 轮询失败不打扰老师，下一轮再试 */
+  }
+}
 
 async function loadAll() {
   loading.value = true
@@ -735,7 +791,8 @@ async function loadAll() {
     dirs.value = res.dirs || []
     classes.value = res.allClasses || []
     if (!curId.value) {
-      const openOne = list.value.filter((a) => a.status === 'open')
+      /* 默认选中「还在收」的那份（到期的不算 —— 那份已经交不了了） */
+      const openOne = list.value.filter((a) => collectingOf(a))
       curId.value = (openOne.length ? openOne[openOne.length - 1] : list.value[list.value.length - 1] || {}).id || ''
     }
     if (curId.value) {
@@ -785,10 +842,70 @@ function fresh(iso) {
 
 /* ---------------- 开始 / 结束 ---------------- */
 
+/**
+ * 教师端看到的作业状态。
+ *
+ * 判断基准是 collecting（实际还在收），**不是 status**。
+ * status 只记「老师点过开始 / 停止」，它不会因为时间流逝自己变 ——
+ * 所以到期之后不需要老师再手动点一次「结束」，这里自己就翻成「已截止」。
+ *
+ * 三态之外多一档细分：「已截止（时间到）」和「已结束」（老师手动停的）
+ * 分开写，因为前者老师还能改截止时间再开，后者要重新点开始。
+ */
+/**
+ * 这份作业「过没过截止」—— **用当前时间现算**，不用接口带回来的 overDue。
+ *
+ * 接口那份 overDue 是拉数据那一刻算的。详情的轮询在 document.hidden 时会让开，
+ * 于是老师切走一会儿再回来，详情还是离开时的旧值：
+ * 胶囊（列表）已经翻成「已截止」，中间标签（详情）还写着「进行中」，自相矛盾。
+ *
+ * 时间这件事本来就有唯一的真相来源（dueAt + 现在几点），
+ * 只要 dueAt 没变，状态就不该依赖「这份数据是什么时候拉的」。
+ */
+/*
+ * 时钟 tick。
+ *
+ * 光写 Date.now() 是不够的：Vue 追踪不到它，模板不会因为「时间过去了」重新渲染，
+ * 状态标签就会一直停在拉数据那一刻的样子（实测：胶囊翻了、中间标签还是「进行中」）。
+ * 用一个 ref 每 8 秒推一下，让依赖它的地方重算。
+ */
+const nowTick = ref(Date.now())
+
+function overDueOf(x) {
+  if (!x || !x.dueAt) return false
+  const t = Date.parse(x.dueAt)
+  return isFinite(t) && nowTick.value > t
+}
+
+/** 实际还在收吗：老师开着 **且** 没到期（不收迟交时） */
+function collectingOf(x) {
+  if (!x || x.status !== 'open') return false
+  if (overDueOf(x) && x.allowLate === false) return false
+  return true
+}
+
+function stateOf(x) {
+  if (!x) return { text: '', tone: '' }
+  if (collectingOf(x)) return { text: '进行中', tone: 'ok' }
+  if (overDueOf(x) && x.allowLate === false) return { text: '已截止（时间到）', tone: 'mute' }
+  if (x.started) return { text: '已结束', tone: 'mute' }
+  return { text: '未开始', tone: 'warn' }
+}
+
 async function start() {
   if (!d.value) return
+  const a = d.value.assignment
+  /*
+   * 时间已经过了、而且不收迟交 —— 光点「开始」是没用的：
+   * status 本来就是 open，collecting 仍然算 false，学生会发现还是交不上。
+   * 与其让他点完看不出变化，不如直接说清楚要先改截止时间。
+   */
+  if (a.overDue && a.allowLate === false) {
+    toast.value = '截止时间已经过了，先点「改标题 / 说明」把截止时间往后调，再开始'
+    return
+  }
   const ok = window.confirm(
-    '开始「' + d.value.assignment.title + '」？\n\n学生端立刻能进入这次作业并提交，已经在学生端的学生也会自动刷新。'
+    '开始「' + a.title + '」？\n\n学生端立刻能进入这次作业并提交，已经在学生端的学生也会自动刷新。'
   )
   if (!ok) return
   try {

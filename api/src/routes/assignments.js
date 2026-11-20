@@ -108,6 +108,24 @@ const view = (a) => ({
    * 但后端从来没给过 —— 于是 x.overDue 永远是 undefined。
    */
   overDue: !!(a.dueAt && Date.parse(a.dueAt) && Date.now() > Date.parse(a.dueAt)),
+
+  /*
+   * 实际还在收吗 —— **推导出来**，不是数据库里那个 status。
+   *
+   * status 只记「老师点过开始 / 停止」，它不会因为时间流逝自己变。
+   * 于是作业到期之后：学生那边已经交不上了（提交接口在拦），
+   * 但教师端三处标签还写着「进行中」、按钮还是「停止收作业」——
+   * 界面上等于要求老师手动点一下，系统才承认这次作业结束了。
+   *
+   * 这里不搞定时任务改 status：那样要维护一个扫描进程，
+   * 停机期间的到期不会触发，而且「老师手动停」和「时间到」会被写成一回事，
+   * 事后分不清是谁结束了它。让 status 只保留老师的手动意图，
+   * 实际状态每次读的时候现算 —— 和 started 是同一个思路。
+   */
+  collecting: !!(
+    a.status === 'open' &&
+    !(a.dueAt && Date.parse(a.dueAt) && Date.now() > Date.parse(a.dueAt) && !a.allowLate)
+  ),
   /*
    * 大作业：要不要交附件、收哪些扩展名。
    * 前端 ProjectDetail 一直在读这两个字段（`a.requireFile === false ? '可选' : '必须交一个'`
