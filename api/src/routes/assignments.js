@@ -100,6 +100,15 @@ const view = (a) => ({
   dueAt: a.dueAt || '',
   allowLate: !!a.allowLate,
   /*
+   * 过没过截止时间 —— 和 status 是两件事。
+   *
+   * status 是「老师有没有点停止」，dueAt 是「时间到没到」。
+   * 老师忘了点停止时 status 一直是 open，但时间早过了；
+   * 前端两处都要靠这个字段（横幅那句「已截止」、提交按钮要不要禁用），
+   * 但后端从来没给过 —— 于是 x.overDue 永远是 undefined。
+   */
+  overDue: !!(a.dueAt && Date.parse(a.dueAt) && Date.now() > Date.parse(a.dueAt)),
+  /*
    * 大作业：要不要交附件、收哪些扩展名。
    * 前端 ProjectDetail 一直在读这两个字段（`a.requireFile === false ? '可选' : '必须交一个'`
    * 以及「收 .zip .pdf …」的提示），但后端从来没给过 —— 于是它永远走硬编码兜底，
@@ -717,6 +726,36 @@ export default async function assignmentRoutes(app) {
       if (!a) throw notFound('作业不存在')
       if (a.status !== 'open') throw conflict('这次作业还没开放（或已经截止）')
 
+      /*
+       * 过了截止时间、并且不允许迟交 → 不再收。
+       *
+       * 只判 status 是不够的：**老师可能忘了点「停止」**，status 一直是 open，
+       * 于是 allowLate = false 形同虚设 —— 过了截止时间学生照样能交，
+       * 而且前端还看不出已经截止（后端连 overDue 都没给）。
+       *
+       * 这条必须放在接口层：界面上的按钮禁用只是提示，
+       * 学生刷新页面、或者直接调接口都能绕过去。
+       */
+      const overdueAt = a.dueAt && Date.parse(a.dueAt) ? Date.parse(a.dueAt) : 0
+      const isLate = !!overdueAt && Date.now() > overdueAt
+      if (isLate && !a.allowLate) {
+        const d = new Date(overdueAt)
+        const p = (n) => String(n).padStart(2, '0')
+        throw conflict(
+          '这次作业 ' +
+            d.getFullYear() +
+            '-' +
+            p(d.getMonth() + 1) +
+            '-' +
+            p(d.getDate()) +
+            ' ' +
+            p(d.getHours()) +
+            ':' +
+            p(d.getMinutes()) +
+            ' 就截止了，不再接收。有特殊情况请找老师'
+        )
+      }
+
       const cls = repo.getClass(t.classId)
       if (!cls) throw notFound('班级不存在')
       if (a.courseId && cls.courseId && a.courseId !== cls.courseId) throw forbidden('这次作业不属于你的课程')
@@ -777,8 +816,16 @@ export default async function assignmentRoutes(app) {
       }
       const written = entries.length ? store.writeFiles(a.kind, cls.id, t.sid, a.id, entries) : []
 
-      const late = !!(a.dueAt && Date.parse(a.dueAt) && Date.now() > Date.parse(a.dueAt))
-      if (late && !a.allowLate) throw conflict('已经过了截止时间（' + a.dueAt + '），这次不收迟交')
+      /*
+       * 这里原来还有一条「过了截止不收迟交」的判断 —— 已挪到函数开头（见 isLate）。
+       *
+       * 挪的原因是它站错了位置：**它在 writeFiles 之后**。
+       * 而 writeFiles 会先清掉这个学生上一次的目录再写新的。
+       * 于是学生迟交一次：上一次的提交被删了，然后收到「不收迟交」——
+       * 作业没了，还以为是系统坏了。
+       *
+       * 现在 isLate 在最前面判，磁盘一个字节都不会动。
+       */
 
       const payload = {
         classId: cls.id,
@@ -789,7 +836,8 @@ export default async function assignmentRoutes(app) {
         changed: Array.isArray(req.body.changed) ? req.body.changed.map(String).slice(0, MAX_TEXT_FILES) : [],
         note: String(req.body.note || '').slice(0, 1000),
         url: String(req.body.url || '').slice(0, 300),
-        late,
+        /* 用开头算好的那个（同一份判断，别在两处各算一次） */
+        late: isLate,
       }
 
       let sub

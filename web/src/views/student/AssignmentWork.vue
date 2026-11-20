@@ -15,8 +15,21 @@
     >
       <template #banner>
         <div class="bar" :class="{ done: mine.length }">
-          <span class="tag ok">进行中</span>
-          <span v-if="dueText" class="dim">截止 {{ dueText }}<template v-if="a.allowLate === false">（过了就不能交了）</template></span>
+          <!--
+            状态标签：原来写死「进行中」。
+            可老师没点停止、只是时间到了的时候，status 仍是 open ——
+            横幅还在说「进行中」，学生以为还能交，点提交才被拒。
+            现在按 overDue 说实话。
+          -->
+          <span class="tag" :class="canStillSubmit ? 'ok' : 'mute'">
+            {{ canStillSubmit ? '进行中' : '已截止' }}
+          </span>
+          <span v-if="dueText" class="dim">
+            截止 {{ dueText }}
+            <template v-if="a.overDue && a.allowLate === false">· 已经过了，不再接收</template>
+            <template v-else-if="a.overDue">· 已过截止，交上来会记为迟交</template>
+            <template v-else-if="a.allowLate === false">（过了就不能交了）</template>
+          </span>
           <span v-if="!mine.length">
             还没交。编辑器里是<b>{{ editorLabel }}</b>，
             改完点右上角 <b>提交</b>（整份交上去，老师能直接跑起来看效果）。
@@ -44,8 +57,13 @@
         >
           恢复最初状态
         </button>
-        <button class="btn mini primary" :disabled="busy" @click="submit(files, allFiles)">
-          {{ busy ? '提交中…' : mine.length ? '重新提交（覆盖上一次）' : '提交' }}
+        <button
+          class="btn mini primary"
+          :disabled="busy || !canStillSubmit"
+          :title="canStillSubmit ? '' : '这次作业已经不再接收提交了'"
+          @click="submit(files, allFiles)"
+        >
+          {{ busy ? '提交中…' : !canStillSubmit ? '已停止接收' : mine.length ? '重新提交（覆盖上一次）' : '提交' }}
         </button>
       </template>
     </PgWorkbench>
@@ -184,6 +202,22 @@ const mineCols = [
 const files = ref([])
 const loadingFiles = ref(false)
 let off = null
+
+/**
+ * 还能不能交 —— 界面口径，和后端那条拦截完全一致：
+ *
+ *   status 不是 open          → 老师没开始 / 已经停止
+ *   过了截止 且 不收迟交       → 时间到了
+ *
+ * **这只是让按钮先说话**，不是安全边界：学生刷新页面、或者直接调接口都能绕。
+ * 真正的拦截在后端 submit 里（status + isLate && !allowLate，且都在动磁盘之前）。
+ */
+const canStillSubmit = computed(() => {
+  const x = a.value || {}
+  if (x.status !== 'open') return false
+  if (x.overDue && x.allowLate === false) return false
+  return true
+})
 
 const subText = computed(() => {
   const x = a.value || {}
