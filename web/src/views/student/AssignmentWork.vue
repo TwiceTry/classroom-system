@@ -6,44 +6,26 @@
       ref="wb"
       :key="'hw-' + a.id"
       :title="a.title"
-      :sub="subText"
       :source="a.dir ? 'example' : 'assignment'"
       :assignment-id="a.id"
       :fixed-dir="a.dir"
       :bucket="'hw-' + a.id"
-      @loaded="onLoaded"
     >
-      <template #banner>
-        <div class="bar" :class="{ done: mine.length }">
-          <!--
-            状态标签：原来写死「进行中」。
-            可老师没点停止、只是时间到了的时候，status 仍是 open ——
-            横幅还在说「进行中」，学生以为还能交，点提交才被拒。
-            现在按 overDue 说实话。
-          -->
-          <span class="tag" :class="canStillSubmit ? 'ok' : 'mute'">
-            {{ canStillSubmit ? '进行中' : '已截止' }}
-          </span>
-          <span v-if="dueText" class="dim">
-            截止 {{ dueText }}
-            <template v-if="a.overDue && a.allowLate === false">· 已经过了，不再接收</template>
-            <template v-else-if="a.overDue">· 已过截止，交上来会记为迟交</template>
-            <template v-else-if="a.allowLate === false">（过了就不能交了）</template>
-          </span>
-          <span v-if="!mine.length">
-            还没交。编辑器里是<b>{{ editorLabel }}</b>，
-            改完点右上角 <b>提交</b>（整份交上去，老师能直接跑起来看效果）。
-          </span>
-          <span v-else>
-            已交，最近一次：{{ when(mine[mine.length - 1].createdAt) }}
-            <template v-if="mine[mine.length - 1].late"> · <b class="score">迟交</b></template>
-            <template v-if="mine[mine.length - 1].graded">
-              · 得分 <b class="score">{{ mine[mine.length - 1].score }}</b>
-            </template>
-            <template v-else>· 等老师批</template>
-            <span class="dim">　编辑器里是<b>{{ editorLabel }}</b>；再交会覆盖上一次（只保留最新）</span>
-          </span>
-        </div>
+      <!--
+        状态放在页头副标题里，不再单独占一条横幅。
+
+        原来的横幅要 54px（margin 8 + padding 16 + 一行字 + 边框），
+        而它说的正是「现在什么情况」—— 页头副标题本来就是干这个的。
+        挪上来之后正文多出 54px，编辑器和预览都能长高一点。
+
+        「进行中 / 已截止」用标签，是因为它需要颜色：一眼扫到绿还是灰，
+        比读一个词快。后面的「已交 · 等老师批 · 截止 …」是补充，走灰字。
+      -->
+      <template #sub>
+        <span class="tag" :class="canStillSubmit ? 'ok' : 'mute'">
+          {{ canStillSubmit ? '进行中' : '已截止' }}
+        </span>
+        <span v-if="subText" class="sub-rest">{{ subText }}</span>
       </template>
 
       <template #actions="{ files, allFiles }">
@@ -57,13 +39,24 @@
         >
           恢复最初状态
         </button>
+        <!--
+          文案只留「重新提交」。原来写「重新提交（覆盖上一次）」，
+          括号那半句把页头这一排挤得很紧（右边还有运行/还原/自动运行/排版/代码…）。
+          「会覆盖」写进 title，鼠标停一下能看，不占宽度。
+        -->
         <button
           class="btn mini primary"
           :disabled="busy || !canStillSubmit"
-          :title="canStillSubmit ? '' : '这次作业已经不再接收提交了'"
+          :title="
+            !canStillSubmit
+              ? '这次作业已经不再接收提交了'
+              : mine.length
+                ? '再交一次会覆盖上一次的提交（只保留最新）'
+                : '整份交上去，老师能直接跑起来看效果'
+          "
           @click="submit(files, allFiles)"
         >
-          {{ busy ? '提交中…' : !canStillSubmit ? '已停止接收' : mine.length ? '重新提交（覆盖上一次）' : '提交' }}
+          {{ busy ? '提交中…' : !canStillSubmit ? '已停止接收' : mine.length ? '重新提交' : '提交' }}
         </button>
       </template>
     </PgWorkbench>
@@ -174,18 +167,14 @@ const wb = ref(null)
  * 由工作台的 loaded 事件告知 —— 不要用 mine.length 去猜，
  * 因为点过「恢复最初状态」之后，明明有提交，编辑器里却是起手代码。
  */
-const editorSource = ref('')
-function onLoaded(e) {
-  editorSource.value = (e && e.source) || ''
-}
-const editorLabel = computed(() => {
-  const s = editorSource.value
-  if (s === 'submission') return '你上次交的那份'
-  if (s === 'starter') return '老师给的初始代码'
-  if (s === 'empty') return '空白（老师没给初始代码）'
-  if (s === 'example') return '课程示例'
-  return a.value && a.value.hasStarter ? '老师给的初始代码' : '空白（老师没给初始代码）'
-})
+/*
+ * 这里原来有 editorSource + onLoaded + editorLabel（把 loaded 事件里的 source
+ * 翻成「课程示例 / 老师给的初始代码」），只给那条状态横幅用。
+ *
+ * 横幅挪进页头副标题之后没人读了，一并删掉 ——
+ * 「编辑器里是哪一份」由工作台自己的文件头和「恢复最初状态」按钮交代，
+ * 编辑区顶部本来就写着当前文件名。
+ */
 const err = ref('')
 const toast = ref('')
 const busy = ref(false)
@@ -219,11 +208,34 @@ const canStillSubmit = computed(() => {
   return true
 })
 
+/**
+ * 页头副标题 = 这次作业现在什么情况。
+ *
+ * 原来这些信息在正文顶上单独占一条横幅（54px：margin 8 + padding 16 + 一行字 + 边框）。
+ * 可它说的正是「现在什么状态」—— 而页头副标题本来就是干这个的位置。
+ * 挪上来之后正文多出 54px，编辑器和预览都能长高一点。
+ *
+ * 顺带删掉那句「改完点右上角提交」：提交按钮就在右上方写着「提交」，
+ * 一次性的引导放在常驻状态行里，看第二次就是噪音。
+ *
+ * 四项按老师/学生关心的顺序排：
+ *   能不能交 → 交没交/批没批 → 迟没迟 → 什么时候截止
+ */
 const subText = computed(() => {
   const x = a.value || {}
   const parts = []
-  if (x.overDue) parts.push(x.allowLate === false ? '已截止（不再收）' : '已过截止时间（可以交，算迟交）')
-  parts.push('改完点右上角「提交」：整份交上去，只保留最新一次')
+  /*
+   * ① 「能不能交」不在这一串里 —— 它是个有颜色的标签（见模板 #sub 插槽），
+   *    和以前的 .tag 一个意思：绿=进行中、灰=已截止，扫一眼就有。
+   * ② 我交没交、老师批没批
+   */
+  const last = mine.value.length ? mine.value[mine.value.length - 1] : null
+  if (!last) parts.push('还没交')
+  else if (last.graded) parts.push('已交 · 得分 ' + last.score)
+  else parts.push('已交 · 等老师批')
+  if (last && last.late) parts.push('迟交')
+  /* ③ 截止时间放最后，它是参考不是结论 */
+  if (x.dueAt && dueText.value) parts.push('截止 ' + dueText.value)
   return parts.join(' · ')
 })
 
@@ -388,27 +400,14 @@ async function peek(s) {
   flex-direction: column;
 }
 
-/* 顶部那条「提交 / 状态」不参与压缩，剩余的给工作台 */
-.aw > .bar {
-  flex: none;
-}
+/*
+ * 这里原来有 .aw > .bar / .bar / .bar.done 三块样式 ——
+ * 状态横幅已挪到页头副标题（见 subText），一行 DOM 都不剩，样式跟着删。
+ */
 
-.bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: var(--sp-2);
-  padding: var(--sp-2) var(--sp-3);
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  background: #f8fafc;
-  font-size: var(--fs-md);
-  color: #3b434b;
-}
-
-.bar.done {
-  background: #f3f8f4;
-  border-color: #cfe2d6;
+/* 副标题里，标签后面那段补充说明（已交 / 等老师批 / 截止 …） */
+.sub-rest {
+  color: var(--sub);
 }
 
 .score {

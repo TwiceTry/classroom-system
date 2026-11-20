@@ -2,7 +2,12 @@
   <div class="pg" :class="{ 'pg-tall': layout === 'col' }">
     <PageHead>
       <template #title>{{ title }}</template>
-      <template #sub>{{ sub }}</template>
+      <!--
+        副标题：默认用 sub 这个 prop；调用方也可以塞 #sub 插槽自己排
+        （比如课堂作业要把「进行中 / 已截止」做成有颜色的标签）。
+        插槽没给内容时回落到 prop —— 对现有页面完全兼容。
+      -->
+      <template #sub><slot name="sub">{{ sub }}</slot></template>
       <template #right>
         <!-- 老师正在同步时，学生端只在这里挂一个小标签，不占额外一行 -->
         <span v-if="readonly" class="tag mute" title="这是学生提交上来的代码，只读（能选中、能搜索，改不动）">只读</span>
@@ -49,7 +54,12 @@
     </PageHead>
 
     <div class="content">
-      <slot name="banner" :dirty-count="dirtyCount" :files="editedFiles" />
+      <!--
+        这里原来有个 #banner 槽，课堂作业页拿它放「进行中 · 截止 · 已交」那条横幅。
+        横幅撤掉了（信息挪进页头副标题），全站再没有调用方，槽一起删 ——
+        留个空槽只会让下一个人以为往里塞东西是正常做法，
+        而任何塞进去的东西都会把工作台往下顶，那正是要避免的。
+      -->
       <!--
       报错走全站统一的 Toast（顶部居中、8 秒后自己消失，点一下也能关）。
       原来这里是内联红字，夹在工作台上方 —— 它会把 .pg 的高度顶下去一截，
