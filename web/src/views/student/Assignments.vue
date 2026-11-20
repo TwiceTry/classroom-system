@@ -55,10 +55,25 @@
           <router-link v-else-if="a.mySubmission" class="btn mini" :to="'/student/assignments/' + a.id">
             看我的提交
           </router-link>
-          <span v-else class="btn mini" :class="{ disabled: true }" style="opacity: 0.5; cursor: default">
-            等老师开始
-          </span>
+          <!--
+            没交过的也要能点进去：未开始 / 已结束的详情页会交代清楚现在处在哪一步，
+            卡在列表上只能看到卡片、看不到题目要求。
+            原来这里是个灰掉的 span 写「等老师开始」—— 已结束的作业也在说这句，是错的。
+          -->
+          <router-link v-else class="btn mini" :to="'/student/assignments/' + a.id">
+            看看题目
+          </router-link>
         </div>
+
+        <!--
+          老师的评语单独一行。
+          原来只在详情页的提交记录表里，卡片上看不到 ——
+          学生翻到自己那次作业、看到分数就走了，评语从来没被读过。
+          有评语才出现，没有不占地方。
+        -->
+        <p v-if="a.mySubmission && a.mySubmission.comment" class="cmt">
+          <span class="cmt-k">老师评语</span>{{ a.mySubmission.comment }}
+        </p>
       </article>
     </div>
 
@@ -156,6 +171,11 @@ function dueLeft(a) {
  */
 function dueLeftText(a) {
   if (!a.dueAt) return ''
+  /*
+   * 老师已经点过「停止」：哪怕截止时间还没到，这次也交不上了。
+   * 原来这里照样算「还剩 3 天」，学生看着还有时间，实际交不上去。
+   */
+  if (a.started && a.status !== 'open') return '已结束'
   const left = dueLeft(a)
   if (left <= 0) return a.allowLate ? '已过截止 · 仍可交' : '已截止'
   const mins = Math.round(left / 60000)
@@ -215,6 +235,29 @@ function dueTone(a) {
 .hw .due .when {
   font-size: var(--fs-sm);
   color: #8b95a1;
+}
+
+/*
+ * 老师评语：卡片底部单独一块浅底，和上面「已提交 …」那行状态分开。
+ * 最多两行（long 评语在详情页有全文），免得一张卡片被撑得很高。
+ */
+.hw .cmt {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--bg-sub);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  color: #3c4650;
+}
+.hw .cmt-k {
+  margin-right: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--dim);
 }
 
 /* 24 小时内：提醒但不刺眼（只染倒计时那个数，时间点保持安静） */

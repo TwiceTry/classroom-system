@@ -81,6 +81,17 @@ const view = (a) => ({
   dir: a.dir || '',
   note: a.note || '',
   status: a.status || 'closed',
+  /*
+   * started = 「老师点过开始」。
+   *
+   * 必须给：状态只有 open / closed 两个值，而 closed 同时表示两种完全不同的处境 ——
+   *   没开始过（openedAt 空）  学生该看到「老师还没开始」
+   *   已经结束（openedAt 有值） 学生该看到「已结束，只能看不能交」
+   * 前端两个页面（AssignmentWork 的锁定态、列表的 tagOf）都靠它区分，
+   * 但后端从来没给过 —— 于是 a.started 永远是 undefined，
+   * 已结束的作业在学生那里一律显示成「未开始」。
+   */
+  started: !!a.openedAt,
   createdAt: a.createdAt || '',
   openedAt: a.openedAt || '',
   closedAt: a.closedAt || '',
@@ -606,8 +617,15 @@ export default async function assignmentRoutes(app) {
       .filter((a) => !wantItem || String(a.itemKey || '') === wantItem)
       .map((a) => {
         const mine = repo.findSubmission(a.id, t.sid)
-        const visible = a.status === 'open' || !!mine
-        if (!visible) return null
+        /*
+         * 三态全部可见（原来只有 status==='open' 或自己交过才给）：
+         *
+         *   老师刚建好、还没点开始   → 学生完全看不到，课上宣布了也找不到入口
+         *   老师停止后、没交过的人   → 作业从列表里消失，像被删了
+         *
+         * 「能不能交」由 status 决定（提交接口那条校验），不该拿它当可见性开关。
+         * 学生需要看到的是「有这么一次作业、现在处在哪一步」。
+         */
         return Object.assign(view(a), {
           mySubmission: mine
             ? {
@@ -635,7 +653,11 @@ export default async function assignmentRoutes(app) {
     const cls = repo.getClass(t.classId)
     if (cls && a.courseId && cls.courseId && a.courseId !== cls.courseId) throw forbidden('这次作业不属于你的课程')
     const mine = repo.findSubmission(a.id, t.sid)
-    if (a.status !== 'open' && !mine) throw forbidden('这次作业还没开放')
+    /*
+     * 不在这里拦「还没开放」—— 列表已经能看到了，点进来却被 403，
+     * 学生只会以为是坏了。未开始 / 已结束该由页面用 started + status 说明清楚，
+     * 而「不能交」由提交接口那条校验兜（那里才是真正要拦的地方）。
+     */
     return {
       assignment: view(a),
       mySubmission: mine ? subView(mine) : null,
