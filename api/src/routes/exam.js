@@ -676,9 +676,24 @@ export default async function examRoutes(app) {
      * 一旦老师点了结束（或者到点自动结束），重置完学生点开考还是被拒，
      * 而老师那边的入口已经变成「再开一场」—— 一个人补考要把整场重新开一遍。
      */
+    /*
+     * 三种放行方式，任一成立就能考：
+     *   ① 整场开着            —— 全班
+     *   ② 他在某一批里、那批 open —— 分批（机器不够就一批一批来）
+     *   ③ 单人放行            —— 整场结束后的补考
+     */
     const passed = !!repo.findPass(a.id, t.classId, t.sid)
-    if (a.status !== 'open' && !passed) {
-      throw forbidden(a.openedAt ? '这场机试已经结束了' : '老师还没开始这场机试')
+    const inBatch = !!repo.findBatchFor(a.id, t.sid)
+    if (a.status !== 'open' && !inBatch && !passed) {
+      /* 还有 open 的批次 → 没轮到你；全都结束了 → 这场就到此为止 */
+      const waiting = repo.batchesOf(a.id).some((b) => b.status === 'open')
+      throw forbidden(
+        waiting
+          ? '还没有轮到你（老师正在分批放人），等一会儿再试'
+          : a.openedAt
+            ? '这场机试已经结束了'
+            : '老师还没开始这场机试'
+      )
     }
     const { sub, state } = ensureSubmission(a, t)
     /* 开考即占住学生端屏幕（优先级最高，谁都压不掉）——交卷时释放 */

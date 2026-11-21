@@ -482,6 +482,109 @@ export function findSubmission(assignmentId, sid) {
   )
 }
 
+/* ---------------- 分批开始（一份作业 / 一场考试分几批放人） ---------------- */
+
+function batchRow(r) {
+  let sids = []
+  try {
+    sids = JSON.parse(r.sids || '[]')
+  } catch (e) {
+    sids = []
+  }
+  return {
+    id: r.id,
+    assignmentId: r.assignment_id,
+    seq: Number(r.seq) || 1,
+    sids: Array.isArray(sids) ? sids.map(String) : [],
+    status: r.status || 'open',
+    openedAt: r.opened_at || '',
+    closedAt: r.closed_at || '',
+    dueAt: r.due_at || '',
+    note: r.note || '',
+  }
+}
+
+export function batchesOf(assignmentId) {
+  return db()
+    .prepare(`SELECT * FROM assignment_batches WHERE assignment_id = ? ORDER BY seq, opened_at`)
+    .all(String(assignmentId))
+    .map(batchRow)
+}
+
+/**
+ * 这个学生此刻所在的那一批。
+ *
+ * 只认 open 的：已经结束的批次不能再交，所以对他而言等于不存在。
+ * 有多条时取最新建的那条（理论上不该出现，老师连开两批同一人时以最后一次为准）。
+ */
+export function findBatchFor(assignmentId, sid) {
+  const rows = db()
+    .prepare(`SELECT * FROM assignment_batches WHERE assignment_id = ? AND status = 'open' ORDER BY seq DESC`)
+    .all(String(assignmentId))
+    .map(batchRow)
+  return rows.find((b) => b.sids.includes(String(sid))) || null
+}
+
+/** 下一批的序号（老师第三次点「开始下一批」就是 3） */
+export function nextBatchSeq(assignmentId) {
+  const r = db()
+    .prepare(`SELECT MAX(seq) AS m FROM assignment_batches WHERE assignment_id = ?`)
+    .get(String(assignmentId))
+  return (Number(r && r.m) || 0) + 1
+}
+
+export function insertBatch(b) {
+  db()
+    .prepare(
+      `INSERT INTO assignment_batches (id, assignment_id, seq, sids, status, opened_at, closed_at, due_at, note)
+       VALUES (@id, @assignmentId, @seq, @sids, @status, @openedAt, @closedAt, @dueAt, @note)`
+    )
+    .run({
+      id: String(b.id),
+      assignmentId: String(b.assignmentId),
+      seq: Number(b.seq) || 1,
+      sids: JSON.stringify(Array.isArray(b.sids) ? b.sids.map(String) : []),
+      status: b.status || 'open',
+      openedAt: b.openedAt || new Date().toISOString(),
+      closedAt: b.closedAt || '',
+      dueAt: b.dueAt || '',
+      note: b.note || '',
+    })
+  return batchesOf(b.assignmentId).find((x) => x.id === b.id) || null
+}
+
+export function updateBatch(id, patch) {
+  const r = db().prepare(`SELECT * FROM assignment_batches WHERE id = ?`).get(String(id))
+  if (!r) return null
+  const cur = batchRow(r)
+  const next = Object.assign({}, cur, patch)
+  db()
+    .prepare(
+      `UPDATE assignment_batches SET seq = ?, sids = ?, status = ?, opened_at = ?, closed_at = ?, due_at = ?, note = ?
+       WHERE id = ?`
+    )
+    .run(
+      Number(next.seq) || 1,
+      JSON.stringify(Array.isArray(next.sids) ? next.sids.map(String) : []),
+      next.status || 'open',
+      next.openedAt || '',
+      next.closedAt || '',
+      next.dueAt || '',
+      next.note || '',
+      String(id)
+    )
+  return findBatch(id)
+}
+
+export function findBatch(id) {
+  const r = db().prepare(`SELECT * FROM assignment_batches WHERE id = ?`).get(String(id))
+  return r ? batchRow(r) : null
+}
+
+export function deleteBatchesOf(assignmentId) {
+  return db().prepare(`DELETE FROM assignment_batches WHERE assignment_id = ?`).run(String(assignmentId)).changes
+}
+
 /* ---------------- 机试「单人放行」（整场结束，让某几个人补考） ---------------- */
 
 export function passesOf(assignmentId) {

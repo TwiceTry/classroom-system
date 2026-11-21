@@ -18,6 +18,8 @@
       <article v-for="a in list" :key="a.id" class="card hw" :class="{ shut: a.status !== 'open' }">
         <div class="hwtop">
           <span class="tag" :class="tagOf(a)">{{ statusOf(a) }}</span>
+          <!-- 分批模式：让他知道自己是第几批，而不是以为「老师把我漏了」 -->
+          <span v-if="a.myBatch" class="batchno">第 {{ a.myBatch.seq }} 批</span>
           <b class="ellip">{{ a.title }}</b>
         </div>
 
@@ -235,6 +237,16 @@ function dueTone(a) {
 .hw .due .when {
   font-size: var(--fs-sm);
   color: #8b95a1;
+}
+
+/* 分批时的批次号：小方块，和状态标签并排但更弱 —— 它是补充说明 */
+.hw .batchno {
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+  background: var(--bg-sub);
+  font-size: var(--fs-xs);
+  color: #7b8794;
+  font-variant-numeric: tabular-nums;
 }
 
 /*

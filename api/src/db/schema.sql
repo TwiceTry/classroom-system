@@ -136,6 +136,29 @@ CREATE TABLE IF NOT EXISTS submissions (
 CREATE INDEX IF NOT EXISTS idx_sub_asg_sid ON submissions (assignment_id, sid);
 CREATE INDEX IF NOT EXISTS idx_sub_class   ON submissions (class_id, sid);
 
+-- 分批开始：一份作业 / 一场考试可以由老师分成若干批，逐批放人。
+--
+-- 为什么做成独立的表，而不是在 assignments 上加几个字段：
+--   「第 1 批张三李四 9:00-9:20，第 2 批王五赵六 9:20-9:40」——
+--   这是**一对多**，塞进 assignments 只能存一个 JSON，改其中一批要整份重写，
+--   而且没法记录每批各自的开始 / 结束时间。
+--
+-- sids 是 JSON 数组（这批有谁）。一个班 60 人，一批几十个，存文本足够。
+-- 判定顺序：整场 status === 'open' 时全班都能交（老行为）；
+-- 整场关着时，只有「包含我、且 open、且没过期」的那一批能交。
+CREATE TABLE IF NOT EXISTS assignment_batches (
+  id            TEXT PRIMARY KEY,
+  assignment_id TEXT NOT NULL,
+  seq           INTEGER NOT NULL DEFAULT 1,
+  sids          TEXT NOT NULL DEFAULT '[]',
+  status        TEXT NOT NULL DEFAULT 'open',
+  opened_at     TEXT NOT NULL DEFAULT '',
+  closed_at     TEXT NOT NULL DEFAULT '',
+  due_at        TEXT NOT NULL DEFAULT '',
+  note          TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_batch_asg ON assignment_batches (assignment_id, status);
+
 -- 机试「单人放行」：整场已经结束，但让某几个人补考。
 --
 -- 为什么不挂在 submissions 上：重考是**删掉**那份答卷再重开，

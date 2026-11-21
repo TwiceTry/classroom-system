@@ -157,6 +157,27 @@ function isExamAssignment(a) {
 }
 
 /**
+ * 这个学生此刻能不能交（作业 / 机试共用）。
+ *
+ * 两条通道，任一成立就行：
+ *   ① 整场开着                     —— 全班都能交（老师一点「开始」所有人放行）
+ *   ② 他在某一批里、那批还 open     —— 分批模式，整场关着也能交
+ *
+ * 故意的：分批时整场保持 closed，只有批次在放人。
+ * 这样「老师点了开始」和「第 3 批开始」不会互相干扰 ——
+ * 整场一开就是全班，那是另一种用法，不该被批次逻辑拦住。
+ *
+ * 截止时间不在这里判（它和「能不能进」是两件事）：调用方拿到 ok 之后，
+ * 再看 overDue / allowLate。这样迟到但被放行的人仍然能交，只是记为迟交。
+ */
+function gateOf(a, sid) {
+  if (a.status === 'open') return { ok: true, via: 'all', batch: null }
+  const b = repo.findBatchFor(a.id, sid)
+  if (b) return { ok: true, via: 'batch', batch: b }
+  return { ok: false, via: '', batch: null }
+}
+
+/**
  * 学生端看到的「我的提交」。
  *
  * 机试要多补两个字段：startedAt / submittedAt。
@@ -233,6 +254,12 @@ export default async function assignmentRoutes(app) {
           studentCount: sids.size,
           gradedCount: subs.filter((s) => typeof s.score === 'number').length,
           latestAt: subs.length ? subs[subs.length - 1].createdAt : '',
+          /*
+           * 有几批正在放人。整场 status 是 closed、却有批在跑时，
+           * 教师端要显示「分批进行中」——否则老师刚点「开始这一批」，
+           * 上面的标签还写着「未开始」，和下面批次列表里的「进行中」打脸。
+           */
+          openBatches: repo.batchesOf(a.id).filter((b) => b.status === 'open').length,
         })
       })
     // 前端列表页还要这两块：可选的示例目录、以及「按班筛选」用的班级清单
@@ -367,6 +394,52 @@ export default async function assignmentRoutes(app) {
   app.post('/api/assignments/:id/start', { preHandler: requireAuth('teacher') }, async (req) => {
     const a = repo.getAssignment(req.params.id)
     if (!a) throw notFound('作业不存在')
+    /*
+     * 带 sids = 只开这一批；不带 = 老行为，整场开放给全班。
+     *
+     * 两种模式并存是有意的：
+     *   · 随堂作业，全班一起做  → 不选人，直接开始（和以前一样）
+     *   · 机器不够 / 要盯纪律   → 分成几批，一批十几个人进来，
+     *     做完一批再放下一批，直到所有人都做完
+     *
+     * 判定顺序（学生能不能交）：
+     *   整场 status === 'open' → 全班都能交
+     *   否则找「包含我、open、没过期」的那一批
+     * 所以分批的时候整场保持 closed，只有批次在放人。
+     */
+    const sids = Array.isArray(req.body && req.body.sids)
+      ? req.body.sids.map((x) => String(x || '').trim()).filter(Boolean)
+      : []
+
+    if (sids.length) {
+      const seq = repo.nextBatchSeq(a.id)
+      const batch = repo.insertBatch({
+        id: uid('bt'),
+        assignmentId: a.id,
+        seq,
+        sids,
+        status: 'open',
+        openedAt: new Date().toISOString(),
+        note: String((req.body && req.body.note) || '').slice(0, 100),
+      })
+      /* 名单只发给被点到的那些人 —— 轮不到的学生不该收到「开始了」的提示 */
+      const delivered = broadcast({
+        t: 'assignment',
+        action: 'open',
+        id: a.id,
+        title: a.title,
+        itemKey: a.itemKey,
+        batchId: batch.id,
+        sids,
+      })
+      return {
+        batch,
+        delivered,
+        assignment: view(a),
+        message: '第 ' + seq + ' 批已开始（' + sids.length + ' 人）',
+      }
+    }
+
     const next = repo.updateAssignment(a.id, { status: 'open', openedAt: new Date().toISOString() })
     const delivered = broadcast({ t: 'assignment', action: 'open', id: a.id, title: a.title, itemKey: a.itemKey })
     return { assignment: view(next), delivered }
@@ -379,6 +452,33 @@ export default async function assignmentRoutes(app) {
     const next = repo.updateAssignment(a.id, { status: 'closed', closedAt: new Date().toISOString() })
     const delivered = broadcast({ t: 'assignment', action: 'close', id: a.id, title: a.title, itemKey: a.itemKey })
     return { assignment: view(next), delivered }
+  })
+
+  /**
+   * 结束某一批（整场不动）。
+   *
+   * 老师收完第 1 批再放第 2 批，靠的就是这个 ——
+   * 如果结束批次时顺手把整场也关了，第 2 批就开不出来。
+   */
+  app.post('/api/assignments/:id/batches/:batchId/stop', { preHandler: requireAuth('teacher') }, async (req) => {
+    const a = repo.getAssignment(req.params.id)
+    if (!a) throw notFound('作业不存在')
+    const b = repo.findBatch(req.params.batchId)
+    if (!b || b.assignmentId !== a.id) throw notFound('这一批不存在')
+    if (b.status !== 'open') return { batch: b, delivered: 0, message: '这一批已经结束了' }
+
+    const next = repo.updateBatch(b.id, { status: 'closed', closedAt: new Date().toISOString() })
+    /* 只通知这一批的人：别人的页面不该因为「第 1 批收了」跳提示 */
+    const delivered = broadcast({
+      t: 'assignment',
+      action: 'batch-close',
+      id: a.id,
+      title: a.title,
+      itemKey: a.itemKey,
+      batchId: b.id,
+      sids: b.sids,
+    })
+    return { batch: next, delivered, message: '第 ' + b.seq + ' 批已结束' }
   })
 
   /** 删作业：连提交记录 + 磁盘文件 + 已记的分一起清 */
@@ -441,8 +541,43 @@ export default async function assignmentRoutes(app) {
       }
     }
 
+    /* 已交的人的 sid，用于给每一批算「这批交了几个」 */
+    const submittedSids = new Set(scope.map((s) => s.sid))
+
+    const batchesNow = repo.batchesOf(a.id)
     return {
-      assignment: view(a),
+      assignment: Object.assign(view(a), {
+        /* 有批在放人时，整场虽然是 closed，教师端要显示「分批进行中」 */
+        openBatches: batchesNow.filter((b) => b.status === 'open').length,
+      }),
+      /*
+       * 分批列表。每批带上「这批有多少人、交了几个」——
+       * 老师要判断的是「第 2 批能不能收了」，而不是去看名单。
+       */
+      batches: batchesNow.map((b) => ({
+        id: b.id,
+        seq: b.seq,
+        status: b.status,
+        openedAt: b.openedAt,
+        closedAt: b.closedAt,
+        note: b.note,
+        count: b.sids.length,
+        submitted: b.sids.filter((sid) => submittedSids.has(sid)).length,
+      })),
+      /*
+       * 全班名单（带「交没交」）。分批放人要勾人，得先有名单 ——
+       * 原来这页只有 missing（未交的），勾不出「已经交了的人」。
+       * 用 roster 而不是让学生端接口去拼，是因为老师要按班看、要看到还没交的人。
+       */
+      roster: classes.flatMap((cl) =>
+        repo.rosterOf(cl.id).map((s) => ({
+          sid: s.sid,
+          name: s.name,
+          classId: cl.id,
+          className: cl.name,
+          submitted: submittedSids.has(s.sid),
+        }))
+      ),
       submissions: scope.map((s) => subView(s, nameOfClass.get(s.classId))),
       stats: {
         classId,
@@ -715,9 +850,23 @@ export default async function assignmentRoutes(app) {
          * 「能不能交」由 status 决定（提交接口那条校验），不该拿它当可见性开关。
          * 学生需要看到的是「有这么一次作业、现在处在哪一步」。
          */
+        const gate = gateOf(a, t.sid)
         const me = Object.assign(view(a), {
           mySubmission: mine ? subForStudent(a, mine) : null,
+          /*
+           * 我在哪一批。只给序号和状态，**不给 sids** ——
+           * 那是这一批的完整名单，学生没必要看到同批还有谁。
+           */
+          myBatch: gate.batch ? { id: gate.batch.id, seq: gate.batch.seq, openedAt: gate.batch.openedAt } : null,
         })
+        /* 整场关着、但他在某一批里 → 对他而言就是「还能交」 */
+        if (gate.via === 'batch') me.collecting = true
+        /*
+         * 有多少批正在放人。
+         * 整场 status 是 closed、却有批在跑 —— 界面该显示「分批进行中」，
+         * 否则老师点了「开始这一批」，标签还写着「未开始」，自相矛盾。
+         */
+        me.openBatches = repo.batchesOf(a.id).filter((b) => b.status === 'open').length
         /*
          * 机试「单人放行」：整场已经结束，但老师让这个人补考。
          *
@@ -747,8 +896,13 @@ export default async function assignmentRoutes(app) {
      * 学生只会以为是坏了。未开始 / 已结束该由页面用 started + status 说明清楚，
      * 而「不能交」由提交接口那条校验兜（那里才是真正要拦的地方）。
      */
+    const gate = gateOf(a, t.sid)
     return {
-      assignment: view(a),
+      assignment: Object.assign(view(a), {
+        /* 分批模式下整场是关的，但他在某一批里就该显示成「可以交」 */
+        collecting: gate.ok ? view(a).collecting || gate.via === 'batch' : false,
+        myBatch: gate.batch ? { id: gate.batch.id, seq: gate.batch.seq, openedAt: gate.batch.openedAt } : null,
+      }),
       mySubmission: mine ? subView(mine) : null,
       /*
        * 同时给一个数组形态。
@@ -804,7 +958,27 @@ export default async function assignmentRoutes(app) {
       const t = req.user
       const a = repo.getAssignment(req.params.id)
       if (!a) throw notFound('作业不存在')
-      if (a.status !== 'open') throw conflict('这次作业还没开放（或已经截止）')
+      /* 整场开着，或者他被放进了某一批 —— 两者都不成立就是「还没轮到你」 */
+      const gate = gateOf(a, t.sid)
+      if (!gate.ok) {
+        /*
+         * 文案分三种，别混：
+         *   他所在的批已经结束   → 「你这一批结束了」（他等下去也不会有）
+         *   还有别的批在跑       → 「还没轮到你」
+         *   一个批次都没有       → 整场没开 / 已经结束
+         */
+        const all = repo.batchesOf(a.id)
+        const used = all.filter((b) => b.sids.includes(String(t.sid)))
+        throw conflict(
+          used.length
+            ? '你这一批已经结束了'
+            : all.some((b) => b.status === 'open')
+              ? '还没有轮到你（老师正在分批放人），等一会儿再试'
+              : a.openedAt
+                ? '这次作业已经结束了'
+                : '这次作业还没开始'
+        )
+      }
 
       /*
        * 过了截止时间、并且不允许迟交 → 不再收。

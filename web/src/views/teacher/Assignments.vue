@@ -77,6 +77,8 @@
         </p>
         <p class="mini dim">
           <span v-if="d.assignment.openedAt">开始于 {{ when(d.assignment.openedAt) }}</span>
+          <!-- 有批在放人的时候不能说「学生端是灰的」—— 那批人是亮的 -->
+          <span v-else-if="d.assignment.openBatches">整场没开，正在按批次放人</span>
           <span v-else>还没开始过，学生端现在是灰的</span>
           <span v-if="d.assignment.closedAt"> · 结束于 {{ when(d.assignment.closedAt) }}</span>
         </p>
@@ -92,6 +94,58 @@
         <button v-else class="btn danger" @click="stop">■ 结束作业（停止收卷）</button>
         <button class="btn mini" @click="openEditor('edit')">改标题 / 说明</button>
         <button class="btn mini danger" @click="remove">删除</button>
+      </div>
+    </div>
+
+    <!--
+      分批开始：机器不够、要盯纪律、或者想分两拨做的时候用。
+
+      和「▶ 开始作业」的分工：
+        开始作业   全班一起（一下子都放进来）
+        分批       一次放几个人，这批做完点「结束这批」，再放下一批
+      两者不冲突 —— 整场开着的时候全班都能交；整场关着时只有批次放的人能交。
+    -->
+    <div class="card batches">
+      <CardHead>
+        <template #title>分批开始</template>
+        <template #meta>
+          <span class="dim mini">勾几个人 → 开始这一批；这批做完点「结束这批」，再放下一批</span>
+        </template>
+      </CardHead>
+
+      <div v-if="d.batches && d.batches.length" class="blist">
+        <div v-for="b in d.batches" :key="b.id" class="brow" :class="{ live: b.status === 'open' }">
+          <span class="bseq">第 {{ b.seq }} 批</span>
+          <span class="bstat">{{ b.status === 'open' ? '进行中' : '已结束' }}</span>
+          <span class="dim mini">{{ b.count }} 人 · 已交 {{ b.submitted }}</span>
+          <span v-if="b.note" class="dim mini">· {{ b.note }}</span>
+          <span class="spacer"></span>
+          <button v-if="b.status === 'open'" class="btn mini" @click="stopBatch(b)">结束这批</button>
+        </div>
+      </div>
+
+      <div class="pickbar">
+        <button class="btn mini" @click="pickUnsubmitted">勾还没交的</button>
+        <button class="btn mini" @click="pickAll">全选</button>
+        <button class="btn mini" @click="picked = []">清空</button>
+        <span class="dim mini">已勾 {{ picked.length }} 人</span>
+        <span class="spacer"></span>
+        <button class="btn primary" :disabled="!picked.length || busy" @click="startBatch">
+          ▶ 开始这一批
+        </button>
+      </div>
+
+      <div class="pickers">
+        <label
+          v-for="s in d.roster || []"
+          :key="s.sid"
+          class="pk"
+          :class="{ on: picked.includes(s.sid), done: s.submitted }"
+        >
+          <input type="checkbox" :checked="picked.includes(s.sid)" @change="togglePick(s.sid)" />
+          <span class="pkn">{{ s.name }}</span>
+          <em v-if="s.submitted">已交</em>
+        </label>
       </div>
     </div>
 
@@ -525,6 +579,64 @@ const showMissing = ref(false)
 /** 未交名单默认收起（117 个名字铺开时下面什么都看不见） */
 const showMiss = ref(false)
 
+/* ---------------- 分批开始 ---------------- */
+
+/** 这一批勾了谁（sid 数组） */
+const picked = ref([])
+/** 正在提交（防止连点两下开出两批） */
+const busy = ref(false)
+
+function togglePick(sid) {
+  const i = picked.value.indexOf(sid)
+  if (i >= 0) picked.value = picked.value.filter((x) => x !== sid)
+  else picked.value = picked.value.concat([sid])
+}
+
+/** 勾上所有还没交的人 —— 分批最常用的一手：把剩下的全放进来 */
+function pickUnsubmitted() {
+  const r = (d.value && d.value.roster) || []
+  picked.value = r.filter((s) => !s.submitted).map((s) => s.sid)
+}
+
+function pickAll() {
+  picked.value = ((d.value && d.value.roster) || []).map((s) => s.sid)
+}
+
+/** 开始这一批：只对勾到的人生效，整场状态不动 */
+async function startBatch() {
+  if (!picked.value.length || busy.value) return
+  const n = picked.value.length
+  if (!window.confirm('开始新的一批？\n\n这一批 ' + n + ' 个人可以进入，其他人还是进不来。\n做完之后点「结束这批」，再放下一批。')) return
+  busy.value = true
+  try {
+    const res = await api.post('/api/assignments/' + encodeURIComponent(curId.value) + '/start', {
+      sids: picked.value.slice(),
+    })
+    toast.value = res.message || '第 ' + n + ' 人已放行'
+    picked.value = []
+    await loadAll()
+  } catch (e) {
+    toast.value = e.message
+  } finally {
+    busy.value = false
+  }
+}
+
+/** 结束某一批：整场不动，只是这一批不能再交了 */
+async function stopBatch(b) {
+  if (!b) return
+  if (!window.confirm('结束第 ' + b.seq + ' 批？\n\n这批 ' + b.count + ' 人就不能再交了（已交的照样留着）。\n整场不受影响，你可以接着放下一批。')) return
+  try {
+    const res = await api.post(
+      '/api/assignments/' + encodeURIComponent(curId.value) + '/batches/' + encodeURIComponent(b.id) + '/stop'
+    )
+    toast.value = res.message || '第 ' + b.seq + ' 批已结束'
+    await loadDetail(true)
+  } catch (e) {
+    toast.value = e.message
+  }
+}
+
 /** 未交的人跨了几个班 —— 收起状态下这一句比 117 个名字有用 */
 const missSummary = computed(() => {
   const list = (d.value && d.value.stats && d.value.stats.missing) || []
@@ -886,7 +998,14 @@ function collectingOf(x) {
 
 function stateOf(x) {
   if (!x) return { text: '', tone: '' }
+  /* 整场开着 = 全班都能交 */
   if (collectingOf(x)) return { text: '进行中', tone: 'ok' }
+  /*
+   * 整场没开、但有一批在放人 → 「分批进行中」。
+   * 不加这一条的话，老师刚点了「开始这一批」，标签还写着「未开始」——
+   * 而下面明明列着「第 1 批 进行中 2 人」，两句话互相打脸。
+   */
+  if (Number(x.openBatches) > 0) return { text: '分批进行中', tone: 'ok' }
   if (overDueOf(x) && x.allowLate === false) return { text: '已截止（时间到）', tone: 'mute' }
   if (x.started) return { text: '已结束', tone: 'mute' }
   return { text: '未开始', tone: 'warn' }
@@ -1244,6 +1363,99 @@ async function clearGrade() {
   display: flex;
   gap: 4px;
   flex: 0 0 auto;
+}
+
+/* ---------------- 分批开始 ---------------- */
+
+/* 批次列表：一行一批，进行中的左侧一条蓝线 */
+.blist {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: var(--sp-3);
+}
+.brow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 6px var(--sp-2) 6px var(--sp-3);
+  border-left: 2px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--bg-sub);
+  font-size: var(--fs-md);
+}
+.brow.live {
+  border-left-color: var(--brand);
+  background: #eef4f9;
+}
+.brow .bseq {
+  font-weight: 600;
+  color: #1f2937;
+}
+.brow .bstat {
+  font-size: var(--fs-sm);
+  color: #8b95a1;
+}
+.brow.live .bstat {
+  color: var(--brand);
+}
+
+/* 选人条 */
+.pickbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  padding-bottom: var(--sp-2);
+  border-bottom: 1px solid var(--line-soft);
+  margin-bottom: var(--sp-2);
+}
+
+/*
+ * 名单：小格子铺开，勾中的实心。
+ * 已交的压暗 —— 分批时常见的是「把还没交的勾上」，
+ * 一眼能跳过已交的人。
+ */
+.pickers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 190px;
+  overflow: auto;
+}
+.pk {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px 3px 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: #fff;
+  font-size: var(--fs-sm);
+  color: #3c4650;
+  cursor: pointer;
+  user-select: none;
+}
+.pk:hover {
+  border-color: #b9c6d3;
+}
+.pk.on {
+  background: #e8f1f8;
+  border-color: var(--brand);
+  color: var(--brand-ink, #1b4a6b);
+  font-weight: 600;
+}
+.pk.done {
+  opacity: 0.5;
+}
+.pk input {
+  margin: 0;
+  accent-color: var(--brand);
+}
+.pk em {
+  font-style: normal;
+  font-size: 10.5px;
+  color: #8b95a1;
 }
 
 /*
