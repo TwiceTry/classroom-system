@@ -949,6 +949,12 @@ export default async function assignmentRoutes(app) {
         /* 分批模式下整场是关的，但他在某一批里就该显示成「可以交」 */
         collecting: gate.ok ? view(a).collecting || gate.via === 'batch' : false,
         myBatch: gate.batch ? batchBrief(gate.batch) : null,
+        /*
+         * 有几批在放人（且没过时间）。
+         * 学生端靠它区分「老师还没开始」和「开始了但还没轮到我」——
+         * 后者不该让他一直等，也不该让他以为老师忘了。
+         */
+        openBatches: repo.batchesOf(a.id).filter((b) => b.status === 'open' && !repo.batchOverdue(b)).length,
       }),
       mySubmission: mine ? subView(mine) : null,
       /*

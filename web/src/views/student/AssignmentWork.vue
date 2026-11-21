@@ -1,8 +1,12 @@
 <template>
   <div class="aw">
-    <!-- 老师开着：直接进工作台，跟 Playground 一模一样，只是右上多一个「提交」 -->
+    <!--
+      能交就直接进工作台（和 Playground 一模一样，只是右上多一个「提交」）。
+      v-if 用 canStillSubmit 而不是 status === 'open'：
+      分批模式下整场是 closed、只有批次在放人，用户在某一批里就该进来。
+    -->
     <PgWorkbench
-      v-if="a && a.status === 'open'"
+      v-if="a && canStillSubmit"
       ref="wb"
       :key="'hw-' + a.id"
       :title="a.title"
@@ -67,20 +71,36 @@
         <template #title>{{ a.title }}</template>
         <template #sub>{{ a.note || '这次作业有自己的起手代码' }}<template v-if="dueText"> · 截止 {{ dueText }}</template></template>
         <template #right>
-          <span class="tag" :class="a.started ? 'mute' : 'warn'">{{ a.started ? '已结束' : '未开始' }}</span>
+          <span class="tag" :class="a.myBatch || a.started ? 'mute' : 'warn'">
+            {{ a.myBatch && a.myBatch.overDue ? '时间到' : a.myBatch ? '这一批结束' : a.started ? '已结束' : '未开始' }}
+          </span>
           <router-link class="btn mini" to="/student/assignments">← 列表</router-link>
         </template>
       </PageHead>
 
       <div class="content">
         <div class="card lock">
-          <h3>{{ a.started ? '这次课堂作业已经结束了' : '老师还没开始这次课堂作业' }}</h3>
+          <!--
+            进不来有四种原因，分开说。
+            原来只有「已结束 / 还没开始」两种，分批模式下会说错 ——
+            老师明明已经开始了，只是还没轮到这个人。
+          -->
+          <h3>{{ lockTitle }}</h3>
           <p class="dim">
-            <template v-if="a.started">
+            <template v-if="a.myBatch && a.myBatch.overDue">
+              这一批的限时到了，不能再提交。老师会在下一批/补考时安排你，或者直接找老师说明情况。
+            </template>
+            <template v-else-if="a.myBatch">这一批已经收了。等老师放下一批，或者找老师安排补交。</template>
+            <template v-else-if="a.started">
               结束于 {{ when(a.closedAt) }}。交上去的作业还在，下面可以翻回自己写过的代码；
               老师批完之后这里会显示分数。
             </template>
-            <template v-else>等老师在教师端点「开始」，这里就会出现编辑器和提交按钮。</template>
+            <template v-else-if="Number(a.openBatches) > 0">
+              老师在分批放人，还没轮到你。轮到你这一批时这里会出现编辑器和提交按钮（不用刷新）。
+            </template>
+            <template v-else>
+              老师还没放开。等老师点「开始」，这里就会出现编辑器和提交按钮。
+            </template>
           </p>
         </div>
 
@@ -203,9 +223,28 @@ let off = null
  */
 const canStillSubmit = computed(() => {
   const x = a.value || {}
-  if (x.status !== 'open') return false
+  /*
+   * 判据是后端算好的 **collecting**，不是 status。
+   *
+   * status 只表示「整场开没开」。分批模式下整场是 closed、只有批次在放人，
+   * 所以他在某一批里时 status 依然是 closed —— 只看 status 的话，
+   * 学生点进来会是「老师还没开始」的锁定页，分批等于白做。
+   * collecting = 整场开着 **或** 他在某一批里（后端 gateOf 算的）。
+   */
+  if (!x.collecting) return false
   if (x.overDue && x.allowLate === false) return false
   return true
+})
+
+/** 锁定页的标题：到底为什么不让你交 */
+const lockTitle = computed(() => {
+  const x = a.value || {}
+  if (x.myBatch && x.myBatch.overDue) return '你这一批的时间到了'
+  if (x.myBatch) return '你这一批已经结束了'
+  /* 老师已经在放别人了，只是没轮到他 —— 说「还没开始」会让他一直等 */
+  if (Number(x.openBatches) > 0) return '还没轮到你'
+  if (x.started) return '这次课堂作业已经结束了'
+  return '老师还没开始这次课堂作业'
 })
 
 /**
