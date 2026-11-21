@@ -20,6 +20,11 @@ import * as starter from '../lib/starter.js'
 import * as assignlib from '../lib/assignlib.js'
 import * as scheme from '../lib/scheme.js'
 import { withCourseScheme } from '../lib/scheme.js'
+/*
+ * 机试的「交没交卷」存在 state 文件里（submissions 表没这列），
+ * 学生列表要显示「已交卷」就得读它。纯库，不会和 routes 形成循环依赖。
+ */
+import * as examLib from '../lib/exam.js'
 import { broadcast } from './cast.js'
 import {
   submissionView,
@@ -135,6 +140,46 @@ const view = (a) => ({
   requireFile: a.requireFile !== false,
   attachments: Array.isArray(a.attachments) ? a.attachments : [],
 })
+
+/**
+ * 学生端看到的「我的提交」。
+ *
+ * 机试要多补两个字段：startedAt / submittedAt。
+ *
+ * 它们存在答卷 state 文件里，submissions 表没有这两列，而前端**必须**靠 submittedAt
+ * 区分「开考了、还没交」和「已经交卷」—— 学生一开考就会建一条 submission，
+ * 只看 submission 存不存在的话，开考那一刻列表上就显示成「已交卷」了
+ * （考试中刷新一下列表，会看到自己"已交卷"，实际还在答）。
+ *
+ * 只对机试读文件：作业没有这个概念，不该陪着多开一次 IO。
+ */
+function subForStudent(a, mine) {
+  const out = {
+    id: mine.id,
+    createdAt: mine.createdAt,
+    files: mine.files || [],
+    score: mine.score === null || mine.score === undefined ? undefined : Number(mine.score),
+    grade: mine.grade || '',
+    comment: mine.comment || '',
+    gradedAt: mine.gradedAt || '',
+    late: !!mine.late,
+  }
+  if (a.kind === 'exam') {
+    try {
+      const st = examLib.readJson(
+        path.join(examLib.examDir(mine.classId, mine.sid, a.id, mine.id), 'exam.json'),
+        null
+      )
+      if (st) {
+        out.startedAt = st.startedAt || ''
+        out.submittedAt = st.submittedAt || ''
+      }
+    } catch (e) {
+      /* 读不到就当没开考，不影响列表 */
+    }
+  }
+  return out
+}
 
 /**
  * 提交记录的对外形状：统一用 lib/grading.js 里那一份（别在这里再写一个）。
@@ -654,18 +699,7 @@ export default async function assignmentRoutes(app) {
          * 学生需要看到的是「有这么一次作业、现在处在哪一步」。
          */
         return Object.assign(view(a), {
-          mySubmission: mine
-            ? {
-                id: mine.id,
-                createdAt: mine.createdAt,
-                files: mine.files || [],
-                score: mine.score === null || mine.score === undefined ? undefined : Number(mine.score),
-                grade: mine.grade || '',
-                comment: mine.comment || '',
-                gradedAt: mine.gradedAt || '',
-                late: !!mine.late,
-              }
-            : null,
+          mySubmission: mine ? subForStudent(a, mine) : null,
         })
       })
       .filter(Boolean)

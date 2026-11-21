@@ -3,7 +3,8 @@
     <template #head>
       <PageHead>
         <template #title>{{ moduleTitle }}</template>
-        <template #sub>老师开始了才能开考；开考后计时，答案随打随存，限时就自动交卷</template>
+        <!-- 副标题放状态，不放操作说明（那是第一次才需要看的） -->
+        <template #sub>{{ subText }}</template>
         <template #right>
           <button class="btn mini" :disabled="loading" @click="load">刷新</button>
         </template>
@@ -14,27 +15,60 @@
     <div v-else-if="!list.length" class="card empty">老师还没安排机试。</div>
 
     <div v-else class="grid2">
-      <article v-for="a in list" :key="a.id" class="card hw" :class="{ shut: a.status !== 'open' }">
+      <article v-for="a in list" :key="a.id" class="card hw" :class="{ shut: !collectingOf(a) }">
         <div class="hwtop">
-          <span class="tag" :class="a.status === 'open' ? 'ok' : a.started ? 'mute' : 'warn'">
-            {{ a.status === 'open' ? '考试中' : a.started ? '已结束' : '未开始' }}
-          </span>
+          <span class="tag" :class="stateOf(a).tone">{{ stateOf(a).text }}</span>
           <b class="ellip">{{ a.title }}</b>
         </div>
         <p v-if="a.note" class="note">{{ a.note }}</p>
         <div class="hwfoot">
-          <!-- 字段名对齐后端：mySubmission（原先是 myLatest，永远拿不到，交卷了也显示「还没开考」） -->
-          <span v-if="a.mySubmission" class="mini">
-            <template v-if="a.mySubmission.score !== undefined && a.mySubmission.score !== null">已交卷 · <b class="score">{{ a.mySubmission.score }}</b> 分</template>
+          <!--
+            「交没交卷」看 submittedAt，不看 mySubmission 存不存在 ——
+            学生一开考就会建一条 submission，用"存在"判断的话，
+            考试中刷新一下列表会看到自己「已交卷」，实际还在答题。
+
+            三种情况分开说：
+              没开考          → 还没开考
+              开考了没交       → 考到一半 / 时间到还没交
+              交了           → 已交卷（有分就带分）
+          -->
+          <span v-if="!a.mySubmission" class="dim mini">还没开考</span>
+          <!--
+            列表里拿不到「还剩几分钟」—— 限时是试卷上的（duration），
+            而列表接口只给作业级字段。剩余时间在开考页里显示，那里有完整状态。
+            这里只交代「开考了、还没交卷」这一件事。
+          -->
+          <span v-else-if="!a.mySubmission.submittedAt" class="mini">
+            已开考 · <b class="over">还没交卷</b>
+          </span>
+          <span v-else class="mini">
+            <template v-if="a.mySubmission.score !== undefined && a.mySubmission.score !== null">
+              已交卷 · <b class="score">{{ a.mySubmission.score }}</b> 分
+            </template>
             <template v-else>已交卷 · 等老师判</template>
           </span>
-          <span v-else class="dim mini">还没开考</span>
           <span class="spacer"></span>
-          <router-link v-if="a.status === 'open'" class="btn mini primary" :to="'/student/modules/' + itemKey + '/' + a.id">
-            {{ a.mySubmission ? '再看我的答卷' : '开考' }}
+          <router-link
+            v-if="collectingOf(a)"
+            class="btn mini primary"
+            :to="'/student/modules/' + itemKey + '/' + a.id"
+          >
+            {{ a.mySubmission ? (a.mySubmission.submittedAt ? '再看我的答卷' : '继续答题') : '开考' }}
           </router-link>
-          <span v-else-if="a.mySubmission" class="btn mini" style="opacity: 0.6; cursor: default">已结束</span>
-          <span v-else class="btn mini" style="opacity: 0.5; cursor: default">等老师开始</span>
+          <router-link
+            v-else-if="a.mySubmission"
+            class="btn mini"
+            :to="'/student/modules/' + itemKey + '/' + a.id"
+          >
+            看我的答卷
+          </router-link>
+          <!--
+            原来这里一句「等老师开始」包了两件事：还没开的，和已经结束的。
+            考完的学生看到「等老师开始」会以为还有戏。
+          -->
+          <span v-else class="btn mini" style="opacity: 0.5; cursor: default">
+            {{ stateOf(a).key === 'draft' ? '等老师开始' : '已结束' }}
+          </span>
         </div>
       </article>
     </div>
@@ -43,26 +77,64 @@
 
 <script setup>
 /* 学生端机试列表：只有「开始」之后才有入口 */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '../../api'
 import { loadScheme, scheme } from '../../utils/scheme'
 import PageHead from '../../components/PageHead.vue'
 import PageShell from '../../components/PageShell.vue'
+/* 状态是算出来的，和教师端共用同一份判断 */
+import { collectingOf as collectingBase, stateOf as stateBase } from '../../utils/assignmentState'
 
 const props = defineProps({ itemKey: { type: String, default: 'exam' } })
 
 const list = ref([])
 const loading = ref(false)
 const err = ref('')
+/* 轮询句柄：到点自动结束靠它推时钟 + 重拉列表 */
+let timer = null
 
 const moduleTitle = computed(() => {
   const it = scheme.items.find((i) => i.key === props.itemKey)
   return it ? it.name : '机试'
 })
 
+/* 时钟：让「到点自动结束」不依赖数据新鲜度（Vue 追踪不到 Date.now()） */
+const nowTick = ref(Date.now())
+function collectingOf(x) {
+  return collectingBase(x, nowTick.value)
+}
+function stateOf(x) {
+  return stateBase(x, nowTick.value, '考试中')
+}
+
+/**
+ * 页头副标题 = 现在什么情况。
+ * 原来写的是「老师开始了才能开考；开考后计时，答案随打随存，限时就自动交卷」——
+ * 操作说明看第二遍就是噪音，而这里本该说「有几场、我考完了没」。
+ */
+const subText = computed(() => {
+  const n = list.value.length
+  if (!n) return '老师还没安排机试'
+  const open = list.value.filter(collectingOf).length
+  const done = list.value.filter((a) => a.mySubmission && a.mySubmission.submittedAt).length
+  const parts = []
+  parts.push(open ? open + ' 场可以开考' : '现在没有可以开考的')
+  if (done) parts.push('已交 ' + done + ' 场')
+  return parts.join(' · ')
+})
+
 onMounted(async () => {
   await loadScheme()
   await load()
+  /* 和教师端一样：定时推时钟 + 重拉列表，到点之后状态自己翻 */
+  timer = setInterval(() => {
+    nowTick.value = Date.now()
+    if (document.hidden) return
+    load()
+  }, 8000)
+})
+onUnmounted(() => {
+  if (timer) clearInterval(timer)
 })
 
 async function load() {

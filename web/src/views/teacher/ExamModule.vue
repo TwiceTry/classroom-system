@@ -26,9 +26,10 @@
       :class="{ on: a.id === curId }"
       @click="select(a.id)"
       >
-      <i class="led" :class="a.status === 'open' ? 'on' : a.started ? 'off' : ''"></i>
+      <!-- 状态读 collecting（实际还收不收），不读 status —— 到期不用老师手动点结束 -->
+      <i class="led" :class="collectingOf(a) ? 'on' : a.started ? 'off' : ''"></i>
       {{ a.title }}
-      <span class="dim">{{ a.status === 'open' ? '考试中' : a.started ? '已结束' : '未开始' }}</span>
+      <span class="dim">{{ stateOf(a).text }}</span>
     </button>
     <span v-if="!list.length && !loading" class="dim" style="font-size: var(--fs-md)">还没建过机试，点右上角「＋ 新建机试」。</span>
     </div>
@@ -38,9 +39,7 @@
       <div class="ctrl-l">
         <h3>
           {{ d.assignment.title }}
-          <span class="tag" :class="d.assignment.status === 'open' ? 'ok' : d.assignment.started ? 'mute' : 'warn'">
-            {{ d.assignment.status === 'open' ? '考试中' : d.assignment.started ? '已结束' : '未开始' }}
-          </span>
+          <span class="tag" :class="stateOf(d.assignment).tone">{{ stateOf(d.assignment).text }}</span>
         </h3>
         <p class="dim mini" v-if="d.paper">
           {{ d.paper.kind === 'bank' ? '题库随机卷（每人一份）' : '统一卷（全班同一份）' }} ·
@@ -61,7 +60,10 @@
         </button>
         <button v-if="d.paper" class="btn mini" title="排好版的空白卷，打印或存 PDF" @click="openPaper(false)">试卷</button>
         <button v-if="d.paper" class="btn mini" title="带参考答案与解析，只给老师" @click="openPaper(true)">答案卷</button>
-        <button v-if="d.assignment.status !== 'open'" class="btn primary" :disabled="!d.paper" @click="start">▶ 开始考试</button>
+        <!-- 到期之后自动变成「再开一场」（会提示先改截止时间），不用老师先去改状态 -->
+        <button v-if="!collectingOf(d.assignment)" class="btn primary" :disabled="!d.paper" @click="start">
+          ▶ {{ d.assignment.started ? '再开一场' : '开始考试' }}
+        </button>
         <button v-else class="btn danger" @click="stop">■ 结束</button>
         <button class="btn mini danger" @click="remove">删除</button>
       </div>
@@ -189,6 +191,8 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { api, openDoc } from '../../api'
 import Toast from '../../components/Toast.vue'
 import { clock, when } from '../../utils/time'
+/* 状态是算出来的 —— 和课堂作业页共用同一份判断，避免两个页面各写一套又分叉 */
+import { collectingOf as collectingBase, stateOf as stateBase } from '../../utils/assignmentState'
 import { loadScheme, scheme } from '../../utils/scheme'
 import PageHead from '../../components/PageHead.vue'
 import DirIO from '../../components/DirIO.vue'
@@ -249,16 +253,46 @@ const totalPreview = computed(() => {
   return Math.round((auto + manualSum) * 10) / 10
 })
 
+/*
+ * 时钟 tick：让「到点自动结束」不依赖数据新鲜度。
+ * Vue 追踪不到 Date.now()，必须有个 ref 在推，依赖它的地方才会重算。
+ */
+const nowTick = ref(Date.now())
+
+/** 这场考试还收不收 —— 包一层只是把 nowTick 带上 */
+function collectingOf(x) {
+  return collectingBase(x, nowTick.value)
+}
+/** 给人看的状态。机试那个词叫「考试中」 */
+function stateOf(x) {
+  return stateBase(x, nowTick.value, '考试中')
+}
+
 onMounted(async () => {
   await loadAll()
   timer = setInterval(() => {
+    /* 先推时钟（纯本地、不发请求），所以放在 hidden 判断之前 ——
+       后台标签页切回来那一刻状态也是对的 */
+    nowTick.value = Date.now()
     if (document.hidden) return
+    /* 列表也要刷：胶囊和小灯读的是它，到期得自己翻过去 */
+    loadList()
     if (curId.value && !viewing.value) loadDetail(true)
   }, 8000)
 })
 onUnmounted(() => {
   if (timer) clearInterval(timer)
 })
+
+/** 只刷列表（不重拉方案），轮询用 */
+async function loadList() {
+  try {
+    const res = await api.get('/api/assignments?itemKey=' + encodeURIComponent(props.itemKey))
+    list.value = res.items || []
+  } catch (e) {
+    /* 轮询失败下一轮再试 */
+  }
+}
 
 async function loadAll() {
   loading.value = true
@@ -268,7 +302,8 @@ async function loadAll() {
     const res = await api.get('/api/assignments?itemKey=' + encodeURIComponent(props.itemKey))
     list.value = res.items || []
     if (!curId.value) {
-      const openOne = list.value.filter((a) => a.status === 'open')
+      /* 默认选中「还在收」的那场（到期的不算 —— 那场已经开不了考了） */
+      const openOne = list.value.filter((a) => collectingOf(a))
       curId.value = (openOne.length ? openOne[openOne.length - 1] : list.value[list.value.length - 1] || {}).id || ''
     }
     if (curId.value) await loadDetail()
@@ -353,6 +388,16 @@ async function onFile(e) {
 
 async function start() {
   if (!d.value) return
+  const a = d.value.assignment
+  /*
+   * 截止时间已经过了、而且不收迟交 —— 光点开始没用：
+   * status 本来就是 open，collecting 仍然算 false，学生还是开不了考。
+   * 与其让他点完看不出变化，不如直接说清楚要先改时间。
+   */
+  if (stateOf(a).key === 'overdue') {
+    toast.value = '截止时间已经过了，先把这场机试的截止时间往后调，再开始'
+    return
+  }
   if (!window.confirm('开始考试？学生端立刻能开考并开始计时。')) return
   try {
     const res = await api.post('/api/assignments/' + encodeURIComponent(curId.value) + '/start')
