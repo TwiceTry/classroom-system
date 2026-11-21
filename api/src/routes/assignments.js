@@ -617,13 +617,26 @@ export default async function assignmentRoutes(app) {
        * 用 roster 而不是让学生端接口去拼，是因为老师要按班看、要看到还没交的人。
        */
       roster: classes.flatMap((cl) =>
-        repo.rosterOf(cl.id).map((s) => ({
-          sid: s.sid,
-          name: s.name,
-          classId: cl.id,
-          className: cl.name,
-          submitted: submittedSids.has(s.sid),
-        }))
+        repo.rosterOf(cl.id).map((s) => {
+          /*
+           * 他在第几批（没进过任何批 = 0）。
+           *
+           * 「每一批从上批剩下的人开始」靠这个字段：
+           * 开完一批之后，老师下一个动作几乎总是「把还没排过的人放进来」，
+           * 让他每次重新从 117 个名字里挑，等于白做。
+           */
+          const inB = batchesNow.filter((b) => b.sids.includes(String(s.sid)))
+          const lastB = inB.length ? inB[inB.length - 1] : null
+          return {
+            sid: s.sid,
+            name: s.name,
+            classId: cl.id,
+            className: cl.name,
+            submitted: submittedSids.has(s.sid),
+            batchSeq: lastB ? lastB.seq : 0,
+            batched: !!lastB,
+          }
+        })
       ),
       submissions: scope.map((s) => subView(s, nameOfClass.get(s.classId))),
       stats: {

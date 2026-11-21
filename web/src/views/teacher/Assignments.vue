@@ -135,9 +135,25 @@
       </div>
 
       <div class="pickbar">
-        <button class="btn mini" @click="pickUnsubmitted">勾还没交的</button>
+        <button class="btn mini" @click="pickRest">勾剩下的 {{ unbatchedLeft }} 人</button>
         <button class="btn mini" @click="pickAll">全选</button>
         <button class="btn mini" @click="picked = []">清空</button>
+        <!--
+          按班快速选：一个课程两个班时，一批通常就是「一个班」。
+          按钮上写着这个班还剩多少人没排过，点之前就知道会勾多少。
+        -->
+        <span v-if="classGroups.length > 1" class="clgroup">
+          <button
+            v-for="g in classGroups"
+            :key="g.id"
+            class="btn mini clbtn"
+            :disabled="!g.left"
+            :title="g.name + '：共 ' + g.total + ' 人，还有 ' + g.left + ' 人没排过批'"
+            @click="pickClass(g.id)"
+          >
+            {{ g.name }}<em v-if="g.left">{{ g.left }}</em><em v-else class="done">✓</em>
+          </button>
+        </span>
         <span class="dim mini">已勾 {{ picked.length }} 人</span>
         <!--
           这一批的限时。填了就按「从现在起 N 分钟」算，到点这批人自动交不上来；
@@ -164,6 +180,8 @@
           <input type="checkbox" :checked="picked.includes(s.sid)" @change="togglePick(s.sid)" />
           <span class="pkn">{{ s.name }}</span>
           <em v-if="s.submitted">已交</em>
+          <!-- 已经排过批的人标出第几批，免得老师重复勾 -->
+          <em v-else-if="s.batchSeq" class="bq">第{{ s.batchSeq }}批</em>
         </label>
       </div>
     </div>
@@ -613,11 +631,41 @@ function togglePick(sid) {
   else picked.value = picked.value.concat([sid])
 }
 
-/** 勾上所有还没交的人 —— 分批最常用的一手：把剩下的全放进来 */
-function pickUnsubmitted() {
+/**
+ * 勾上「还没排过批、也还没交」的人 —— 分批最常用的那一手。
+ *
+ * 前一版是「所有还没交的人」，会把已经在第 1 批里的人又勾一遍；
+ * 现在的口径是「上批剩下的人」：没进过任何批的，才是这一批该放的。
+ */
+function pickRest() {
   const r = (d.value && d.value.roster) || []
-  picked.value = r.filter((s) => !s.submitted).map((s) => s.sid)
+  picked.value = r.filter((s) => !s.submitted && !s.batched).map((s) => s.sid)
 }
+
+/** 按班快速选：只勾这个班里「还没排过批、也还没交」的人 */
+function pickClass(classId) {
+  const r = (d.value && d.value.roster) || []
+  picked.value = r.filter((s) => s.classId === classId && !s.submitted && !s.batched).map((s) => s.sid)
+}
+
+/** 每个班还剩多少人没排过 —— 按钮上直接写出来，不用点进去看 */
+const classGroups = computed(() => {
+  const r = (d.value && d.value.roster) || []
+  const m = new Map()
+  for (const s of r) {
+    if (!m.has(s.classId)) m.set(s.classId, { id: s.classId, name: s.className || '未分班', total: 0, left: 0 })
+    const g = m.get(s.classId)
+    g.total++
+    if (!s.submitted && !s.batched) g.left++
+  }
+  return Array.from(m.values())
+})
+
+/** 还有多少人没排过批（折叠/按钮上的提示用） */
+const unbatchedLeft = computed(() => {
+  const r = (d.value && d.value.roster) || []
+  return r.filter((s) => !s.submitted && !s.batched).length
+})
 
 function pickAll() {
   picked.value = ((d.value && d.value.roster) || []).map((s) => s.sid)
@@ -642,9 +690,10 @@ async function startBatch() {
       sids: picked.value.slice(),
       minutes: mins,
     })
-    toast.value = res.message || n + ' 人已放行'
-    picked.value = []
+    toast.value = (res.message || n + ' 人已放行') + '。已勾上剩下没排的人，做完再点「开始这一批」'
     await loadAll()
+    /* 开完一批，下一批几乎总是「上批剩下的人」——直接勾好，老师确认一下就能点 */
+    pickRest()
   } catch (e) {
     toast.value = e.message
   } finally {
@@ -1519,6 +1568,32 @@ async function clearGrade() {
   font-style: normal;
   font-size: 10.5px;
   color: #8b95a1;
+}
+/* 已经排过批的：标出第几批 */
+.pk em.bq {
+  color: #7b8794;
+}
+
+/* 按班选：按钮上带一个数字（还剩几人），点之前就知道会勾多少 */
+.clgroup {
+  display: inline-flex;
+  gap: 4px;
+  padding-left: var(--sp-2);
+  border-left: 1px solid var(--line-soft);
+}
+.clbtn em {
+  font-style: normal;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #eef4f9;
+  color: var(--brand);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.clbtn em.done {
+  background: #eef7ef;
+  color: var(--ok);
 }
 
 /*

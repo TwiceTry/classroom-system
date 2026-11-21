@@ -402,11 +402,14 @@ export default async function examRoutes(app) {
               leftMin: b.dueAt && !over ? Math.max(1, Math.ceil(leftMs / 60000)) : 0,
             }
           }),
-          /* 全班名单（带「考没考」），分批放人要勾人 */
+          /* 全班名单（带「考没考」「在第几批」），分批放人要勾人 */
           roster: repo.listClasses().flatMap((cl) =>
             repo.rosterOf(cl.id).map((s) => {
               const sub = subs.find((x) => x.sid === s.sid && x.classId === cl.id)
               const st = sub ? readState(a, sub) : null
+              /* 已经在第几批 —— 开下一批时默认只勾「还没排过」的人 */
+              const inB = repo.batchesOf(a.id).filter((b) => b.sids.includes(String(s.sid)))
+              const lastB = inB.length ? inB[inB.length - 1] : null
               return {
                 sid: s.sid,
                 name: s.name,
@@ -414,6 +417,8 @@ export default async function examRoutes(app) {
                 className: cl.name,
                 submitted: !!(st && st.submittedAt),
                 started: !!st,
+                batchSeq: lastB ? lastB.seq : 0,
+                batched: !!lastB,
               }
             })
           ),

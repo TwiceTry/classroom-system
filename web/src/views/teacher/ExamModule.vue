@@ -120,9 +120,22 @@
       </div>
 
       <div class="pickbar">
-        <button class="btn mini" @click="pickUnstarted">勾还没开考的</button>
+        <button class="btn mini" @click="pickRest">勾剩下的 {{ unbatchedLeft }} 人</button>
         <button class="btn mini" @click="pickAll">全选</button>
         <button class="btn mini" @click="picked = []">清空</button>
+        <!-- 按班快速选：一批通常就是一个班 -->
+        <span v-if="classGroups.length > 1" class="clgroup">
+          <button
+            v-for="g in classGroups"
+            :key="g.id"
+            class="btn mini clbtn"
+            :disabled="!g.left"
+            :title="g.name + '：共 ' + g.total + ' 人，还有 ' + g.left + ' 人没排过批'"
+            @click="pickClass(g.id)"
+          >
+            {{ g.name }}<em v-if="g.left">{{ g.left }}</em><em v-else class="done">✓</em>
+          </button>
+        </span>
         <span class="dim mini">已勾 {{ picked.length }} 人</span>
         <label class="minbox" title="这一批每人限时多少分钟（从他点「开考」那刻算）。留空 = 用试卷上的时长">
           限时
@@ -146,6 +159,7 @@
           <span class="pkn">{{ s.name }}</span>
           <em v-if="s.submitted">已交</em>
           <em v-else-if="s.started">在考</em>
+          <em v-else-if="s.batchSeq" class="bq">第{{ s.batchSeq }}批</em>
         </label>
       </div>
     </div>
@@ -602,10 +616,38 @@ function togglePick(sid) {
   picked.value = i >= 0 ? picked.value.filter((x) => x !== sid) : picked.value.concat([sid])
 }
 
-/** 勾上还没开考的人 —— 分批最常用的一手 */
-function pickUnstarted() {
-  picked.value = ((d.value && d.value.roster) || []).filter((s) => !s.started).map((s) => s.sid)
+/**
+ * 勾上「还没排过批、也没开考」的人 —— 分批最常用的那一手。
+ * 口径是「上批剩下的人」：进过批的不再重复勾。
+ */
+function pickRest() {
+  const r = (d.value && d.value.roster) || []
+  picked.value = r.filter((s) => !s.submitted && !s.batched).map((s) => s.sid)
 }
+
+/** 按班快速选：只勾这个班里还没排过批的人 */
+function pickClass(classId) {
+  const r = (d.value && d.value.roster) || []
+  picked.value = r.filter((s) => s.classId === classId && !s.submitted && !s.batched).map((s) => s.sid)
+}
+
+/** 每个班还剩多少人没排过 */
+const classGroups = computed(() => {
+  const r = (d.value && d.value.roster) || []
+  const m = new Map()
+  for (const s of r) {
+    if (!m.has(s.classId)) m.set(s.classId, { id: s.classId, name: s.className || '未分班', total: 0, left: 0 })
+    const g = m.get(s.classId)
+    g.total++
+    if (!s.submitted && !s.batched) g.left++
+  }
+  return Array.from(m.values())
+})
+
+const unbatchedLeft = computed(() => {
+  const r = (d.value && d.value.roster) || []
+  return r.filter((s) => !s.submitted && !s.batched).length
+})
 
 function pickAll() {
   picked.value = ((d.value && d.value.roster) || []).map((s) => s.sid)
@@ -630,9 +672,10 @@ async function startBatch() {
       sids: picked.value.slice(),
       minutes: mins,
     })
-    toast.value = res.message || n + ' 人已放行'
-    picked.value = []
+    toast.value = (res.message || n + ' 人已放行') + '。已勾上剩下没排的人'
     await loadAll()
+    /* 开完一批，下一批默认就是「上批剩下的人」 */
+    pickRest()
   } catch (e) {
     toast.value = e.message
   } finally {
@@ -872,6 +915,31 @@ async function saveGrade() {
   font-style: normal;
   font-size: 10.5px;
   color: #8b95a1;
+}
+.pk em.bq {
+  color: #7b8794;
+}
+
+/* 按班选：按钮上带一个数字（还剩几人） */
+.clgroup {
+  display: inline-flex;
+  gap: 4px;
+  padding-left: var(--sp-2);
+  border-left: 1px solid var(--line-soft);
+}
+.clbtn em {
+  font-style: normal;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #eef4f9;
+  color: var(--brand);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.clbtn em.done {
+  background: #eef7ef;
+  color: var(--ok);
 }
 
 /*
