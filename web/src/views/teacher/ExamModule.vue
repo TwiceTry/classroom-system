@@ -72,11 +72,11 @@
         </button>
         <button v-if="d.paper" class="btn mini" title="排好版的空白卷，打印或存 PDF" @click="openPaper(false)">试卷</button>
         <button v-if="d.paper" class="btn mini" title="带参考答案与解析，只给老师" @click="openPaper(true)">答案卷</button>
-        <!-- 到期之后自动变成「再开一场」（会提示先改截止时间），不用老师先去改状态 -->
-        <button v-if="!collectingOf(d.assignment)" class="btn primary" :disabled="!d.paper" @click="start">
-          ▶ {{ d.assignment.started ? '再开一场' : '开始考试' }}
-        </button>
-        <button v-else class="btn danger" @click="stop">■ 结束</button>
+        <!--
+          这里原来有「▶ 开始考试 / ■ 结束」，**去掉了** ——
+          唯一入口是下面的「分批开考」：勾人 → 开始这一批，全选就是全班。
+          只留一个入口，学生端的「能不能考」就只有一个来源（他在哪一批）。
+        -->
         <button class="btn mini danger" @click="remove">删除</button>
       </div>
     </div>
@@ -100,6 +100,13 @@
           <span class="dim mini">勾几个人 → 开始这一批；这批做完点「结束这批」，再放下一批</span>
         </template>
       </CardHead>
+
+      <!-- 有批次在放人时给一个「全部结束」—— 原来那个「■ 结束」的替代 -->
+      <div v-if="openBatchCount" class="ball">
+        <span class="dim mini">正在放 {{ openBatchCount }} 个批次</span>
+        <span class="spacer"></span>
+        <button class="btn mini danger" @click="stopAllBatches">■ 全部结束</button>
+      </div>
 
       <div v-if="d.batches && d.batches.length" class="blist">
         <div
@@ -649,6 +656,26 @@ const unbatchedLeft = computed(() => {
   return r.filter((s) => !s.submitted && !s.batched).length
 })
 
+/** 有几个批次正在放人（没过时间的才算） */
+const openBatchCount = computed(() => {
+  const bs = (d.value && d.value.batches) || []
+  return bs.filter((b) => b.status === 'open' && !b.overDue).length
+})
+
+/** 一键结束所有还在放的批次（替代原来的「结束」） */
+async function stopAllBatches() {
+  const n = openBatchCount.value
+  if (!n) return
+  if (!window.confirm('结束全部 ' + n + ' 个批次？\n\n这些批次里的人都不能再作答了（已交的照样留着）。')) return
+  try {
+    const res = await api.post('/api/assignments/' + encodeURIComponent(curId.value) + '/batches/stop-all')
+    toast.value = res.message || '已全部结束'
+    await loadDetail(true)
+  } catch (e) {
+    toast.value = e.message
+  }
+}
+
 function pickAll() {
   picked.value = ((d.value && d.value.roster) || []).map((s) => s.sid)
 }
@@ -804,6 +831,18 @@ async function saveGrade() {
 </script>
 
 <style scoped>
+/* 「正在放 N 个批次 + 全部结束」那条 */
+.ball {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 6px var(--sp-3);
+  margin-bottom: var(--sp-2);
+  border-radius: var(--r-sm);
+  background: #fdf6ec;
+  border: 1px solid #f0dcc0;
+}
+
 /* ---------------- 分批开考（和课堂作业那份是同一套形状） ---------------- */
 
 .blist {

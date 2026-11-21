@@ -88,10 +88,15 @@
           按钮也按 collecting 走。到期之后自动变成「再收一轮」——
           老师想延长不用先去改状态，直接点它（会提示改截止时间）。
         -->
-        <button v-if="!collectingOf(d.assignment)" class="btn primary" @click="start">
-          ▶ {{ d.assignment.started ? '再收一轮' : '开始作业（学生可以交了）' }}
-        </button>
-        <button v-else class="btn danger" @click="stop">■ 结束作业（停止收卷）</button>
+        <!--
+          这里原来有「▶ 开始作业 / ■ 结束作业」两个按钮，**去掉了**。
+          现在唯一的入口是下面的「分批开始」：勾人 → 开始这一批。
+          全选一批就等于全班，和原来的「开始作业」完全等价。
+
+          去掉的理由：两套入口同时在，学生端就要同时兼容「整场 open」和
+          「批次 open」两种状态，一处没对齐就出现「按钮亮着点进去是灰的」。
+          只留批次，状态来源只有一个。
+        -->
         <button class="btn mini" @click="openEditor('edit')">改标题 / 说明</button>
         <button class="btn mini danger" @click="remove">删除</button>
       </div>
@@ -112,6 +117,13 @@
           <span class="dim mini">勾几个人 → 开始这一批；这批做完点「结束这批」，再放下一批</span>
         </template>
       </CardHead>
+
+      <!-- 有批次在跑时给一个「全部结束」—— 原来那个「■ 结束作业」的替代 -->
+      <div v-if="openBatchCount" class="ball">
+        <span class="dim mini">正在放 {{ openBatchCount }} 个批次</span>
+        <span class="spacer"></span>
+        <button class="btn mini danger" @click="stopAllBatches">■ 全部结束</button>
+      </div>
 
       <div v-if="d.batches && d.batches.length" class="blist">
         <div
@@ -666,6 +678,26 @@ const unbatchedLeft = computed(() => {
   const r = (d.value && d.value.roster) || []
   return r.filter((s) => !s.submitted && !s.batched).length
 })
+
+/** 有几个批次正在放人（没过时间的才算） */
+const openBatchCount = computed(() => {
+  const bs = (d.value && d.value.batches) || []
+  return bs.filter((b) => b.status === 'open' && !b.overDue).length
+})
+
+/** 一键结束所有还在放的批次（替代原来的「结束作业」） */
+async function stopAllBatches() {
+  const n = openBatchCount.value
+  if (!n) return
+  if (!window.confirm('结束全部 ' + n + ' 个批次？\n\n这些批次里的人都不能再交了（已交的照样留着）。')) return
+  try {
+    const res = await api.post('/api/assignments/' + encodeURIComponent(curId.value) + '/batches/stop-all')
+    toast.value = res.message || '已全部结束'
+    await loadDetail(true)
+  } catch (e) {
+    toast.value = e.message
+  }
+}
 
 function pickAll() {
   picked.value = ((d.value && d.value.roster) || []).map((s) => s.sid)
@@ -1387,6 +1419,18 @@ async function clearGrade() {
 </script>
 
 <style scoped>
+/* 「正在放 N 个批次 + 全部结束」那条 */
+.ball {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 6px var(--sp-3);
+  margin-bottom: var(--sp-2);
+  border-radius: var(--r-sm);
+  background: #fdf6ec;
+  border: 1px solid #f0dcc0;
+}
+
 /* 批阅进度条（已交 / 已批 / 未交） */
 .progbar {
   display: flex;

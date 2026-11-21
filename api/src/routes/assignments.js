@@ -190,9 +190,23 @@ function batchBrief(b) {
  * 再看 overDue / allowLate。这样迟到但被放行的人仍然能交，只是记为迟交。
  */
 function gateOf(a, sid) {
-  if (a.status === 'open') return { ok: true, via: 'all', batch: null }
-  const b = repo.findBatchFor(a.id, sid)
-  if (b) return { ok: true, via: 'batch', batch: b }
+  /*
+   * 有批次就**只认批次**，整场的 status / openedAt 不参与判定。
+   *
+   * 这是「批次是唯一入口」那条决定的落点：
+   * 老师不再点「开始作业」，而是开一批人（全选就是全班）。
+   * 好处是学生端的状态只由「他在哪一批」决定，
+   * 不会被一个笼统的整场开关盖过去 —— 之前分批时
+   * 整场 closed 而批次 open，两套状态打架，界面一会儿一个说法。
+   */
+  const hasBatch = repo.batchesOf(a.id).length > 0
+  if (!hasBatch) {
+    /* 没有批次的老作业：还按整场 open 判，不然历史数据全废 */
+    if (a.status === 'open') return { ok: true, via: 'all', batch: null }
+  } else {
+    const b = repo.findBatchFor(a.id, sid)
+    if (b) return { ok: true, via: 'batch', batch: b }
+  }
   /*
    * 他在某一批里、但那批到点了。
    * 也要把这一批**带出去** —— 界面才知道该说「你这一批时间到了」，
@@ -518,6 +532,29 @@ export default async function assignmentRoutes(app) {
       sids: b.sids,
     })
     return { batch: next, delivered, message: '第 ' + b.seq + ' 批已结束' }
+  })
+
+  /**
+   * 结束**所有**还没结束的批次。
+   *
+   * 这是原来「■ 结束作业」的替代：既然入口只剩批次，
+   * 「整场收工」就该是「把所有批次一起关掉」，而不是另设一个整场开关。
+   * 分批放人的时候用不上它；一节临下课、或者发现有人还在拖，一按全收。
+   */
+  app.post('/api/assignments/:id/batches/stop-all', { preHandler: requireAuth('teacher') }, async (req) => {
+    const a = repo.getAssignment(req.params.id)
+    if (!a) throw notFound('作业不存在')
+    const open = repo.batchesOf(a.id).filter((b) => b.status === 'open')
+    if (!open.length) return { stopped: 0, message: '没有正在进行的批次' }
+
+    const now = new Date().toISOString()
+    for (const b of open) repo.updateBatch(b.id, { status: 'closed', closedAt: now })
+    const delivered = broadcast({ t: 'assignment', action: 'close', id: a.id, title: a.title, itemKey: a.itemKey })
+    return {
+      stopped: open.length,
+      delivered,
+      message: '已结束 ' + open.length + ' 个批次',
+    }
   })
 
   /** 删作业：连提交记录 + 磁盘文件 + 已记的分一起清 */

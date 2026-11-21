@@ -734,7 +734,14 @@ export default async function examRoutes(app) {
      */
     const passed = !!repo.findPass(a.id, t.classId, t.sid)
     const inBatch = !!repo.findBatchFor(a.id, t.sid)
-    if (a.status !== 'open' && !inBatch && !passed) {
+    /*
+     * 有批次就**只认批次**（和作业那条一致）：老师不再点「开始考试」，
+     * 而是开一批人，全选就是全班。整场 status 不参与判定，
+     * 免得两套状态打架。没有批次的老数据仍然看 status。
+     */
+    const hasBatch = repo.batchesOf(a.id).length > 0
+    const allowed = inBatch || passed || (!hasBatch && a.status === 'open')
+    if (!allowed) {
       /* 批次有自己时限的，到点就是「你这一批时间到了」，不是「还没轮到你」 */
       const expired = repo.findExpiredBatchFor(a.id, t.sid)
       const waiting = repo.batchesOf(a.id).some((b) => b.status === 'open')
