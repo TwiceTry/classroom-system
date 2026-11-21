@@ -1,0 +1,232 @@
+{
+  "kind": "paper",
+  "title": "Web 前端框架开发 · 阶段测试（样例卷）",
+  "duration": 45,
+  "fullScore": 100,
+  "sections": [
+    {
+      "id": "s1",
+      "title": "一、单项与多项选择（每题 4 分）",
+      "type": "choice",
+      "score": 4,
+      "questions": [
+        {
+          "id": "c1",
+          "stem": "在 Vue 3 的 <script setup> 里，下面哪种写法能让 num 的修改触发视图更新？",
+          "options": [
+            "let num = 0",
+            "const num = ref(0)，模板里用 num，脚本里用 num.value",
+            "const num = reactive(0)",
+            "const num = shallowRef(0)，模板里写 num.get()"
+          ],
+          "answer": "B",
+          "explain": "ref 包基本类型，脚本里读写 .value，模板自动解包。reactive 只接受对象，基本类型会告警并原样返回。"
+        },
+        {
+          "id": "c2",
+          "stem": "关于 reactive 与 ref 的区别，正确的有（多选）",
+          "options": [
+            "reactive 只能代理对象 / 数组，不能代理基本类型",
+            "ref 的值在模板里会自动解包，reactive 不需要解包",
+            "解构 reactive 对象会丢失响应式",
+            "ref 内部也是用 reactive 实现的（对对象值）"
+          ],
+          "answer": "ABCD",
+          "explain": "四个都对。解构丢响应式是常见坑，要配 toRefs。"
+        },
+        {
+          "id": "c3",
+          "stem": "父组件 <Child :count=\"n\" /> 子组件用 defineProps 接。子组件里直接给 count 赋值会怎样？",
+          "options": [
+            "正常生效，父组件的 n 也跟着变",
+            "控制台警告「Unexpected mutation of prop」，值可能变了但父组件不知道",
+            "抛异常，页面白屏",
+            "编译期就报错，跑不起来"
+          ],
+          "answer": "B",
+          "explain": "单向数据流。要改就让子组件 emit 事件，由父组件改。"
+        },
+        {
+          "id": "c4",
+          "stem": "v-for 里为什么推荐写 :key？",
+          "options": [
+            "不写会报错，跑不起来",
+            "让 Vue 在列表变化时能复用正确的节点，避免状态错位",
+            "只是为了开发工具里好看",
+            "提高 CSS 渲染性能"
+          ],
+          "answer": "B",
+          "explain": "用 index 当 key 在列表中间插入 / 删除时会导致状态错位，尽量用稳定 id。"
+        },
+        {
+          "id": "c5",
+          "stem": "下面哪个钩子适合在组件挂载后拿 DOM 尺寸？",
+          "options": ["setup 里直接量", "onBeforeMount", "onMounted", "onUpdated"],
+          "answer": "C",
+          "explain": "onMounted 时 DOM 已经插入文档，可以量到真实尺寸；setup 阶段还没有 DOM。"
+        },
+        {
+          "id": "c6",
+          "stem": "关于 computed 和 watch，说法正确的有（多选）",
+          "options": [
+            "computed 有缓存，依赖不变就不重算",
+            "watch 默认懒执行，源变了才跑回调",
+            "computed 里可以写异步请求并 return 结果",
+            "watch 可以拿到新值和旧值"
+          ],
+          "answer": "ABD",
+          "explain": "computed 必须是同步返回值；要发请求用 watch 或 onMounted。"
+        },
+        {
+          "id": "c7",
+          "stem": "父组件要给子组件传一个<b>插槽内容</b>，子组件里应该写什么？",
+          "options": [
+            "<slot />",
+            "<template #default />",
+            "defineProps(['slot'])",
+            "<component :is=\"slot\" />"
+          ],
+          "answer": "A",
+          "explain": "子组件用 <slot /> 声明占位，父组件写在标签中间的内容会填进去。"
+        },
+        {
+          "id": "c8",
+          "stem": "v-model 用在自定义组件上，等价于下面哪一组？",
+          "options": [
+            ":value + @input",
+            ":modelValue + @update:modelValue",
+            ":v-model + @v-model",
+            ":props + @emit"
+          ],
+          "answer": "B",
+          "explain": "Vue 3 的默认 prop 名是 modelValue，事件名是 update:modelValue。"
+        },
+        {
+          "id": "c9",
+          "stem": "setup 里用 onUnmounted 是为了什么？",
+          "options": [
+            "组件第一次渲染前执行",
+            "组件卸载时清理定时器、事件监听这类副作用",
+            "每次数据变化都执行一次",
+            "替代 onMounted"
+          ],
+          "answer": "B",
+          "explain": "不清会内存泄漏：定时器还在跑、监听还挂着，组件却已经不在了。"
+        },
+        {
+          "id": "c10",
+          "stem": "下面哪种写法能让「同一个组件被用了三次，各自有独立的数字」？",
+          "options": [
+            "把数字定义在模块顶层（组件文件外面）",
+            "把数字定义在 setup 里（每次实例化各一份）",
+            "把数字挂在 window 上",
+            "用 defineProps 传进去"
+          ],
+          "answer": "B",
+          "explain": "模块顶层是共享的，三份会一起涨；setup 里的 ref 是每个实例一份，这才是实例隔离。"
+        }
+      ]
+    },
+    {
+      "id": "s2",
+      "title": "二、判断（每题 4 分）",
+      "type": "judge",
+      "score": 4,
+      "questions": [
+        {
+          "id": "j1",
+          "stem": "ref 的值在模板里可以直接写 ref 名，不需要 .value。",
+          "answer": "对",
+          "explain": "模板里 Vue 会自动解包 ref；脚本里必须写 .value。"
+        },
+        {
+          "id": "j2",
+          "stem": "computed 依赖的数据没变时，重复读取会重新执行一遍计算函数。",
+          "answer": "错",
+          "explain": "computed 有缓存，依赖不变直接返回上次结果。"
+        },
+        {
+          "id": "j3",
+          "stem": "子组件可以直接修改 props，父组件会同步收到变化。",
+          "answer": "错",
+          "explain": "单向数据流，改 props 会告警；要改得 emit 事件让父组件改。"
+        },
+        {
+          "id": "j4",
+          "stem": "v-for 的 :key 用数组下标 index 永远是安全的。",
+          "answer": "错",
+          "explain": "列表中间插入 / 删除时会错位，优先用稳定 id。"
+        },
+        {
+          "id": "j5",
+          "stem": "defineProps 拿到的对象在 setup 里是响应式的，直接解构就会丢掉响应式。",
+          "answer": "对",
+          "explain": "要解构得用 Vue 3.5+ 的响应式解构，或用 toRefs。"
+        }
+      ]
+    },
+    {
+      "id": "s3",
+      "title": "三、填空（每题 4 分）",
+      "type": "fill",
+      "score": 4,
+      "questions": [
+        {
+          "id": "f1",
+          "stem": "Vue 3 里让基本类型具备响应式的 API 叫 ______。",
+          "answer": "ref",
+          "accepts": ["ref", "Ref", "ref()", "vue 的 ref"],
+          "explain": "ref(0) 返回一个带 .value 的响应式对象。"
+        },
+        {
+          "id": "f2",
+          "stem": "组合式 API 的写法都放在 <script ______> 里。",
+          "answer": "setup",
+          "accepts": ["setup", "Setup"],
+          "explain": "<script setup> 是编译期语法糖，少写一堆 return。"
+        },
+        {
+          "id": "f3",
+          "stem": "父组件监听子组件事件用 ______ 指令（写全，含前缀）。",
+          "answer": "@",
+          "accepts": ["@", "v-on", "v-on:", "@on"],
+          "explain": "v-on 的简写是 @，例如 @update:modelValue=\"fn\"。"
+        },
+        {
+          "id": "f4",
+          "stem": "生命周期钩子里，DOM 挂载完成后执行的是 ______Mounted。",
+          "answer": "on",
+          "accepts": ["on", "On", "onMounted"],
+          "explain": "onMounted(() => { … })。"
+        },
+        {
+          "id": "f5",
+          "stem": "要把 reactive 对象解构后仍保持响应式，用 ______。",
+          "answer": "toRefs",
+          "accepts": ["toRefs", "torefs", "toRefs()"],
+          "explain": "const { a, b } = toRefs(obj)，拿到的是 ref。"
+        }
+      ]
+    },
+    {
+      "id": "s4",
+      "title": "四、简答（每题 10 分）",
+      "type": "short",
+      "score": 10,
+      "questions": [
+        {
+          "id": "s1q1",
+          "stem": "说说 ref 和 reactive 各自适合什么场景，以及各写一个容易踩的坑。",
+          "answer": "参考：ref 适合基本类型和需要整体替换的引用；reactive 适合字段较多的对象。坑：ref 在脚本里忘写 .value；reactive 解构后丢响应式、整体重新赋值也会丢。",
+          "explain": "按「场景 / 两种坑」两点评分。"
+        },
+        {
+          "id": "s1q2",
+          "stem": "父组件要给子组件传数据、子组件要能改回去，完整的做法是什么？用事件链路说清楚。",
+          "answer": "参考：父组件 :count=\"n\" @update:n=\"n = $event\"；子组件 defineProps(['count']) + defineEmits(['update:n'])，需要改时 emit('update:n', 新值)。也可以直接 v-model:n=\"n\"。",
+          "explain": "要点：props 下行、事件上行、不直接改 props。"
+        }
+      ]
+    }
+  ]
+}
