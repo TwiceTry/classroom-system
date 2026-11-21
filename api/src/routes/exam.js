@@ -375,9 +375,54 @@ export default async function examRoutes(app) {
           })
           }),
           /*
-          * 补考放行名单。这些人**不在 rows 里**（重考会删掉他们的答卷），
-          * 所以要单独给一份，否则老师放行完就再也看不到、也取消不了。
-          */
+           * 分批放人：机试也要能分几批考（机器不够的时候只能一批一批来）。
+           *
+           * 这批字段和课堂作业那边是同一套形状 —— 前端两块面板长得一样，
+           * 数据不一样就会分叉成两种写法。
+           */
+          batches: repo.batchesOf(a.id).map((b) => {
+            const over = repo.batchOverdue(b)
+            const leftMs = b.dueAt ? Date.parse(b.dueAt) - Date.now() : 0
+            const inBatch = subs.filter((s) => b.sids.includes(s.sid))
+            return {
+              id: b.id,
+              seq: b.seq,
+              status: b.status,
+              openedAt: b.openedAt,
+              closedAt: b.closedAt,
+              dueAt: b.dueAt,
+              note: b.note,
+              count: b.sids.length,
+              submitted: inBatch.filter((s) => {
+                const st = readState(a, s)
+                return !!(st && st.submittedAt)
+              }).length,
+              started: inBatch.length,
+              overDue: over,
+              leftMin: b.dueAt && !over ? Math.max(1, Math.ceil(leftMs / 60000)) : 0,
+            }
+          }),
+          /* 全班名单（带「考没考」），分批放人要勾人 */
+          roster: repo.listClasses().flatMap((cl) =>
+            repo.rosterOf(cl.id).map((s) => {
+              const sub = subs.find((x) => x.sid === s.sid && x.classId === cl.id)
+              const st = sub ? readState(a, sub) : null
+              return {
+                sid: s.sid,
+                name: s.name,
+                classId: cl.id,
+                className: cl.name,
+                submitted: !!(st && st.submittedAt),
+                started: !!st,
+              }
+            })
+          ),
+          openBatches: repo.batchesOf(a.id).filter((b) => b.status === 'open' && !repo.batchOverdue(b)).length,
+
+          /*
+           * 补考放行名单。这些人**不在 rows 里**（重考会删掉他们的答卷），
+           * 所以要单独给一份，否则老师放行完就再也看不到、也取消不了。
+           */
           passes: repo.passesOf(a.id).map((p) => ({
           sid: p.sid,
           name: p.name || p.sid,

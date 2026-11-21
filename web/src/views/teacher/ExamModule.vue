@@ -86,7 +86,71 @@
       点上面「导入试卷 / 题库」。
     </div>
 
-    <div v-else class="card">
+    <!--
+      分批开考：机器不够的时候只能一批一批来。
+      和「▶ 开始考试」的分工 ——
+        开始考试   全班同时
+        分批       一次放几个人，这批交完点「结束这批」，再放下一批
+      两者不冲突：整场开着全班都能考；整场关着时只有批次放的人能考。
+    -->
+    <div class="card batchcard">
+      <CardHead>
+        <template #title>分批开考</template>
+        <template #meta>
+          <span class="dim mini">勾几个人 → 开始这一批；这批做完点「结束这批」，再放下一批</span>
+        </template>
+      </CardHead>
+
+      <div v-if="d.batches && d.batches.length" class="blist">
+        <div
+          v-for="b in d.batches"
+          :key="b.id"
+          class="brow"
+          :class="{ live: b.status === 'open' && !b.overDue, timeup: b.status === 'open' && b.overDue }"
+        >
+          <span class="bseq">第 {{ b.seq }} 批</span>
+          <span class="bstat">{{ b.status === 'open' ? (b.overDue ? '时间到' : '进行中') : '已结束' }}</span>
+          <span class="dim mini">{{ b.count }} 人 · 已开考 {{ b.started }} · 已交 {{ b.submitted }}</span>
+          <span v-if="b.status === 'open' && b.leftMin" class="bleft">还剩 {{ b.leftMin }} 分钟</span>
+          <span v-else-if="b.status === 'open' && b.overDue" class="bleft over">已到时间</span>
+          <span v-if="b.note" class="dim mini">· {{ b.note }}</span>
+          <span class="spacer"></span>
+          <button v-if="b.status === 'open'" class="btn mini" @click="stopBatch(b)">结束这批</button>
+        </div>
+      </div>
+
+      <div class="pickbar">
+        <button class="btn mini" @click="pickUnstarted">勾还没开考的</button>
+        <button class="btn mini" @click="pickAll">全选</button>
+        <button class="btn mini" @click="picked = []">清空</button>
+        <span class="dim mini">已勾 {{ picked.length }} 人</span>
+        <label class="minbox" title="这一批每人限时多少分钟（从他点「开考」那刻算）。留空 = 用试卷上的时长">
+          限时
+          <input v-model="batchMin" type="number" min="0" max="300" placeholder="试卷" />
+          分钟
+        </label>
+        <span class="spacer"></span>
+        <button class="btn primary" :disabled="!picked.length || busy" @click="startBatch">
+          ▶ 开始这一批
+        </button>
+      </div>
+
+      <div class="pickers">
+        <label
+          v-for="s in d.roster || []"
+          :key="s.sid"
+          class="pk"
+          :class="{ on: picked.includes(s.sid), done: s.submitted }"
+        >
+          <input type="checkbox" :checked="picked.includes(s.sid)" @change="togglePick(s.sid)" />
+          <span class="pkn">{{ s.name }}</span>
+          <em v-if="s.submitted">已交</em>
+          <em v-else-if="s.started">在考</em>
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
       <CardHead>
         <template #title>学生答卷 · {{ d.rows.length }} 人开考</template>
         <template #meta><span class="dim mini">每 8 秒刷新 · 客观题交卷即得分，主观题等你判</span></template>
@@ -526,6 +590,70 @@ async function forceSubmit(row) {
   }
 }
 
+/* ---------------- 分批开考 ---------------- */
+
+/** 这一批勾了谁 / 限时几分钟 / 防连点 */
+const picked = ref([])
+const batchMin = ref('')
+const busy = ref(false)
+
+function togglePick(sid) {
+  const i = picked.value.indexOf(sid)
+  picked.value = i >= 0 ? picked.value.filter((x) => x !== sid) : picked.value.concat([sid])
+}
+
+/** 勾上还没开考的人 —— 分批最常用的一手 */
+function pickUnstarted() {
+  picked.value = ((d.value && d.value.roster) || []).filter((s) => !s.started).map((s) => s.sid)
+}
+
+function pickAll() {
+  picked.value = ((d.value && d.value.roster) || []).map((s) => s.sid)
+}
+
+/** 开始这一批：只放这几个人进来，整场状态不动 */
+async function startBatch() {
+  if (!picked.value.length || busy.value) return
+  const n = picked.value.length
+  const mins = Math.max(0, Math.floor(Number(batchMin.value) || 0))
+  if (
+    !window.confirm(
+      '开始新的一批？\n\n这一批 ' + n + ' 个人可以开考，其他人还是进不来。\n' +
+        (mins > 0 ? '每人限时 ' + mins + ' 分钟（从他自己点「开考」那刻算）。\n' : '') +
+        '做完之后点「结束这批」，再放下一批。'
+    )
+  )
+    return
+  busy.value = true
+  try {
+    const res = await api.post('/api/assignments/' + encodeURIComponent(curId.value) + '/start', {
+      sids: picked.value.slice(),
+      minutes: mins,
+    })
+    toast.value = res.message || n + ' 人已放行'
+    picked.value = []
+    await loadAll()
+  } catch (e) {
+    toast.value = e.message
+  } finally {
+    busy.value = false
+  }
+}
+
+async function stopBatch(b) {
+  if (!b) return
+  if (!window.confirm('结束第 ' + b.seq + ' 批？\n\n这批 ' + b.count + ' 人就不能再作答了（已交的照样留着）。\n整场不受影响，你可以接着放下一批。')) return
+  try {
+    const res = await api.post(
+      '/api/assignments/' + encodeURIComponent(curId.value) + '/batches/' + encodeURIComponent(b.id) + '/stop'
+    )
+    toast.value = res.message || '第 ' + b.seq + ' 批已结束'
+    await loadDetail(true)
+  } catch (e) {
+    toast.value = e.message
+  }
+}
+
 /** 取消某人的补考放行 */
 async function unpass(p) {
   if (!p) return
@@ -633,6 +761,119 @@ async function saveGrade() {
 </script>
 
 <style scoped>
+/* ---------------- 分批开考（和课堂作业那份是同一套形状） ---------------- */
+
+.blist {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: var(--sp-3);
+}
+.brow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 6px var(--sp-2) 6px var(--sp-3);
+  border-left: 2px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--bg-sub);
+  font-size: var(--fs-md);
+}
+.brow.live {
+  border-left-color: var(--brand);
+  background: #eef4f9;
+}
+.brow.timeup {
+  border-left-color: #d08a2e;
+  background: #fdf6ec;
+}
+.brow .bseq {
+  font-weight: 600;
+  color: #1f2937;
+}
+.brow .bstat {
+  font-size: var(--fs-sm);
+  color: #8b95a1;
+}
+.brow.live .bstat {
+  color: var(--brand);
+}
+.brow .bleft {
+  font-size: var(--fs-sm);
+  color: #a15c00;
+  font-variant-numeric: tabular-nums;
+}
+.brow .bleft.over {
+  color: var(--err);
+  font-weight: 600;
+}
+
+.pickbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  padding-bottom: var(--sp-2);
+  border-bottom: 1px solid var(--line-soft);
+  margin-bottom: var(--sp-2);
+}
+.minbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-sm);
+  color: #5b6673;
+}
+.minbox input {
+  width: 58px;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  font: inherit;
+  text-align: center;
+}
+
+.pickers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 190px;
+  overflow: auto;
+}
+.pk {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px 3px 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: #fff;
+  font-size: var(--fs-sm);
+  color: #3c4650;
+  cursor: pointer;
+  user-select: none;
+}
+.pk:hover {
+  border-color: #b9c6d3;
+}
+.pk.on {
+  background: #e8f1f8;
+  border-color: var(--brand);
+  font-weight: 600;
+}
+.pk.done {
+  opacity: 0.5;
+}
+.pk input {
+  margin: 0;
+  accent-color: var(--brand);
+}
+.pk em {
+  font-style: normal;
+  font-size: 10.5px;
+  color: #8b95a1;
+}
+
 /*
  * 补考放行名单：一行小标签，跟在答卷表上面。
  * 不放表格里 —— 这些人恰恰是「没有答卷」的那几个，塞进表格会出现
