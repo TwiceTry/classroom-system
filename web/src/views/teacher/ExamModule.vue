@@ -107,6 +107,17 @@
         </template>
         <template #cell-actions="{ row }">
           <button class="btn mini" @click.stop="open(row)">{{ row.submittedAt ? '看答卷 / 判分' : '看进度' }}</button>
+          <!--
+            重考：清掉这次的答卷和分，让他重新开考（重新计时）。
+            题库卷会换一套题 —— 不然重考就是背答案。
+          -->
+          <button
+            class="btn mini danger"
+            :title="'清掉 ' + (row.name || row.sid) + ' 这次交的答卷和分数，让他重新开考'"
+            @click.stop="resetOne(row)"
+          >
+            重考
+          </button>
         </template>
       </DataTable>
     </div>
@@ -419,6 +430,35 @@ async function changeDuration() {
     toast.value =
       '已改成 ' + mins + ' 分钟' +
       (res.inProgress ? '（' + res.inProgress + ' 个正在考的人立刻生效）' : '')
+    await loadDetail(true)
+  } catch (e) {
+    toast.value = e.message
+  }
+}
+
+/**
+ * 让单个学生重考。
+ *
+ * 会清掉：这次的答卷（答案 + 那份 md）、记在计分表里的分。
+ * 下次他进考试页就是全新的：重新抽题（题库卷换一套）、重新计时、满时长。
+ *
+ * 二次确认是必须的 —— 这个操作不可撤销，而「重考」两个字看着不像删除。
+ */
+async function resetOne(row) {
+  if (!row || !row.submissionId) return
+  const who = row.name || row.sid
+  const ok = window.confirm(
+    '让 ' + who + ' 重考？\n\n' +
+      '· 这次交的答卷和记的分会被清掉，找不回来\n' +
+      '· 他可以重新开考，重新计时（满时长）\n' +
+      '· 题库卷会抽另一套题；统一卷还是同一份'
+  )
+  if (!ok) return
+  try {
+    const res = await api.post(
+      '/api/exams/' + encodeURIComponent(curId.value) + '/submissions/' + encodeURIComponent(row.submissionId) + '/reset'
+    )
+    toast.value = res.message || who + ' 已重置'
     await loadDetail(true)
   } catch (e) {
     toast.value = e.message

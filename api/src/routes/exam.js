@@ -103,8 +103,7 @@ function ensureSubmission(a, t) {
     const st = readState(a, last)
     if (st) return { sub: last, state: st }
   }
-  const exam = loadExam(a)
-  const { paper } = examLib.paperFor(exam, a.id + ':' + t.sid)
+  const exam = loadExam(a) // 没导卷子在这里就抛，别先建 sub 留下脏记录
   const sub = repo.insertSubmission({
     id: uid('sb'),
     assignmentId: a.id,
@@ -113,6 +112,17 @@ function ensureSubmission(a, t) {
     name: t.name,
     createdAt: new Date().toISOString(),
   })
+  /*
+   * 抽题种子 = 作业 + 学号 + **这一份答卷的 id**。
+   *
+   * 原来只有「作业 + 学号」：同一个人每次进来都是同一套题（这是对的，
+   * 断电重进要能接着答）。但重考时就不行了 —— 老师让他重考，抽到的还是
+   * 刚才那张卷子，等于背答案。
+   *
+   * 答卷 id 是每次新建才生成的，而重考会删掉旧答卷重新建，
+   * 于是「同一次考试稳定、重考换一套」两件事同时成立。
+   */
+  const { paper } = examLib.paperFor(exam, a.id + ':' + t.sid + ':' + sub.id)
   const state = { paper, answers: {}, startedAt: new Date().toISOString(), submittedAt: '', graded: null }
   writeState(a, sub, state)
   return { sub, state }
@@ -353,6 +363,75 @@ export default async function examRoutes(app) {
       if (req.body.raw !== undefined && req.body.raw !== null && String(req.body.raw) !== '') patch.raw = Number(req.body.raw)
       return { submission: submissionView(gradeSubmission(a, sub, req.user.name || '教师', patch)) }
     },
+  })
+
+  /**
+   * 让某一个学生重考。
+   *
+   *   POST /api/exams/:id/submissions/:subId/reset
+   *
+   * 用在哪里：设备坏了、误交卷、考砸了想补一次。
+   *
+   * 做四件事（顺序有讲究）：
+   *   ① 撤掉这次记的分 —— 不撤的话分数会在计分表里悬着，而对应的答卷已经没了
+   *   ② 删掉答卷记录 —— 下次开考 ensureSubmission 会重新建一份
+   *   ③ 删掉答卷目录（exam.json + 那份 md）—— 不清就是"重新进还接着答"
+   *   ④ 广播 —— 学生如果正开着考试页，要能立刻被退回「未开考」
+   *
+   * 重考会**换一套题**：抽题种子带上了答卷 id（见 ensureSubmission），
+   * 旧答卷删了、新答卷换个 id，题库卷就抽到另一套。统一卷当然还是同一份。
+   *
+   * 时限也重新算：startedAt 随新答卷重建，等于给满时长。
+   */
+  app.post('/api/exams/:id/submissions/:subId/reset', { preHandler: requireAuth('teacher') }, async (req) => {
+    const a = repo.getAssignment(req.params.id)
+    if (!a) throw notFound('作业不存在')
+    examItemOf(a)
+    const sub = repo.findSubmission(a.id, req.params.subId) || hydrateById(req.params.subId)
+    if (!sub) throw notFound('答卷不存在')
+
+    /* ① 撤分 */
+    if (sub.eventId) {
+      try {
+        const ev = repo.findEvent(sub.classId, sub.eventId)
+        if (ev && !ev.voided) repo.voidEvent(sub.classId, sub.eventId, '老师安排重考')
+      } catch (e) {
+        /* 撤不掉也别卡住重考 —— 分数是次要的，先让学生能再考一次 */
+      }
+    }
+
+    /* ② 删答卷记录 */
+    try {
+      repo.db().prepare('DELETE FROM submissions WHERE id = ?').run(sub.id)
+    } catch (e) {
+      throw badRequest('删不掉这份答卷：' + e.message)
+    }
+
+    /* ③ 删答卷目录 */
+    try {
+      const dir = examLib.examDir(sub.classId, sub.sid, a.id, sub.id)
+      if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true })
+    } catch (e) {
+      /* 文件删不掉不影响开新卷（新答卷会建新目录），只是磁盘上留一份旧文件 */
+    }
+
+    /* ④ 通知学生端 */
+    const delivered = broadcast({
+      t: 'assignment',
+      action: 'exam-reset',
+      id: a.id,
+      title: a.title,
+      sid: sub.sid,
+      name: sub.name,
+    })
+
+    return {
+      ok: true,
+      sid: sub.sid,
+      name: sub.name,
+      delivered,
+      message: (sub.name || sub.sid) + ' 已重置，可以重新开考（题库卷会换一套题）',
+    }
   })
 
   /** 教师看某一份答卷（答案 + 得分） */

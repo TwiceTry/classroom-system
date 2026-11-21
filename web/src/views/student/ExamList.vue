@@ -136,8 +136,9 @@ onMounted(async () => {
    * 广播管"马上"，轮询管"老师忘了点 / 网络抖了一下"。
    */
   offPresence = onPresenceMessage((m) => {
+    /* 作业类的广播都重拉一次：开考 / 结束 / 改时长 / 让我重考 */
     if (!m || m.t !== 'assignment') return
-    if (m.action === 'open' || m.action === 'close' || m.action === 'duration') load()
+    load()
   })
 
   /* 和教师端一样：定时推时钟 + 重拉列表，到点之后状态自己翻 */

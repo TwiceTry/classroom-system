@@ -114,6 +114,8 @@ import { api, openDoc } from '../../api'
 import Toast from '../../components/Toast.vue'
 import { loadScheme, scheme } from '../../utils/scheme'
 import { onPresenceMessage } from '../../utils/presence'
+/* 全局状态（这里有个局部的 state，所以要起别名，别撞名） */
+import { state as appState } from '../../store'
 import PageHead from '../../components/PageHead.vue'
 import CardHead from '../../components/CardHead.vue'
 import PageShell from '../../components/PageShell.vue'
@@ -177,6 +179,26 @@ onMounted(async () => {
     } else if (m.action === 'duration') {
       syncRemaining()
       toast.value = '老师把考试时长改成了 ' + m.minutes + ' 分钟'
+    } else if (m.action === 'exam-reset') {
+      /*
+       * 老师让我重考。
+       *
+       * 服务端已经把答卷和分数清掉了，但这一页还挂着旧数据 ——
+       * 不清的话学生看到的仍是「已交卷 · 等老师判」，永远等不到重考入口。
+       * 清完回到「未开考」，他再点开始就是一份新卷子（题库卷会换一套题）。
+       */
+      const me = (appState.student && appState.student.sid) || ''
+      /* 广播是全班的，只处理点名给自己的那条 */
+      if (m.sid && me && m.sid !== me) return
+      state.started = false
+      state.paper = null
+      state.answers = {}
+      state.submitted = false
+      score.value = null
+      comment.value = ''
+      left.value = 0
+      if (saveTimer) clearTimeout(saveTimer)
+      toast.value = '老师让你重考：点「开始」就是一套新卷子'
     }
   })
 
