@@ -113,6 +113,7 @@ import { useRoute } from 'vue-router'
 import { api, openDoc } from '../../api'
 import Toast from '../../components/Toast.vue'
 import { loadScheme, scheme } from '../../utils/scheme'
+import { onPresenceMessage } from '../../utils/presence'
 import PageHead from '../../components/PageHead.vue'
 import CardHead from '../../components/CardHead.vue'
 import PageShell from '../../components/PageShell.vue'
@@ -137,6 +138,9 @@ const left = ref(0)
 
 let saveTimer = null
 let tick = null
+let offPresence = null
+/* 上次和服务端对表的时刻（毫秒），用来判断倒计时该不该校准 */
+let syncedAt = 0
 
 const submitted = computed(() => state.submitted)
 // 模板里用的是 answers[q.id] —— 必须在这里导出，否则渲染时读到的是 undefined
@@ -155,18 +159,68 @@ onMounted(async () => {
   const mod = scheme.modules.find((m) => m.itemKey === itemKey)
   canStart.value = !!mod
   await load()
+
+  /*
+   * 老师那边的三个动作要立刻反映到这一页，不能等学生刷新：
+   *
+   *   open      放行 —— 老师可能刚刚点了开始
+   *   close     结束 —— **立刻交卷**（已答的都算数）
+   *   duration  改时长 —— 老师延长 / 缩短，倒计时马上跟着变
+   */
+  offPresence = onPresenceMessage((m) => {
+    if (!m || m.t !== 'assignment' || m.id !== id) return
+    if (m.action === 'close') {
+      /* 别等本地倒计时归零：老师已经停了，再等就是白答 */
+      submit(true, '老师结束了这场机试，已自动交卷')
+    } else if (m.action === 'open') {
+      load()
+    } else if (m.action === 'duration') {
+      syncRemaining()
+      toast.value = '老师把考试时长改成了 ' + m.minutes + ' 分钟'
+    }
+  })
+
   tick = setInterval(() => {
     if (!state.started || submitted.value) return
     if (!state.paper || !state.paper.duration) return
     if (left.value > 0) left.value--
     else submit(true)
+    /*
+     * 每 30 秒和服务端对一次表。
+     *
+     * 本地每秒减一在正常情况下够用，但切到别的标签页时浏览器会节流定时器
+     * （后台标签页里 setInterval 可能被压到 1 分钟一次），
+     * 那段时间倒计时就走慢了 —— 学生回来发现"还剩 20 分钟"，实际只剩 5 分钟。
+     * 以服务端的 remaining 为准，慢多少都能拉回来。
+     */
+    if (Date.now() - syncedAt > 30000) syncRemaining()
   }, 1000)
 })
 
 onUnmounted(() => {
   if (tick) clearInterval(tick)
   if (saveTimer) clearTimeout(saveTimer)
+  if (offPresence) offPresence()
 })
+
+/** 和服务端对表：remaining 是唯一可信的剩余秒数（它按 startedAt + 时长算） */
+async function syncRemaining() {
+  try {
+    const res = await api.get('/api/student/exams/' + encodeURIComponent(id) + '/current')
+    if (!res || !res.started) return
+    if (typeof res.remaining === 'number') left.value = res.remaining
+    syncedAt = Date.now()
+    /* 老师在别处把时长改了：这张卷子也更新，界面上「限时 X 分钟」才对 */
+    if (res.paper && res.paper.duration) state.paper.duration = res.paper.duration
+    /* 服务端说已经交过了（比如另一个标签页交了）：同步过来，别让人继续答 */
+    if (res.submittedAt && !state.submitted) {
+      state.submitted = true
+      toast.value = '这份答卷已经交过了'
+    }
+  } catch (e) {
+    /* 对表失败不影响本地倒计时，下一秒再试 */
+  }
+}
 
 async function load() {
   err.value = ''
@@ -185,6 +239,8 @@ function apply(res) {
   state.answers = res.answers || {}
   state.submitted = !!res.submittedAt
   left.value = typeof res.remaining === 'number' ? res.remaining : 0
+  /* 刚跟服务端对过表，30 秒内不用再拉 */
+  syncedAt = Date.now()
   score.value = res.score === undefined ? null : res.score
   comment.value = res.comment || ''
 }
@@ -230,17 +286,26 @@ async function saveAnswers() {
   }
 }
 
-async function submit(auto) {
+/**
+ * 交卷。
+ *
+ * @param {boolean} auto  是否自动交（不再弹确认框）
+ * @param {string}  why   自定义提示。不传就按 auto 给默认文案 ——
+ *                        自动交的几种原因（时间到 / 老师结束）要说清是哪种，
+ *                        否则学生分不清是"时间到了"还是"被老师收了"
+ */
+async function submit(auto, why) {
   if (submitted.value) return
   if (!auto && !window.confirm('交卷后不能再改，确定交吗？')) return
   busy.value = true
   try {
     if (saveTimer) clearTimeout(saveTimer)
+    /* 先把最后这一批答案存上去 —— 自动交卷时尤其要，否则最后几秒的作答会丢 */
     await saveAnswers()
     const res = await api.post('/api/student/exams/' + encodeURIComponent(id) + '/submit')
     state.submitted = true
     if (typeof res.total === 'number') score.value = res.total
-    toast.value = auto ? '时间到，已自动交卷' : '交卷了，等老师判主观题'
+    toast.value = why || (auto ? '时间到，已自动交卷' : '交卷了，等老师判主观题')
   } catch (e) {
     err.value = e.message
   } finally {

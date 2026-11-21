@@ -58,6 +58,18 @@
         >
           {{ d.paper ? '换这份卷子（JSON）' : '导入这份卷子（JSON）' }}
         </button>
+        <!--
+          改时长。已经开始考的人也会立刻生效 ——
+          后端会把他们的答卷 state 里那份 paper 快照一起改掉，不然改源文件对他们无效。
+        -->
+        <button
+          v-if="d.paper"
+          class="btn mini"
+          :title="'现在是 ' + (d.paper.duration || 0) + ' 分钟。改完正在考的人也会立刻按新时长走'"
+          @click="changeDuration"
+        >
+          改时长（{{ d.paper.duration || 0 }} 分钟）
+        </button>
         <button v-if="d.paper" class="btn mini" title="排好版的空白卷，打印或存 PDF" @click="openPaper(false)">试卷</button>
         <button v-if="d.paper" class="btn mini" title="带参考答案与解析，只给老师" @click="openPaper(true)">答案卷</button>
         <!-- 到期之后自动变成「再开一场」（会提示先改截止时间），不用老师先去改状态 -->
@@ -383,6 +395,33 @@ async function onFile(e) {
     if (res.warnings && res.warnings.length) console.warn('[exam] 导入提示：', res.warnings)
   } catch (e2) {
     toast.value = '导入失败：' + (e2 && e2.message ? e2.message : e2)
+  }
+}
+
+/**
+ * 改这场考试的时长。
+ *
+ * 用 prompt 而不是弹窗表单：这是低频、单字段的操作，
+ * 为它做一个弹窗反而多两次点击。改完立刻广播，正在考的学生倒计时会当场变。
+ */
+async function changeDuration() {
+  if (!d.value || !d.value.paper) return
+  const cur = d.value.paper.duration || 45
+  const input = window.prompt('这场考试限时多少分钟？', String(cur))
+  if (input === null) return
+  const mins = Math.floor(Number(input))
+  if (!(mins > 0)) {
+    toast.value = '要填大于 0 的分钟数'
+    return
+  }
+  try {
+    const res = await api.patch('/api/exams/' + encodeURIComponent(curId.value) + '/duration', { minutes: mins })
+    toast.value =
+      '已改成 ' + mins + ' 分钟' +
+      (res.inProgress ? '（' + res.inProgress + ' 个正在考的人立刻生效）' : '')
+    await loadDetail(true)
+  } catch (e) {
+    toast.value = e.message
   }
 }
 

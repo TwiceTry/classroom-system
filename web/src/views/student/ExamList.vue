@@ -80,6 +80,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '../../api'
 import { loadScheme, scheme } from '../../utils/scheme'
+import { onPresenceMessage } from '../../utils/presence'
 import PageHead from '../../components/PageHead.vue'
 import PageShell from '../../components/PageShell.vue'
 /* 状态是算出来的，和教师端共用同一份判断 */
@@ -92,6 +93,8 @@ const loading = ref(false)
 const err = ref('')
 /* 轮询句柄：到点自动结束靠它推时钟 + 重拉列表 */
 let timer = null
+/* 广播监听的解绑函数 */
+let offPresence = null
 
 const moduleTitle = computed(() => {
   const it = scheme.items.find((i) => i.key === props.itemKey)
@@ -126,6 +129,17 @@ const subText = computed(() => {
 onMounted(async () => {
   await loadScheme()
   await load()
+
+  /*
+   * 老师点「开始考试」的那一刻，这一页要立刻变 —— 不能让学生手动刷新。
+   * 广播比 8 秒轮询快，两个人做的事是一样的（重拉列表），所以两条路都留着：
+   * 广播管"马上"，轮询管"老师忘了点 / 网络抖了一下"。
+   */
+  offPresence = onPresenceMessage((m) => {
+    if (!m || m.t !== 'assignment') return
+    if (m.action === 'open' || m.action === 'close' || m.action === 'duration') load()
+  })
+
   /* 和教师端一样：定时推时钟 + 重拉列表，到点之后状态自己翻 */
   timer = setInterval(() => {
     nowTick.value = Date.now()
@@ -135,6 +149,7 @@ onMounted(async () => {
 })
 onUnmounted(() => {
   if (timer) clearInterval(timer)
+  if (offPresence) offPresence()
 })
 
 async function load() {

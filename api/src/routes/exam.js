@@ -211,6 +211,73 @@ export default async function examRoutes(app) {
   })
 
   /** 这场机试的概况 + 每个学生的进度与得分 */
+  /**
+   * 改这场考试的时长（分钟）。
+   *
+   *   PATCH /api/exams/:id/duration  { minutes }
+   *
+   * 三件事都要做，少一件就会出现「老师说延长了 10 分钟，学生那边照样到点交卷」：
+   *
+   *   ① 改源文件 —— 之后才开考的学生按新时长
+   *   ② 改**已经在考**的学生的答卷 state —— 它们开考时把 paper（含 duration）
+   *      快照进了 exam.json，而 remainingOf() 算的是 startedAt + paper.duration。
+   *      不动这份快照，改源文件对他们完全无效
+   *   ③ 广播 —— 学生端立刻重算倒计时，不用刷新
+   *
+   * 缩短到比「已用时间」还短，学生那边会立刻归零并自动交卷 —— 这是老师的选择，
+   * 但返回值里告诉他影响了多少个正在考的人，别让他无意识地这么干。
+   */
+  app.patch(
+    '/api/exams/:id/duration',
+    {
+      preHandler: requireAuth('teacher'),
+      schema: {
+        body: {
+          type: 'object',
+          required: ['minutes'],
+          properties: { minutes: { type: 'number' } },
+        },
+      },
+    },
+    async (req) => {
+      const a = repo.getAssignment(req.params.id)
+      if (!a) throw notFound('作业不存在')
+      examItemOf(a)
+
+      const mins = Math.floor(Number(req.body.minutes))
+      if (!(mins > 0)) throw badRequest('时长要大于 0 分钟（不限时请把整场考试删掉重开）')
+      if (mins > 600) throw badRequest('时长最长 600 分钟（10 小时），再长请分两场')
+
+      /* ① 源文件：之后开考的人用新时长 */
+      const srcFile = examLib.sourceFile(a.id)
+      const src = examLib.readJson(srcFile, null)
+      if (!src) throw badRequest('这场考试还没导入试卷')
+      src.duration = mins
+      examLib.writeJson(srcFile, src)
+
+      /* ② 已经在考的人：他们的 paper 是开考时的快照，得单独改 */
+      let inProgress = 0
+      for (const sub of repo.submissionsOf(a.id)) {
+        const st = readState(a, sub)
+        if (!st || st.submittedAt) continue
+        st.paper = Object.assign({}, st.paper, { duration: mins })
+        writeState(a, sub, st)
+        inProgress++
+      }
+
+      /* ③ 学生端马上跟着变 */
+      const delivered = broadcast({
+        t: 'assignment',
+        action: 'duration',
+        id: a.id,
+        title: a.title,
+        minutes: mins,
+      })
+
+      return { ok: true, minutes: mins, inProgress, delivered }
+    }
+  )
+
   app.get('/api/exams/:id', { preHandler: requireAuth('teacher') }, async (req) => {
     const a = repo.getAssignment(req.params.id)
     if (!a) throw notFound('作业不存在')
