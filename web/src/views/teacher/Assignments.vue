@@ -114,10 +114,20 @@
       </CardHead>
 
       <div v-if="d.batches && d.batches.length" class="blist">
-        <div v-for="b in d.batches" :key="b.id" class="brow" :class="{ live: b.status === 'open' }">
+        <div
+          v-for="b in d.batches"
+          :key="b.id"
+          class="brow"
+          :class="{ live: b.status === 'open' && !b.overDue, timeup: b.status === 'open' && b.overDue }"
+        >
           <span class="bseq">第 {{ b.seq }} 批</span>
-          <span class="bstat">{{ b.status === 'open' ? '进行中' : '已结束' }}</span>
+          <span class="bstat">
+            {{ b.status === 'open' ? (b.overDue ? '时间到' : '进行中') : '已结束' }}
+          </span>
           <span class="dim mini">{{ b.count }} 人 · 已交 {{ b.submitted }}</span>
+          <!-- 这一批自己的计时：到点之后学生就交不上来了，老师要看得见 -->
+          <span v-if="b.status === 'open' && b.leftMin" class="bleft">还剩 {{ b.leftMin }} 分钟</span>
+          <span v-else-if="b.status === 'open' && b.overDue" class="bleft over">已到时间</span>
           <span v-if="b.note" class="dim mini">· {{ b.note }}</span>
           <span class="spacer"></span>
           <button v-if="b.status === 'open'" class="btn mini" @click="stopBatch(b)">结束这批</button>
@@ -129,6 +139,15 @@
         <button class="btn mini" @click="pickAll">全选</button>
         <button class="btn mini" @click="picked = []">清空</button>
         <span class="dim mini">已勾 {{ picked.length }} 人</span>
+        <!--
+          这一批的限时。填了就按「从现在起 N 分钟」算，到点这批人自动交不上来；
+          留空则不限时（看整场的截止时间）。
+        -->
+        <label class="minbox" title="这一批从现在起给多少分钟。留空 = 不限时（看整场截止时间）">
+          限时
+          <input v-model="batchMin" type="number" min="0" max="300" placeholder="不限" />
+          分钟
+        </label>
         <span class="spacer"></span>
         <button class="btn primary" :disabled="!picked.length || busy" @click="startBatch">
           ▶ 开始这一批
@@ -583,6 +602,8 @@ const showMiss = ref(false)
 
 /** 这一批勾了谁（sid 数组） */
 const picked = ref([])
+/** 这一批的限时（分钟）。空 = 不限时 */
+const batchMin = ref('')
 /** 正在提交（防止连点两下开出两批） */
 const busy = ref(false)
 
@@ -606,13 +627,22 @@ function pickAll() {
 async function startBatch() {
   if (!picked.value.length || busy.value) return
   const n = picked.value.length
-  if (!window.confirm('开始新的一批？\n\n这一批 ' + n + ' 个人可以进入，其他人还是进不来。\n做完之后点「结束这批」，再放下一批。')) return
+  const mins = Math.max(0, Math.floor(Number(batchMin.value) || 0))
+  if (
+    !window.confirm(
+      '开始新的一批？\n\n这一批 ' + n + ' 个人可以进入，其他人还是进不来。\n' +
+        (mins > 0 ? '限时 ' + mins + ' 分钟（到点他们就交不上来了）。\n' : '不限时（看整场的截止时间）。\n') +
+        '做完之后点「结束这批」，再放下一批。'
+    )
+  )
+    return
   busy.value = true
   try {
     const res = await api.post('/api/assignments/' + encodeURIComponent(curId.value) + '/start', {
       sids: picked.value.slice(),
+      minutes: mins,
     })
-    toast.value = res.message || '第 ' + n + ' 人已放行'
+    toast.value = res.message || n + ' 人已放行'
     picked.value = []
     await loadAll()
   } catch (e) {
@@ -1387,6 +1417,39 @@ async function clearGrade() {
 .brow.live {
   border-left-color: var(--brand);
   background: #eef4f9;
+}
+/* 这一批时间到了、但老师还没点结束：橙色，提醒他该收或该关 */
+.brow.timeup {
+  border-left-color: #d08a2e;
+  background: #fdf6ec;
+}
+
+/* 这一批的剩余时间 */
+.brow .bleft {
+  font-size: var(--fs-sm);
+  color: #a15c00;
+  font-variant-numeric: tabular-nums;
+}
+.brow .bleft.over {
+  color: var(--err);
+  font-weight: 600;
+}
+
+/* 限时输入：窄一点，不要抢「开始这一批」的注意力 */
+.minbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-sm);
+  color: #5b6673;
+}
+.minbox input {
+  width: 58px;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  font: inherit;
+  text-align: center;
 }
 .brow .bseq {
   font-weight: 600;

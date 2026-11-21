@@ -157,6 +157,25 @@ function isExamAssignment(a) {
 }
 
 /**
+ * 学生端看到的「我在哪一批」。
+ *
+ * 只给序号、开始时间和这一批自己的截止时刻 —— **不给 sids**：
+ * 那是这一批的完整名单，学生没必要看到同批还有谁。
+ */
+function batchBrief(b) {
+  const over = repo.batchOverdue(b)
+  const leftMs = b.dueAt ? Date.parse(b.dueAt) - Date.now() : 0
+  return {
+    id: b.id,
+    seq: b.seq,
+    openedAt: b.openedAt,
+    dueAt: b.dueAt,
+    overDue: over,
+    leftMin: b.dueAt && !over ? Math.max(1, Math.ceil(leftMs / 60000)) : 0,
+  }
+}
+
+/**
  * 这个学生此刻能不能交（作业 / 机试共用）。
  *
  * 两条通道，任一成立就行：
@@ -174,6 +193,14 @@ function gateOf(a, sid) {
   if (a.status === 'open') return { ok: true, via: 'all', batch: null }
   const b = repo.findBatchFor(a.id, sid)
   if (b) return { ok: true, via: 'batch', batch: b }
+  /*
+   * 他在某一批里、但那批到点了。
+   * 也要把这一批**带出去** —— 界面才知道该说「你这一批时间到了」，
+   * 而不是笼统的「已结束」（那会让他以为是整场结束了，去找老师也没用）。
+   * via 用 'expired' 区分，调用方不会把它当成「能交」。
+   */
+  const e = repo.findExpiredBatchFor(a.id, sid)
+  if (e) return { ok: false, via: 'expired', batch: e }
   return { ok: false, via: '', batch: null }
 }
 
@@ -413,6 +440,17 @@ export default async function assignmentRoutes(app) {
 
     if (sids.length) {
       const seq = repo.nextBatchSeq(a.id)
+      /*
+       * 这一批自己的时限。
+       *
+       * minutes > 0  → 从现在起算，算成绝对的 dueAt 存下来
+       * 不传 / 0     → 不限时（看整场的 dueAt）
+       *
+       * 为什么参数是分钟、存的是绝对时间：
+       *   老师想的是「这批给 20 分钟」（他不知道确切几点收），
+       *   而存储要的是「到哪个时刻为止」—— 后者不会因为机器时间漂移而改变口径。
+       */
+      const minutes = Math.max(0, Math.floor(Number((req.body && req.body.minutes) || 0)))
       const batch = repo.insertBatch({
         id: uid('bt'),
         assignmentId: a.id,
@@ -420,6 +458,7 @@ export default async function assignmentRoutes(app) {
         sids,
         status: 'open',
         openedAt: new Date().toISOString(),
+        dueAt: minutes > 0 ? new Date(Date.now() + minutes * 60000).toISOString() : '',
         note: String((req.body && req.body.note) || '').slice(0, 100),
       })
       /* 名单只发给被点到的那些人 —— 轮不到的学生不该收到「开始了」的提示 */
@@ -554,16 +593,24 @@ export default async function assignmentRoutes(app) {
        * 分批列表。每批带上「这批有多少人、交了几个」——
        * 老师要判断的是「第 2 批能不能收了」，而不是去看名单。
        */
-      batches: batchesNow.map((b) => ({
-        id: b.id,
-        seq: b.seq,
-        status: b.status,
-        openedAt: b.openedAt,
-        closedAt: b.closedAt,
-        note: b.note,
-        count: b.sids.length,
-        submitted: b.sids.filter((sid) => submittedSids.has(sid)).length,
-      })),
+      batches: batchesNow.map((b) => {
+        const over = repo.batchOverdue(b)
+        const leftMs = b.dueAt ? Date.parse(b.dueAt) - Date.now() : 0
+        return {
+          id: b.id,
+          seq: b.seq,
+          status: b.status,
+          openedAt: b.openedAt,
+          closedAt: b.closedAt,
+          dueAt: b.dueAt,
+          note: b.note,
+          count: b.sids.length,
+          submitted: b.sids.filter((sid) => submittedSids.has(sid)).length,
+          /* 这一批自己的计时：还剩多少 / 到没到 */
+          overDue: over,
+          leftMin: b.dueAt && !over ? Math.max(1, Math.ceil(leftMs / 60000)) : 0,
+        }
+      }),
       /*
        * 全班名单（带「交没交」）。分批放人要勾人，得先有名单 ——
        * 原来这页只有 missing（未交的），勾不出「已经交了的人」。
@@ -857,7 +904,7 @@ export default async function assignmentRoutes(app) {
            * 我在哪一批。只给序号和状态，**不给 sids** ——
            * 那是这一批的完整名单，学生没必要看到同批还有谁。
            */
-          myBatch: gate.batch ? { id: gate.batch.id, seq: gate.batch.seq, openedAt: gate.batch.openedAt } : null,
+          myBatch: gate.batch ? batchBrief(gate.batch) : null,
         })
         /* 整场关着、但他在某一批里 → 对他而言就是「还能交」 */
         if (gate.via === 'batch') me.collecting = true
@@ -901,7 +948,7 @@ export default async function assignmentRoutes(app) {
       assignment: Object.assign(view(a), {
         /* 分批模式下整场是关的，但他在某一批里就该显示成「可以交」 */
         collecting: gate.ok ? view(a).collecting || gate.via === 'batch' : false,
-        myBatch: gate.batch ? { id: gate.batch.id, seq: gate.batch.seq, openedAt: gate.batch.openedAt } : null,
+        myBatch: gate.batch ? batchBrief(gate.batch) : null,
       }),
       mySubmission: mine ? subView(mine) : null,
       /*
@@ -969,14 +1016,17 @@ export default async function assignmentRoutes(app) {
          */
         const all = repo.batchesOf(a.id)
         const used = all.filter((b) => b.sids.includes(String(t.sid)))
+        const expired = repo.findExpiredBatchFor(a.id, t.sid)
         throw conflict(
-          used.length
-            ? '你这一批已经结束了'
-            : all.some((b) => b.status === 'open')
-              ? '还没有轮到你（老师正在分批放人），等一会儿再试'
-              : a.openedAt
-                ? '这次作业已经结束了'
-                : '这次作业还没开始'
+          expired
+            ? '你这一批的时间到了，不能再提交'
+            : used.length
+              ? '你这一批已经结束了'
+              : all.some((b) => b.status === 'open')
+                ? '还没有轮到你（老师正在分批放人），等一会儿再试'
+                : a.openedAt
+                  ? '这次作业已经结束了'
+                  : '这次作业还没开始'
         )
       }
 

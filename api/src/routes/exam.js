@@ -685,14 +685,17 @@ export default async function examRoutes(app) {
     const passed = !!repo.findPass(a.id, t.classId, t.sid)
     const inBatch = !!repo.findBatchFor(a.id, t.sid)
     if (a.status !== 'open' && !inBatch && !passed) {
-      /* 还有 open 的批次 → 没轮到你；全都结束了 → 这场就到此为止 */
+      /* 批次有自己时限的，到点就是「你这一批时间到了」，不是「还没轮到你」 */
+      const expired = repo.findExpiredBatchFor(a.id, t.sid)
       const waiting = repo.batchesOf(a.id).some((b) => b.status === 'open')
       throw forbidden(
-        waiting
-          ? '还没有轮到你（老师正在分批放人），等一会儿再试'
-          : a.openedAt
-            ? '这场机试已经结束了'
-            : '老师还没开始这场机试'
+        expired
+          ? '你这一批的时间到了，不能再作答'
+          : waiting
+            ? '还没有轮到你（老师正在分批放人），等一会儿再试'
+            : a.openedAt
+              ? '这场机试已经结束了'
+              : '老师还没开始这场机试'
       )
     }
     const { sub, state } = ensureSubmission(a, t)

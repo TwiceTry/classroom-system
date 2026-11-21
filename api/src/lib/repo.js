@@ -512,17 +512,51 @@ export function batchesOf(assignmentId) {
 }
 
 /**
- * 这个学生此刻所在的那一批。
+ * 这一批到没到时间。
  *
- * 只认 open 的：已经结束的批次不能再交，所以对他而言等于不存在。
- * 有多条时取最新建的那条（理论上不该出现，老师连开两批同一人时以最后一次为准）。
+ * 用 due_at 一个字段表达两件事：
+ *   开批时给了「限时 N 分钟」→ opened_at + N 分钟，算成绝对时间存进来
+ *   直接给绝对时间          → 原样存
+ * 存绝对时间而不是存分钟数，是因为「还剩多少」每次读都要现算，
+ * 而绝对时间不会随系统时区 / 时钟漂移改变口径。
+ *
+ * 没设 due_at = 不限时（老行为）。
  */
-export function findBatchFor(assignmentId, sid) {
-  const rows = db()
+export function batchOverdue(b, now) {
+  if (!b || !b.dueAt) return false
+  const t = Date.parse(b.dueAt)
+  return isFinite(t) && (now || Date.now()) > t
+}
+
+/** 这一批的 open 且没到点的（学生能看到的那一批） */
+function openBatchesOf(assignmentId) {
+  return db()
     .prepare(`SELECT * FROM assignment_batches WHERE assignment_id = ? AND status = 'open' ORDER BY seq DESC`)
     .all(String(assignmentId))
     .map(batchRow)
-  return rows.find((b) => b.sids.includes(String(sid))) || null
+}
+
+/**
+ * 这个学生此刻所在的那一批。
+ *
+ * 只认「open 且没过时间」的：
+ *   · 已经结束的批次不能再交，对他而言等于不存在
+ *   · **到点了也一样** —— 这一批自己的计时到了就不该再交，
+ *     哪怕老师忘了点「结束这批」
+ * 有多条时取最新建的那条（老师连开两批同一人时以最后一次为准）。
+ */
+export function findBatchFor(assignmentId, sid, now) {
+  const t = now || Date.now()
+  return openBatchesOf(assignmentId).find((b) => b.sids.includes(String(sid)) && !batchOverdue(b, t)) || null
+}
+
+/**
+ * 我在某一批里，但那批已经到点了。
+ * 用来给学生一句准确的解释（「你这一批时间到了」而不是「还没轮到你」）。
+ */
+export function findExpiredBatchFor(assignmentId, sid, now) {
+  const t = now || Date.now()
+  return openBatchesOf(assignmentId).find((b) => b.sids.includes(String(sid)) && batchOverdue(b, t)) || null
 }
 
 /** 下一批的序号（老师第三次点「开始下一批」就是 3） */

@@ -18,8 +18,14 @@
       <article v-for="a in list" :key="a.id" class="card hw" :class="{ shut: a.status !== 'open' }">
         <div class="hwtop">
           <span class="tag" :class="tagOf(a)">{{ statusOf(a) }}</span>
-          <!-- 分批模式：让他知道自己是第几批，而不是以为「老师把我漏了」 -->
-          <span v-if="a.myBatch" class="batchno">第 {{ a.myBatch.seq }} 批</span>
+          <!--
+            分批模式：让他知道自己是第几批，而不是以为「老师把我漏了」。
+            这一批有自己的时限时把剩余也带上 —— 否则他只能靠整场的截止时间猜。
+          -->
+          <span v-if="a.myBatch" class="batchno" :class="{ over: a.myBatch.overDue }">
+            第 {{ a.myBatch.seq }} 批<template v-if="a.myBatch.overDue"> · 时间到</template>
+            <template v-else-if="a.myBatch.leftMin"> · 还剩 {{ a.myBatch.leftMin }} 分钟</template>
+          </span>
           <b class="ellip">{{ a.title }}</b>
         </div>
 
