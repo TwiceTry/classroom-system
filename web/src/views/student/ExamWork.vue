@@ -179,6 +179,20 @@ onMounted(async () => {
     } else if (m.action === 'duration') {
       syncRemaining()
       toast.value = '老师把考试时长改成了 ' + m.minutes + ' 分钟'
+    } else if (m.action === 'exam-force-submit') {
+      /*
+       * 老师替我收卷了（设备坏了交不上、违纪、卡住）。
+       *
+       * 本地要立刻冻结：不冻的话他还能继续打字，而服务端已经不收答案了
+       * （保存那条会拒绝「已经交卷了」）—— 他会以为改动都生效了，实际一条没存。
+       */
+      const me = (appState.student && appState.student.sid) || ''
+      if (m.sid && me && m.sid !== me) return
+      state.submitted = true
+      if (saveTimer) clearTimeout(saveTimer)
+      toast.value = '老师已经收卷了，不能再改'
+      /* 拉一次分数和评语，别让他盯着一个空分 */
+      syncRemaining()
     } else if (m.action === 'exam-reset') {
       /*
        * 老师让我重考。
@@ -234,10 +248,18 @@ async function syncRemaining() {
     syncedAt = Date.now()
     /* 老师在别处把时长改了：这张卷子也更新，界面上「限时 X 分钟」才对 */
     if (res.paper && res.paper.duration) state.paper.duration = res.paper.duration
-    /* 服务端说已经交过了（比如另一个标签页交了）：同步过来，别让人继续答 */
-    if (res.submittedAt && !state.submitted) {
-      state.submitted = true
-      toast.value = '这份答卷已经交过了'
+    /*
+     * 服务端说已经交过了（另一个标签页交了 / 老师强制收了）：同步过来，别让人继续答。
+     * 分数和评语一起带回来 —— 强制交卷时学生没走 submit 那条路，不会有别的地方给他设分。
+     */
+    if (res.submittedAt) {
+      if (!state.submitted) {
+        state.submitted = true
+        toast.value = '这份答卷已经交过了'
+      }
+      state.paper = state.paper || res.paper
+      if (res.score !== undefined && res.score !== null) score.value = res.score
+      comment.value = res.comment || ''
     }
   } catch (e) {
     /* 对表失败不影响本地倒计时，下一秒再试 */

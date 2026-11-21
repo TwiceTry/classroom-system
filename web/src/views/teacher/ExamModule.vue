@@ -128,6 +128,19 @@
         <template #cell-actions="{ row }">
           <button class="btn mini" @click.stop="open(row)">{{ row.submittedAt ? '看答卷 / 判分' : '看进度' }}</button>
           <!--
+            立即交卷：只给「开考了还没交」的人。
+            设备坏了、违纪、卡住的时候用 —— 把他已经答的收上来正常判分。
+            注意它和「重考」是两回事：这个是收卷（分数算数），重考是清空重来。
+          -->
+          <button
+            v-if="!row.submittedAt"
+            class="btn mini"
+            :title="'把 ' + (row.name || row.sid) + ' 现在答的收上来并判分（不是重考，分数算数）'"
+            @click.stop="forceSubmit(row)"
+          >
+            立即交卷
+          </button>
+          <!--
             重考：清掉这次的答卷和分，让他重新开考（重新计时）。
             题库卷会换一套题 —— 不然重考就是背答案。
           -->
@@ -480,6 +493,33 @@ async function resetOne(row) {
       '/api/exams/' + encodeURIComponent(curId.value) + '/submissions/' + encodeURIComponent(row.id) + '/reset'
     )
     toast.value = res.message || who + ' 已重置'
+    await loadDetail(true)
+  } catch (e) {
+    toast.value = e.message
+  }
+}
+
+/**
+ * 强制收某个人的卷（立即交卷）。
+ *
+ * 和 resetOne 的区别要在确认框里说清楚 —— 两个按钮挨着，
+ * 一个「收卷、分数算数」，一个「清空重来」，点错后果完全不同。
+ */
+async function forceSubmit(row) {
+  if (!row || !row.id) return
+  const who = row.name || row.sid
+  const ok = window.confirm(
+    '立即收 ' + who + ' 的卷？\n\n' +
+      '· 他**现在答的**会被收上来，客观题立刻判分，分数算数\n' +
+      '· 收完他就不能再改了（页面会自己变成「已交卷」）\n' +
+      '· 这**不是**重考：要清空重来请点「重考」'
+  )
+  if (!ok) return
+  try {
+    const res = await api.post(
+      '/api/exams/' + encodeURIComponent(curId.value) + '/submissions/' + encodeURIComponent(row.id) + '/force-submit'
+    )
+    toast.value = res.message || who + ' 的卷子已收'
     await loadDetail(true)
   } catch (e) {
     toast.value = e.message

@@ -128,6 +128,42 @@ function ensureSubmission(a, t) {
   return { sub, state }
 }
 
+/**
+ * 收一份卷子：判客观题 + 记账 + 落盘。**学生自己交**和**老师强制交**都走这里。
+ *
+ * 抽出来是因为两条路必须完全一样：同样的判分、同样的分数。
+ * 如果各写一遍，迟早会出现「老师替他交的分和学生自己交的对不上」。
+ *
+ * @param {string} by  谁交的。空 = 学生自己；非空 = 教师强制（记进 graded.forcedBy，事后能追溯）
+ */
+function finishExam(a, sub, state, by) {
+  if (state.submittedAt) {
+    /* 重查一次：传进来的 sub 可能是交卷之前那一份的快照，分还没写进去 */
+    const fresh = repo.findSubmission(a.id, sub.sid) || sub
+    return {
+      already: true,
+      autoScore: state.graded ? state.graded.autoScore : 0,
+      total: state.graded ? state.graded.total : 0,
+      score: typeof fresh.score === 'number' ? fresh.score : null,
+    }
+  }
+  state.submittedAt = new Date().toISOString()
+  state.graded = examLib.autoGrade(state.paper, state.answers || {}, {})
+  state.graded.at = state.submittedAt
+  if (by) state.graded.forcedBy = by
+  writeState(a, sub, state)
+
+  /*
+   * 自动判分立刻进计分表：学生交完就能看到分，老师再改也是「撤旧记新」。
+   * 强制交卷时把经手人写进 reason，计分流水里能看出这次不是学生自己交的。
+   */
+  const graded = gradeSubmission(a, sub, by ? '机试强制交卷（' + by + '）' : '机试自动判分', {
+    raw: state.graded.autoScore,
+    comment: '',
+  })
+  return { autoScore: state.graded.autoScore, total: state.graded.total, score: graded.score }
+}
+
 export default async function examRoutes(app) {
   /* ============================ 教师侧 ============================ */
 
@@ -488,6 +524,60 @@ export default async function examRoutes(app) {
     }
   })
 
+  /**
+   * 教师强制收某个人的卷（立即交卷）。
+   *
+   *   POST /api/exams/:id/submissions/:subId/force-submit
+   *
+   * 用在：设备坏了交不上、发现违纪要立刻收、学生说"我卡住了"。
+   *
+   * 和「重考」的区别是根本性的：
+   *   强制交卷  把**他现在已经答的**收上来，正常判分，分数算数
+   *   重考      清空重来，之前那次作废
+   *
+   * 所以这里绝不能弹「确定吗」之后悄悄改成后者 —— 老师要的是收卷，不是重考。
+   *
+   * 判分走的是和学生自己交卷同一个 finishExam()，保证两条路得分一致。
+   * 剩下的时间归零与否不重要了：submittedAt 一写，答案就冻结，他再想改也交不上去
+   * （保存答案那条会拒绝「已经交卷了」）。
+   */
+  app.post('/api/exams/:id/submissions/:subId/force-submit', { preHandler: requireAuth('teacher') }, async (req) => {
+    const a = repo.getAssignment(req.params.id)
+    if (!a) throw notFound('作业不存在')
+    examItemOf(a)
+    const sub = repo.findSubmission(a.id, req.params.subId) || hydrateById(req.params.subId)
+    if (!sub) throw notFound('答卷不存在')
+
+    const state = readState(a, sub)
+    if (!state) throw badRequest('这个学生还没开考，没有可收的答卷')
+
+    const done = finishExam(a, sub, state, req.user.name || '教师')
+
+    /* 通知学生端：他的页面要立刻变成「已交卷」，别让他以为还能继续答 */
+    const delivered = broadcast({
+      t: 'assignment',
+      action: 'exam-force-submit',
+      id: a.id,
+      title: a.title,
+      sid: sub.sid,
+      name: sub.name,
+    })
+
+    return Object.assign(
+      {
+        ok: true,
+        already: !!done.already,
+        sid: sub.sid,
+        name: sub.name,
+        delivered,
+        message: done.already
+          ? (sub.name || sub.sid) + ' 已经交过卷了'
+          : (sub.name || sub.sid) + ' 的卷子已收，客观题自动判分',
+      },
+      done
+    )
+  })
+
   /** 取消某个人的补考放行（整场已结束时，他就进不来了） */
   app.delete('/api/exams/:id/passes/:sid', { preHandler: requireAuth('teacher') }, async (req) => {
     const a = repo.getAssignment(req.params.id)
@@ -660,17 +750,10 @@ export default async function examRoutes(app) {
     const { sub, state } = ensureSubmission(a, t)
     if (state.submittedAt) return { ok: true, already: true, submissionId: sub.id }
 
-    state.submittedAt = new Date().toISOString()
-    state.graded = examLib.autoGrade(state.paper, state.answers || {}, {})
-    state.graded.at = state.submittedAt
-    writeState(a, sub, state)
-
+    const done = finishExam(a, sub, state, '')
     /* 交卷即退出「考试中」；同班还有人没交就继续占着 */
     unlockExamFocus(a, t)
-
-    // 自动判分立刻进计分表：学生交完就能看到分，老师再改也是「撤旧记新」
-    const graded = gradeSubmission(a, sub, '机试自动判分', { raw: state.graded.autoScore, comment: '' })
-    return { ok: true, submissionId: sub.id, autoScore: state.graded.autoScore, total: state.graded.total, score: graded.score }
+    return Object.assign({ ok: true, submissionId: sub.id }, done)
   })
 }
 
