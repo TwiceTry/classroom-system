@@ -299,7 +299,25 @@ export default async function examRoutes(app) {
     const subs = repo.submissionsOf(a.id)
     const names = new Map(repo.listClasses().map((c) => [c.id, c.name]))
     return {
-      assignment: { id: a.id, title: a.title, status: a.status, itemKey: a.itemKey },
+      /*
+       * 前端状态标签用 stateOf(collecting / overDue / started) 算，
+       * 只给 status 的话它拿不到另外两个 —— 一场**已经结束**的考试
+       * 会显示成「未开始」（观察到的现象）。三个都给，和列表接口同一套口径。
+       */
+      assignment: {
+        id: a.id,
+        title: a.title,
+        status: a.status,
+        itemKey: a.itemKey,
+        dueAt: a.dueAt || '',
+        allowLate: !!a.allowLate,
+        started: !!a.openedAt,
+        overDue: !!(a.dueAt && Date.parse(a.dueAt) && Date.now() > Date.parse(a.dueAt)),
+        collecting: !!(
+          a.status === 'open' &&
+          !(a.dueAt && Date.parse(a.dueAt) && Date.now() > Date.parse(a.dueAt) && !a.allowLate)
+        ),
+      },
       imported: !!raw,
       paper: norm
         ? {
@@ -318,10 +336,24 @@ export default async function examRoutes(app) {
           submittedAt: st ? st.submittedAt || '' : '',
           answered: st && st.answers ? Object.keys(st.answers).length : 0,
           autoScore: st && st.graded ? st.graded.autoScore : null,
-        })
-      }),
-    }
-  })
+          })
+          }),
+          /*
+          * 补考放行名单。这些人**不在 rows 里**（重考会删掉他们的答卷），
+          * 所以要单独给一份，否则老师放行完就再也看不到、也取消不了。
+          */
+          passes: repo.passesOf(a.id).map((p) => ({
+          sid: p.sid,
+          name: p.name || p.sid,
+          classId: p.classId,
+          className: names.get(p.classId) || '',
+          at: p.at,
+          note: p.note,
+          /* 已经重新开考/交卷的，界面上标一下，老师能看出谁已经用掉了这次放行 */
+          used: subs.some((s) => s.sid === p.sid),
+          })),
+          }
+          })
 
   /** 下载纸质卷（?answer=1 取答案卷；fmt=md|html） */
   app.get('/api/exams/:id/paper-file/:fmt', { preHandler: requireAuth('teacher') }, async (req, reply) => {
@@ -415,7 +447,25 @@ export default async function examRoutes(app) {
       /* 文件删不掉不影响开新卷（新答卷会建新目录），只是磁盘上留一份旧文件 */
     }
 
-    /* ④ 通知学生端 */
+    /*
+     * ④ 给他放行。
+     *
+     * 这是「重考」和「整场还开着」解耦的关键：
+     * 老师在考完第二天发现某人需要补考，点完重考就能直接开班，
+     * 不用把整场考试再开一次（那样全班都能进）。
+     *
+     * 考试还在收的时候放行同样无害 —— start 那条本来就放行所有人，
+     * 记录留着，等他真交完卷子也仍然是一条「放行」，将来取消即可。
+     */
+    repo.passExam({
+      assignmentId: a.id,
+      classId: sub.classId,
+      sid: sub.sid,
+      name: sub.name,
+      note: '重考',
+    })
+
+    /* ⑤ 通知学生端 */
     const delivered = broadcast({
       t: 'assignment',
       action: 'exam-reset',
@@ -430,8 +480,24 @@ export default async function examRoutes(app) {
       sid: sub.sid,
       name: sub.name,
       delivered,
-      message: (sub.name || sub.sid) + ' 已重置，可以重新开考（题库卷会换一套题）',
+      /* 整场已经结束的时候要说清楚：他现在仍能开考，是因为被单独放行了 */
+      message:
+        (sub.name || sub.sid) +
+        ' 已重置，可以重新开考（题库卷会换一套题）' +
+        (a.status === 'open' ? '' : '。这场考试已结束，只有他一个人能进来'),
     }
+  })
+
+  /** 取消某个人的补考放行（整场已结束时，他就进不来了） */
+  app.delete('/api/exams/:id/passes/:sid', { preHandler: requireAuth('teacher') }, async (req) => {
+    const a = repo.getAssignment(req.params.id)
+    if (!a) throw notFound('作业不存在')
+    examItemOf(a)
+    const classId = String(req.query.classId || '')
+    const n = repo.unpassExam(a.id, classId, req.params.sid)
+    if (!n) throw notFound('这个人没有放行记录')
+    broadcast({ t: 'assignment', action: 'exam-reset', id: a.id, sid: req.params.sid })
+    return { ok: true }
   })
 
   /** 教师看某一份答卷（答案 + 得分） */
@@ -513,7 +579,17 @@ export default async function examRoutes(app) {
     const a = repo.getAssignment(req.params.id)
     if (!a) throw notFound('作业不存在')
     examItemOf(a)
-    if (a.status !== 'open') throw forbidden(a.openedAt ? '这场机试已经结束了' : '老师还没开始这场机试')
+    /*
+     * 整场结束了，但这个人是老师放行补考的 → 放他进去。
+     *
+     * 没有这一条的话，「重考」只对「考试还在收」的时候有用：
+     * 一旦老师点了结束（或者到点自动结束），重置完学生点开考还是被拒，
+     * 而老师那边的入口已经变成「再开一场」—— 一个人补考要把整场重新开一遍。
+     */
+    const passed = !!repo.findPass(a.id, t.classId, t.sid)
+    if (a.status !== 'open' && !passed) {
+      throw forbidden(a.openedAt ? '这场机试已经结束了' : '老师还没开始这场机试')
+    }
     const { sub, state } = ensureSubmission(a, t)
     /* 开考即占住学生端屏幕（优先级最高，谁都压不掉）——交卷时释放 */
     lockExamFocus(a, t, state)

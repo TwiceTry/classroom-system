@@ -91,10 +91,30 @@
         <template #title>学生答卷 · {{ d.rows.length }} 人开考</template>
         <template #meta><span class="dim mini">每 8 秒刷新 · 客观题交卷即得分，主观题等你判</span></template>
       </CardHead>
+      <!--
+        补考放行名单。
+        这些人不在下面的答卷表里（重考会删掉他们的答卷），
+        单独列出来，否则放行完就再也看不到、也取消不了。
+      -->
+      <div v-if="d.passes && d.passes.length" class="passes">
+        <span class="pk">补考放行</span>
+        <span
+          v-for="p in d.passes"
+          :key="p.sid"
+          class="pi"
+          :class="{ used: p.used }"
+          :title="(p.used ? '已重新开考 / 已交卷 · ' : '还没进来 · ') + (p.className || '') + ' · ' + (p.at || '').slice(0, 16).replace('T', ' ')"
+        >
+          {{ p.name }}
+          <button class="px" title="取消放行（他就进不来了）" @click="unpass(p)">×</button>
+        </span>
+        <span class="dim mini">这场已经结束，只有名单里的人还能开考</span>
+      </div>
+
       <DataTable
         :columns="rowCols"
         :rows="d.rows"
-        row-key="submissionId"
+        row-key="id"
         clickable
         :empty="'还没有学生开考。'"
         @row-click="open"
@@ -445,7 +465,8 @@ async function changeDuration() {
  * 二次确认是必须的 —— 这个操作不可撤销，而「重考」两个字看着不像删除。
  */
 async function resetOne(row) {
-  if (!row || !row.submissionId) return
+  /* 答卷 id 在 row.id —— 后端 submissionView 给的就是 id，没有 submissionId 这个字段 */
+  if (!row || !row.id) return
   const who = row.name || row.sid
   const ok = window.confirm(
     '让 ' + who + ' 重考？\n\n' +
@@ -456,9 +477,22 @@ async function resetOne(row) {
   if (!ok) return
   try {
     const res = await api.post(
-      '/api/exams/' + encodeURIComponent(curId.value) + '/submissions/' + encodeURIComponent(row.submissionId) + '/reset'
+      '/api/exams/' + encodeURIComponent(curId.value) + '/submissions/' + encodeURIComponent(row.id) + '/reset'
     )
     toast.value = res.message || who + ' 已重置'
+    await loadDetail(true)
+  } catch (e) {
+    toast.value = e.message
+  }
+}
+
+/** 取消某人的补考放行 */
+async function unpass(p) {
+  if (!p) return
+  if (!window.confirm('取消 ' + (p.name || p.sid) + ' 的补考放行？\n\n取消后他就进不来这场考试了（已经交的答卷不受影响）。')) return
+  try {
+    await api.del('/api/exams/' + encodeURIComponent(curId.value) + '/passes/' + encodeURIComponent(p.sid))
+    toast.value = (p.name || p.sid) + ' 的放行已取消'
     await loadDetail(true)
   } catch (e) {
     toast.value = e.message
@@ -559,6 +593,58 @@ async function saveGrade() {
 </script>
 
 <style scoped>
+/*
+ * 补考放行名单：一行小标签，跟在答卷表上面。
+ * 不放表格里 —— 这些人恰恰是「没有答卷」的那几个，塞进表格会出现
+ * 一行全空、只剩名字的记录，反而看不懂。
+ */
+.passes {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
+  background: #fff8ec;
+  border: 1px solid #f0dcc0;
+}
+.passes .pk {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: #a15c00;
+  margin-right: 2px;
+}
+.passes .pi {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 4px 1px 8px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid #f0dcc0;
+  font-size: var(--fs-sm);
+  color: #7a4a00;
+}
+/* 已经进来考过 / 交过的：压暗，老师一眼看出这条放行用掉了 */
+.passes .pi.used {
+  opacity: 0.55;
+}
+.passes .px {
+  border: none;
+  background: none;
+  padding: 0 3px;
+  font-size: 13px;
+  line-height: 1;
+  color: #b0b8c2;
+  cursor: pointer;
+  border-radius: 50%;
+}
+.passes .px:hover {
+  color: var(--err);
+  background: rgba(220, 60, 60, 0.1);
+}
+
 .hwbar {
   display: flex;
   align-items: center;

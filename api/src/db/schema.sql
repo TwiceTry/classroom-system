@@ -136,6 +136,22 @@ CREATE TABLE IF NOT EXISTS submissions (
 CREATE INDEX IF NOT EXISTS idx_sub_asg_sid ON submissions (assignment_id, sid);
 CREATE INDEX IF NOT EXISTS idx_sub_class   ON submissions (class_id, sid);
 
+-- 机试「单人放行」：整场已经结束，但让某几个人补考。
+--
+-- 为什么不挂在 submissions 上：重考是**删掉**那份答卷再重开，
+-- 挂在上面会跟着被删 —— 而「谁能补考」必须在没有答卷的时候依然成立。
+--
+-- 复合主键天然幂等：同一个人重复放行不会多出记录。
+CREATE TABLE IF NOT EXISTS exam_passes (
+  assignment_id TEXT NOT NULL,
+  class_id      TEXT NOT NULL DEFAULT '',
+  sid           TEXT NOT NULL,
+  name          TEXT NOT NULL DEFAULT '',
+  at            TEXT NOT NULL DEFAULT '',
+  note          TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (assignment_id, class_id, sid)
+);
+
 -- 学生登录密码的**派生值**（不是明文，也不可逆）
 --
 -- 只在「学生登录方式 = 青果账号密码」时使用：

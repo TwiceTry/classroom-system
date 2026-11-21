@@ -482,6 +482,75 @@ export function findSubmission(assignmentId, sid) {
   )
 }
 
+/* ---------------- 机试「单人放行」（整场结束，让某几个人补考） ---------------- */
+
+export function passesOf(assignmentId) {
+  return db()
+    .prepare(`SELECT * FROM exam_passes WHERE assignment_id = ? ORDER BY at, sid`)
+    .all(String(assignmentId))
+    .map((r) => ({
+      assignmentId: r.assignment_id,
+      classId: r.class_id,
+      sid: r.sid,
+      name: r.name || '',
+      at: r.at || '',
+      note: r.note || '',
+    }))
+}
+
+export function findPass(assignmentId, classId, sid) {
+  const r = db()
+    .prepare(`SELECT * FROM exam_passes WHERE assignment_id = ? AND class_id = ? AND sid = ?`)
+    .get(String(assignmentId), String(classId || ''), String(sid))
+  if (!r) return null
+  return { assignmentId: r.assignment_id, classId: r.class_id, sid: r.sid, name: r.name || '', at: r.at || '', note: r.note || '' }
+}
+
+/**
+ * 放行一个人。
+ *
+ * 用 REPLACE：重复放行不该长出第二条（主键是 assignment + class + sid）。
+ * 重复调用的实际场景是老师连点两下，不该因此报错。
+ */
+export function passExam(p) {
+  db()
+    .prepare(
+      `INSERT OR REPLACE INTO exam_passes (assignment_id, class_id, sid, name, at, note)
+       VALUES (@assignmentId, @classId, @sid, @name, @at, @note)`
+    )
+    .run({
+      assignmentId: String(p.assignmentId),
+      classId: String(p.classId || ''),
+      sid: String(p.sid),
+      name: String(p.name || ''),
+      at: String(p.at || new Date().toISOString()),
+      note: String(p.note || ''),
+    })
+  return findPass(p.assignmentId, p.classId, p.sid)
+}
+
+/**
+ * 取消放行。
+ *
+ * 不传 classId 就按「作业 + 学号」删 —— 教师端点的那一下只认人，
+ * 不必让前端记住这个人是哪个班的（同一作业里学号不会重复）。
+ */
+export function unpassExam(assignmentId, classId, sid) {
+  if (classId) {
+    return db()
+      .prepare(`DELETE FROM exam_passes WHERE assignment_id = ? AND class_id = ? AND sid = ?`)
+      .run(String(assignmentId), String(classId), String(sid)).changes
+  }
+  return db()
+    .prepare(`DELETE FROM exam_passes WHERE assignment_id = ? AND sid = ?`)
+    .run(String(assignmentId), String(sid)).changes
+}
+
+/** 删作业时连放行记录一起清 */
+export function deletePassesOf(assignmentId) {
+  return db().prepare(`DELETE FROM exam_passes WHERE assignment_id = ?`).run(String(assignmentId)).changes
+}
+
 export function insertSubmission(s) {
   db()
     .prepare(

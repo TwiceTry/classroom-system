@@ -142,6 +142,21 @@ const view = (a) => ({
 })
 
 /**
+ * 这是不是一场机试。
+ *
+ * 别写成 `a.kind === 'exam'` —— 机试的 kind 是 **'paper'**
+ * （见 submitstore 的 DIR_OF_KIND：work→作业、project→大作业、paper→机试）。
+ * 写错的那一版永远返回 false，结果有两处静默失效：
+ *   · subForStudent 不给机试补 startedAt / submittedAt →
+ *     前端分不出「开考了没交」和「已交卷」
+ *   · 单人放行不生效 → 整场结束后谁都进不来
+ * 所以这里三个都认，将来改口径也不会再漏。
+ */
+function isExamAssignment(a) {
+  return a.kind === 'paper' || a.kind === 'exam' || String(a.itemKey || '') === 'exam'
+}
+
+/**
  * 学生端看到的「我的提交」。
  *
  * 机试要多补两个字段：startedAt / submittedAt。
@@ -164,7 +179,7 @@ function subForStudent(a, mine) {
     gradedAt: mine.gradedAt || '',
     late: !!mine.late,
   }
-  if (a.kind === 'exam') {
+  if (isExamAssignment(a)) {
     try {
       const st = examLib.readJson(
         path.join(examLib.examDir(mine.classId, mine.sid, a.id, mine.id), 'exam.json'),
@@ -399,6 +414,8 @@ export default async function assignmentRoutes(app) {
     }
 
     repo.deleteSubmissionsOf(a.id)
+    /* 机试的补考放行记录也要清，否则留着指向一个不存在的作业 */
+    repo.deletePassesOf(a.id)
     repo.deleteAssignment(a.id)
     reply.status(204).send()
     void folders
@@ -698,9 +715,20 @@ export default async function assignmentRoutes(app) {
          * 「能不能交」由 status 决定（提交接口那条校验），不该拿它当可见性开关。
          * 学生需要看到的是「有这么一次作业、现在处在哪一步」。
          */
-        return Object.assign(view(a), {
+        const me = Object.assign(view(a), {
           mySubmission: mine ? subForStudent(a, mine) : null,
         })
+        /*
+         * 机试「单人放行」：整场已经结束，但老师让这个人补考。
+         *
+         * 对他而言这场就是「还能开考」—— collecting 是给人看的状态，
+         * 应该按「这个人能不能进」算，而不是按「全班还收不收」算。
+         * 已经交过卷的不算（他补考完了，卡片该回到「已交卷」）。
+         */
+        if (isExamAssignment(a) && !(me.mySubmission && me.mySubmission.submittedAt)) {
+          if (repo.findPass(a.id, t.classId, t.sid)) me.collecting = true
+        }
+        return me
       })
       .filter(Boolean)
     return { items, total: items.length, className: cls.name }
