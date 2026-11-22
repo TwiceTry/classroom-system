@@ -216,9 +216,12 @@
         <span class="stn" :class="{ warn: d.stats.submissionCount > d.stats.gradedCount }">{{ d.stats.gradedCount }}</span>
         <span class="stl">
           {{
-          d.stats.submissionCount > d.stats.gradedCount
-          ? '已批 · 还差 ' + (d.stats.submissionCount - d.stats.gradedCount) + ' 条'
-          : '已批 · 都批完了'
+          /* 一条都没交的时候不要说「都批完了」—— 那是反的 */
+          !d.stats.submissionCount
+          ? '已批'
+          : d.stats.submissionCount > d.stats.gradedCount
+            ? '已批 · 还差 ' + (d.stats.submissionCount - d.stats.gradedCount) + ' 条'
+            : '已批 · 都批完了'
           }}
         </span>
       </div>
@@ -761,7 +764,8 @@ const hwSub = computed(() => {
     const p = prog.value
     const parts = ['已交 ' + p.submitted + ' / ' + p.studentCount + ' 人']
     if (p.pending) parts.push('待批 ' + p.pending)
-    else if (p.graded && p.graded === p.submitted) parts.push('都批完了')
+    /* submitted > 0 才算「都批完了」—— 一个人都没交的时候说这句是反的 */
+    else if (p.submitted > 0 && p.graded === p.submitted) parts.push('都批完了')
     if (p.missing && p.missing.length) parts.push('未交 ' + p.missing.length)
     return parts.join(' · ')
   }

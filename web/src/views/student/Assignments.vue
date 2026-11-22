@@ -143,14 +143,25 @@ async function load() {
   }
 }
 
+/*
+ * 状态判据是后端给的 **collecting**（整场开着 或 我在某一批里），不是 status。
+ *
+ * 分批模式下整场是 closed、只有批次在放人 —— 只看 status 的话，
+ * 卡片明明能点（正文里已经有编辑器），标签却写「未开始」，自相矛盾。
+ * 同一个毛病在教师端犯过一次（标签说未开始、批次说进行中），这里必须对齐。
+ */
 function statusOf(a) {
-  if (a.status === 'open') return '进行中'
+  if (a.collecting) return '进行中'
+  /* 我这一批到点了：说清楚是「时间到」而不是笼统的「已结束」 */
+  if (a.myBatch && a.myBatch.overDue) return '时间到'
+  if (a.myBatch) return '已结束'
   return a.started ? '已结束' : '未开始'
 }
 
 function tagOf(a) {
-  if (a.status === 'open') return 'ok'
-  return a.started ? 'mute' : 'warn'
+  if (a.collecting) return 'ok'
+  if (a.myBatch && a.myBatch.overDue) return 'mute'
+  return a.started || a.myBatch ? 'mute' : 'warn'
 }
 
 /* ---------------- 截止时间 ---------------- */
