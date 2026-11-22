@@ -353,6 +353,16 @@ export default async function examRoutes(app) {
           a.status === 'open' &&
           !(a.dueAt && Date.parse(a.dueAt) && Date.now() > Date.parse(a.dueAt) && !a.allowLate)
         ),
+        /*
+         * 有几批正在放人（open 且没过时间）。
+         *
+         * 这个字段必须挂在 assignment 里 —— 教师端 stateOf(d.assignment) 读的就是它。
+         * 分批时整场 status 永远是 closed，只看 collecting 会一律显示「未开始」，
+         * 而那正是「状态没实时更新」的观感：数据一直在刷，只是这一句话没跟着变。
+         */
+        openBatches: repo
+          .batchesOf(a.id)
+          .filter((b) => b.status === 'open' && !repo.batchOverdue(b)).length,
       },
       imported: !!raw,
       paper: norm

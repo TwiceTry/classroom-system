@@ -27,7 +27,7 @@
       @click="select(a.id)"
       >
       <!-- 状态读 collecting（实际还收不收），不读 status —— 到期不用老师手动点结束 -->
-      <i class="led" :class="collectingOf(a) ? 'on' : a.started ? 'off' : ''"></i>
+      <i class="led" :class="ledOf(a)"></i>
       {{ a.title }}
       <span class="dim">{{ stateOf(a).text }}</span>
     </button>
@@ -333,7 +333,7 @@ import { api, openDoc } from '../../api'
 import Toast from '../../components/Toast.vue'
 import { clock, when } from '../../utils/time'
 /* 状态是算出来的 —— 和课堂作业页共用同一份判断，避免两个页面各写一套又分叉 */
-import { collectingOf as collectingBase, stateOf as stateBase } from '../../utils/assignmentState'
+import { collectingOf as collectingBase } from '../../utils/assignmentState'
 import { loadScheme, scheme } from '../../utils/scheme'
 import PageHead from '../../components/PageHead.vue'
 import DirIO from '../../components/DirIO.vue'
@@ -404,9 +404,43 @@ const nowTick = ref(Date.now())
 function collectingOf(x) {
   return collectingBase(x, nowTick.value)
 }
-/** 给人看的状态。机试那个词叫「考试中」 */
+/**
+ * 教师端看到的状态。**不能直接复用学生那份 stateOf**。
+ *
+ * 学生那份要回答「我能不能进」：还没轮到你 / 这一批时间到 / 这批已结束 ——
+ * 老师问的是「这场考试现在处于什么阶段」：分批进行中 / 考试中 / 已结束 / 未开始。
+ * 拿学生那份来渲染，老师会看到「还没轮到你」这种对他说不通的话。
+ *
+ * 判据和作业页一致：
+ *   有批次在放人（且没过时间）→ 分批进行中
+ *   整场开着                    → 考试中（老数据没有批次时才走到这里）
+ *   开过                        → 已结束
+ *   其余                        → 未开始
+ *
+ * 注意「有批次在放人」放在最前：分批时整场 status 永远是 closed，
+ * 只看 collecting 会一律显示「未开始」—— 这正是「状态没实时更新」的观感，
+ * 其实数据一直在刷，只是这一句话没跟着变。
+ */
 function stateOf(x) {
-  return stateBase(x, nowTick.value, '考试中')
+  if (!x) return { key: 'none', text: '', tone: '' }
+  if (Number(x.openBatches) > 0) return { key: 'batch', text: '分批进行中', tone: 'ok' }
+  if (collectingBase(x, nowTick.value)) return { key: 'open', text: '考试中', tone: 'ok' }
+  if (x.started) return { key: 'closed', text: '已结束', tone: 'mute' }
+  return { key: 'draft', text: '未开始', tone: 'warn' }
+}
+
+/** 胶囊上的小灯：有批在放人就亮 */
+function ledOf(x) {
+  if (!x) return ''
+  if (Number(x.openBatches) > 0) return 'on'
+  if (collectingBase(x, nowTick.value)) return 'on'
+  return x.started ? 'off' : ''
+}
+
+/** 这场现在「活着」吗（有批在放人，或整场开着）—— 默认选中用 */
+function liveOf(x) {
+  if (!x) return false
+  return Number(x.openBatches) > 0 || collectingBase(x, nowTick.value)
 }
 
 onMounted(async () => {
@@ -444,7 +478,7 @@ async function loadAll() {
     list.value = res.items || []
     if (!curId.value) {
       /* 默认选中「还在收」的那场（到期的不算 —— 那场已经开不了考了） */
-      const openOne = list.value.filter((a) => collectingOf(a))
+      const openOne = list.value.filter((a) => liveOf(a))
       curId.value = (openOne.length ? openOne[openOne.length - 1] : list.value[list.value.length - 1] || {}).id || ''
     }
     if (curId.value) await loadDetail()
