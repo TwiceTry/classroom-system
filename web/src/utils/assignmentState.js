@@ -39,7 +39,24 @@ export function overDueOf(x, now) {
  * 这两件事合起来才是「现在真的还能交」。
  */
 export function collectingOf(x, now) {
-  if (!x || x.status !== 'open') return false
+  if (!x) return false
+  /*
+   * **优先用后端算好的 collecting。**
+   *
+   * 后端那份认三件事：整场开着 / 我在某一批里 / 单人放行补考。
+   * 这里如果还拿 status 再判一遍，分批就全废了 ——
+   * 分批时整场是 closed、只有批次在 open，status 永远是 'closed'，
+   * 于是学生端显示「未开始」，连开考入口都不给。
+   *
+   * 这正是上一轮作业页犯过的错（v-if="a.status === 'open'"），
+   * 当时只修了页面，没修这个公共函数，机试就漏了。
+   */
+  const base =
+    typeof x.collecting === 'boolean'
+      ? x.collecting
+      : x.status === 'open' // 老接口没给 collecting 时兜底
+  if (!base) return false
+  /* 过了截止又不收迟交：哪怕开了也对这个人关了 */
   if (overDueOf(x, now) && x.allowLate === false) return false
   return true
 }
@@ -57,6 +74,17 @@ export function collectingOf(x, now) {
 export function stateOf(x, now, word = '进行中') {
   if (!x) return { key: 'none', text: '', tone: '' }
   if (collectingOf(x, now)) return { key: 'open', text: word, tone: 'ok' }
+
+  /*
+   * 下面几种「进不来」要分开说。
+   * 分批模式下整场从没 open 过（started 永远是 false），
+   * 如果只按 started 判，所有没轮到的人都会显示「未开始」——
+   * 而老师明明已经开始了，他只是还没被点到。
+   */
+  if (x.myBatch && x.myBatch.overDue) return { key: 'b-overdue', text: '这批时间到', tone: 'mute' }
+  if (x.myBatch) return { key: 'b-closed', text: '这批已结束', tone: 'mute' }
+  if (Number(x.openBatches) > 0) return { key: 'waiting', text: '还没轮到你', tone: 'warn' }
+
   if (overDueOf(x, now) && x.allowLate === false) {
     return { key: 'overdue', text: '已截止（时间到）', tone: 'mute' }
   }

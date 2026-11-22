@@ -163,7 +163,13 @@ function isExamAssignment(a) {
  * 那是这一批的完整名单，学生没必要看到同批还有谁。
  */
 function batchBrief(b) {
-  const over = repo.batchOverdue(b)
+  const closed = b.status !== 'open'
+  /*
+   * 已经关掉的批次不算「时间到」——
+   * 两句话对学生是不同的意思：「时间到了，你没能交」和「老师把这一批收了」。
+   * 前者可能还想找老师补，后者已经过去了。
+   */
+  const over = !closed && repo.batchOverdue(b)
   const leftMs = b.dueAt ? Date.parse(b.dueAt) - Date.now() : 0
   return {
     id: b.id,
@@ -171,7 +177,8 @@ function batchBrief(b) {
     openedAt: b.openedAt,
     dueAt: b.dueAt,
     overDue: over,
-    leftMin: b.dueAt && !over ? Math.max(1, Math.ceil(leftMs / 60000)) : 0,
+    closed,
+    leftMin: b.dueAt && !over && !closed ? Math.max(1, Math.ceil(leftMs / 60000)) : 0,
   }
 }
 
@@ -215,6 +222,15 @@ function gateOf(a, sid) {
    */
   const e = repo.findExpiredBatchFor(a.id, sid)
   if (e) return { ok: false, via: 'expired', batch: e }
+  /*
+   * 他所在的批被老师关掉了。
+   *
+   * 这一档必须带出去，否则界面只剩「未开始」一个说法 ——
+   * 而他已经考过/交过了（有答卷），或者至少进过那一批。
+   * 说成「未开始」等于告诉他「老师还没开始」，可他明明刚从那批出来。
+   */
+  const mine = repo.batchesOf(a.id).filter((b) => b.sids.includes(String(sid)))
+  if (mine.length) return { ok: false, via: 'batch-closed', batch: mine[mine.length - 1] }
   return { ok: false, via: '', batch: null }
 }
 
