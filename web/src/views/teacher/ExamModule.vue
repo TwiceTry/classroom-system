@@ -883,13 +883,22 @@ async function open(r) {
   for (const k of Object.keys(manual)) delete manual[k]
   comment.value = r.comment || ''
   try {
+    /* 答卷 id 在 r.id —— 后端 submissionView 给的就是 id，没有 submissionId 这个字段 */
     const res = await api.get(
-      '/api/exams/' + encodeURIComponent(curId.value) + '/submissions/' + encodeURIComponent(r.submissionId)
+      '/api/exams/' + encodeURIComponent(curId.value) + '/submissions/' + encodeURIComponent(r.id)
     )
+    /*
+     * 接口返回的是 { submission, state: { answers, startedAt, submittedAt, graded }, paper }。
+     * 原来读 res.answers / res.graded 直接是 undefined ——
+     * 一个答了 20/22、自动判 80 分的学生，判分面板显示「这个学生还没开始作答」。
+     */
+    const st = res.state || {}
     detail.paper = res.paper
-    detail.answers = res.answers || {}
-    detail.graded = res.graded || null
-    if (res.graded) for (const it of res.graded.items) if (it.type === 'short') manual[it.qid] = it.got
+    detail.answers = st.answers || {}
+    detail.graded = st.graded || null
+    if (st.graded && st.graded.items) {
+      for (const it of st.graded.items) if (it.type === 'short') manual[it.qid] = it.got
+    }
   } catch (e) {
     toast.value = e.message
   } finally {

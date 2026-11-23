@@ -665,7 +665,12 @@ export default async function examRoutes(app) {
     return {
       submission: submissionView(sub),
       state: st ? { answers: st.answers, startedAt: st.startedAt, submittedAt: st.submittedAt, graded: st.graded } : null,
-      paper: st ? normalizeOptions(examLib.publicPaper(st.paper)) : null,
+      /*
+       * 教师判分要看**参考答案**，所以这里给完整的 paper，不是 publicPaper。
+       * publicPaper 是发给学生的那份（把 answer / analysis 摘掉了）——
+       * 判分页用它，老师只能看到「参考答案：」后面一片空白。
+       */
+      paper: st ? normalizeOptions(st.paper) : null,
     }
   })
 
