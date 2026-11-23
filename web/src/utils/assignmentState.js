@@ -51,6 +51,9 @@ export function collectingOf(x, now) {
    * 这正是上一轮作业页犯过的错（v-if="a.status === 'open'"），
    * 当时只修了页面，没修这个公共函数，机试就漏了。
    */
+  /* 后端给了 phase → 直接问它（唯一判定源） */
+  if (x.phase) return x.phase === 'open'
+
   const base =
     typeof x.collecting === 'boolean'
       ? x.collecting
@@ -75,8 +78,33 @@ export function collectingOf(x, now) {
  * 出路不一样 —— 前者老师改一下截止时间就能再开，后者要重新点开始。
  * 合成一个「已结束」，老师会不知道该动哪里。
  */
+/*
+ * phase → 文案表。**后端只有一个 phase，前端只有一张翻译表。**
+ *
+ * 这张表取代了原来那串 if：以前「这批时间到」在前端判一次、
+ * 在后端 403 里再拼一次，两处措辞还不一样。现在措辞只在这里，
+ * 后端那句（phaseMessage）负责「为什么交不上」的长解释。
+ */
+const STUDENT_TEXT = {
+  waiting: { key: 'waiting', text: '还没轮到你', tone: 'warn' },
+  'batch-overdue': { key: 'b-overdue', text: '这批时间到', tone: 'mute' },
+  'batch-closed': { key: 'b-closed', text: '这批已结束', tone: 'mute' },
+  overdue: { key: 'overdue', text: '已截止（时间到）', tone: 'mute' },
+  closed: { key: 'closed', text: '已结束', tone: 'mute' },
+  draft: { key: 'draft', text: '未开始', tone: 'warn' },
+}
+
 export function stateOf(x, now, word = '进行中') {
   if (!x) return { key: 'none', text: '', tone: '' }
+
+  /* 后端给了 phase 就只翻译，不再自己判 */
+  if (x.phase) {
+    if (x.phase === 'open') return { key: 'open', text: word, tone: 'ok' }
+    const hit = STUDENT_TEXT[x.phase]
+    if (hit) return { ...hit }
+  }
+
+  /* 兜底：老接口没给 phase（或是个认不出的值），按原有逻辑推 */
   if (collectingOf(x, now)) return { key: 'open', text: word, tone: 'ok' }
 
   /*
@@ -118,6 +146,8 @@ export const STUDENT_ONLY_TEXTS = ['还没轮到你', '这批已结束', '这批
  */
 export function teacherCollectingOf(x, now) {
   if (!x) return false
+  /* 后端给了 phase → 直接问它（唯一判定源） */
+  if (x.phase) return x.phase === 'open'
   if (x.status !== 'open') return false
   if (overDueOf(x, now) && x.allowLate === false) return false
   return true
@@ -135,8 +165,25 @@ export function teacherCollectingOf(x, now) {
  *   过截止且不收迟交   → 已截止，改截止时间就能再开
  *   开过               → 已结束，要重新点开始
  */
+/** 教师视角的翻译表（和上面那张不是一回事，别合并） */
+const TEACHER_TEXT = {
+  batch: { key: 'batch', text: '分批进行中', tone: 'ok' },
+  overdue: { key: 'overdue', text: '已截止（时间到）', tone: 'mute' },
+  closed: { key: 'closed', text: '已结束', tone: 'mute' },
+  draft: { key: 'draft', text: '未开始', tone: 'warn' },
+}
+
 export function teacherStateOf(x, now, word = '进行中') {
   if (!x) return { key: 'none', text: '', tone: '' }
+
+  /* 后端给了 phase 就只翻译 */
+  if (x.phase) {
+    if (x.phase === 'open') return { key: 'open', text: word, tone: 'ok' }
+    const hit = TEACHER_TEXT[x.phase]
+    if (hit) return { ...hit }
+  }
+
+  /* 兜底：按原有逻辑推 */
   if (teacherCollectingOf(x, now)) return { key: 'open', text: word, tone: 'ok' }
   if (Number(x.openBatches) > 0) return { key: 'batch', text: '分批进行中', tone: 'ok' }
   if (overDueOf(x, now) && x.allowLate === false) return { key: 'overdue', text: '已截止（时间到）', tone: 'mute' }

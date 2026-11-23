@@ -21,6 +21,8 @@ import { withCourseScheme } from '../lib/scheme.js'
 import { pushFocus, releaseFocus, getFocus } from '../lib/focus.js'
 import { broadcast } from './cast.js'
 import * as examLib from '../lib/exam.js'
+/* 状态判定只有一份：lib/phase.js（学生视角 phaseOf / 教师视角 teacherPhaseOf） */
+import { gateOf, phaseMessage, teacherPhaseOf } from '../lib/phase.js'
 
 const uid = (p) => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 
@@ -349,10 +351,15 @@ export default async function examRoutes(app) {
         allowLate: !!a.allowLate,
         started: !!a.openedAt,
         overDue: !!(a.dueAt && Date.parse(a.dueAt) && Date.now() > Date.parse(a.dueAt)),
-        collecting: !!(
-          a.status === 'open' &&
-          !(a.dueAt && Date.parse(a.dueAt) && Date.now() > Date.parse(a.dueAt) && !a.allowLate)
-        ),
+        /*
+         * 教师视角的阶段 —— 和课堂作业页同一份判定（lib/phase.js）。
+         *
+         * 原来这里自己拼了一个 collecting（status + 截止时间），
+         * 分批时整场永远是 closed，于是恒 false；
+         * 教师端又不能读它（读了永远「未开始」），只能去看 openBatches ——
+         * 同一个状态两套算法，就是「状态不更新」这类问题的来源。
+         */
+        phase: teacherPhaseOf(a),
         /*
          * 有几批正在放人（open 且没过时间）。
          *
@@ -742,29 +749,16 @@ export default async function examRoutes(app) {
      *   ② 他在某一批里、那批 open —— 分批（机器不够就一批一批来）
      *   ③ 单人放行            —— 整场结束后的补考
      */
-    const passed = !!repo.findPass(a.id, t.classId, t.sid)
-    const inBatch = !!repo.findBatchFor(a.id, t.sid)
     /*
-     * 有批次就**只认批次**（和作业那条一致）：老师不再点「开始考试」，
-     * 而是开一批人，全选就是全班。整场 status 不参与判定，
-     * 免得两套状态打架。没有批次的老数据仍然看 status。
+     * 能不能进：统一问 lib/phase.js。
+     *
+     * 机试比作业多一条「单人放行」（整场结束后让某几个人补考），
+     * 那是 exam_passes 里的事，phaseOf 不认识 —— 所以在这里补一个 or。
+     * 其余的「批次 / 到点 / 结束 / 没开始」全由 phase 决定，不在这里再拼条件。
      */
-    const hasBatch = repo.batchesOf(a.id).length > 0
-    const allowed = inBatch || passed || (!hasBatch && a.status === 'open')
-    if (!allowed) {
-      /* 批次有自己时限的，到点就是「你这一批时间到了」，不是「还没轮到你」 */
-      const expired = repo.findExpiredBatchFor(a.id, t.sid)
-      const waiting = repo.batchesOf(a.id).some((b) => b.status === 'open')
-      throw forbidden(
-        expired
-          ? '你这一批的时间到了，不能再作答'
-          : waiting
-            ? '还没有轮到你（老师正在分批放人），等一会儿再试'
-            : a.openedAt
-              ? '这场机试已经结束了'
-              : '老师还没开始这场机试'
-      )
-    }
+    const passed = !!repo.findPass(a.id, t.classId, t.sid)
+    const g = gateOf(a, t.sid)
+    if (!g.ok && !passed) throw forbidden(phaseMessage(g.via, a))
     const { sub, state } = ensureSubmission(a, t)
     /* 开考即占住学生端屏幕（优先级最高，谁都压不掉）——交卷时释放 */
     lockExamFocus(a, t, state)

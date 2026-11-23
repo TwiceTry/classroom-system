@@ -25,6 +25,11 @@ import { withCourseScheme } from '../lib/scheme.js'
  * 学生列表要显示「已交卷」就得读它。纯库，不会和 routes 形成循环依赖。
  */
 import * as examLib from '../lib/exam.js'
+/*
+ * 状态判定只有一份，在 lib/phase.js —— 别在这个文件里再写一遍。
+ * 学生视角（phaseOf）和教师视角（teacherPhaseOf）是两件事，详见那个文件的开头。
+ */
+import { gateOf, phaseMessage, teacherPhaseOf } from '../lib/phase.js'
 import { broadcast } from './cast.js'
 import {
   submissionView,
@@ -96,6 +101,12 @@ const view = (a) => ({
    * 但后端从来没给过 —— 于是 a.started 永远是 undefined，
    * 已结束的作业在学生那里一律显示成「未开始」。
    */
+  /*
+   * 教师视角的阶段（整场）。
+   * 学生视角的 phase 在 student 接口里覆盖 —— 两份不是一回事：
+   * 老师问「这场什么阶段」，学生问「我能不能进」。
+   */
+  phase: teacherPhaseOf(a),
   started: !!a.openedAt,
   createdAt: a.createdAt || '',
   openedAt: a.openedAt || '',
@@ -211,58 +222,6 @@ function batchBrief(b) {
     closed,
     leftMin: b.dueAt && !over && !closed ? Math.max(1, Math.ceil(leftMs / 60000)) : 0,
   }
-}
-
-/**
- * 这个学生此刻能不能交（作业 / 机试共用）。
- *
- * 两条通道，任一成立就行：
- *   ① 整场开着                     —— 全班都能交（老师一点「开始」所有人放行）
- *   ② 他在某一批里、那批还 open     —— 分批模式，整场关着也能交
- *
- * 故意的：分批时整场保持 closed，只有批次在放人。
- * 这样「老师点了开始」和「第 3 批开始」不会互相干扰 ——
- * 整场一开就是全班，那是另一种用法，不该被批次逻辑拦住。
- *
- * 截止时间不在这里判（它和「能不能进」是两件事）：调用方拿到 ok 之后，
- * 再看 overDue / allowLate。这样迟到但被放行的人仍然能交，只是记为迟交。
- */
-function gateOf(a, sid) {
-  /*
-   * 有批次就**只认批次**，整场的 status / openedAt 不参与判定。
-   *
-   * 这是「批次是唯一入口」那条决定的落点：
-   * 老师不再点「开始作业」，而是开一批人（全选就是全班）。
-   * 好处是学生端的状态只由「他在哪一批」决定，
-   * 不会被一个笼统的整场开关盖过去 —— 之前分批时
-   * 整场 closed 而批次 open，两套状态打架，界面一会儿一个说法。
-   */
-  const hasBatch = repo.batchesOf(a.id).length > 0
-  if (!hasBatch) {
-    /* 没有批次的老作业：还按整场 open 判，不然历史数据全废 */
-    if (a.status === 'open') return { ok: true, via: 'all', batch: null }
-  } else {
-    const b = repo.findBatchFor(a.id, sid)
-    if (b) return { ok: true, via: 'batch', batch: b }
-  }
-  /*
-   * 他在某一批里、但那批到点了。
-   * 也要把这一批**带出去** —— 界面才知道该说「你这一批时间到了」，
-   * 而不是笼统的「已结束」（那会让他以为是整场结束了，去找老师也没用）。
-   * via 用 'expired' 区分，调用方不会把它当成「能交」。
-   */
-  const e = repo.findExpiredBatchFor(a.id, sid)
-  if (e) return { ok: false, via: 'expired', batch: e }
-  /*
-   * 他所在的批被老师关掉了。
-   *
-   * 这一档必须带出去，否则界面只剩「未开始」一个说法 ——
-   * 而他已经考过/交过了（有答卷），或者至少进过那一批。
-   * 说成「未开始」等于告诉他「老师还没开始」，可他明明刚从那批出来。
-   */
-  const mine = repo.batchesOf(a.id).filter((b) => b.sids.includes(String(sid)))
-  if (mine.length) return { ok: false, via: 'batch-closed', batch: mine[mine.length - 1] }
-  return { ok: false, via: '', batch: null }
 }
 
 /**
@@ -1003,8 +962,9 @@ export default async function assignmentRoutes(app) {
            */
           myBatch: gate.batch ? batchBrief(gate.batch) : null,
         })
-        /* 整场关着、但他在某一批里 → 对他而言就是「还能交」 */
-        if (gate.via === 'batch') me.collecting = true
+        /* 状态只有一个来源：phaseOf 算出的 phase，前端只做翻译 */
+        me.phase = gate.via
+        if (gate.ok) me.collecting = true
         /*
          * 有多少批正在放人。
          * 整场 status 是 closed、却有批在跑 —— 界面该显示「分批进行中」，
@@ -1021,7 +981,11 @@ export default async function assignmentRoutes(app) {
          * 已经交过卷的不算（他补考完了，卡片该回到「已交卷」）。
          */
         if (isExamAssignment(a) && !(me.mySubmission && me.mySubmission.submittedAt)) {
-          if (repo.findPass(a.id, t.classId, t.sid)) me.collecting = true
+          if (repo.findPass(a.id, t.classId, t.sid)) {
+            me.collecting = true
+            /* 放行也是「对这个人而言已开放」，phase 要跟着改，否则标签还说已结束 */
+            me.phase = 'open'
+          }
         }
         return me
       })
@@ -1045,8 +1009,9 @@ export default async function assignmentRoutes(app) {
     const gate = gateOf(a, t.sid)
     return {
       assignment: Object.assign(view(a), {
-        /* 分批模式下整场是关的，但他在某一批里就该显示成「可以交」 */
-        collecting: gate.ok ? view(a).collecting || gate.via === 'batch' : false,
+        /* 状态只有一个来源：phaseOf 算出的 phase，前端只做翻译 */
+        collecting: gate.ok,
+        phase: gate.via,
         myBatch: gate.batch ? batchBrief(gate.batch) : null,
         /*
          * 有几批在放人（且没过时间）。
@@ -1112,28 +1077,8 @@ export default async function assignmentRoutes(app) {
       if (!a) throw notFound('作业不存在')
       /* 整场开着，或者他被放进了某一批 —— 两者都不成立就是「还没轮到你」 */
       const gate = gateOf(a, t.sid)
-      if (!gate.ok) {
-        /*
-         * 文案分三种，别混：
-         *   他所在的批已经结束   → 「你这一批结束了」（他等下去也不会有）
-         *   还有别的批在跑       → 「还没轮到你」
-         *   一个批次都没有       → 整场没开 / 已经结束
-         */
-        const all = repo.batchesOf(a.id)
-        const used = all.filter((b) => b.sids.includes(String(t.sid)))
-        const expired = repo.findExpiredBatchFor(a.id, t.sid)
-        throw conflict(
-          expired
-            ? '你这一批的时间到了，不能再提交'
-            : used.length
-              ? '你这一批已经结束了'
-              : all.some((b) => b.status === 'open')
-                ? '还没有轮到你（老师正在分批放人），等一会儿再试'
-                : a.openedAt
-                  ? '这次作业已经结束了'
-                  : '这次作业还没开始'
-        )
-      }
+      /* 文案由 phaseMessage 统一给 —— 别在这里再拼一遍 */
+      if (!gate.ok) throw conflict(phaseMessage(gate.via, a))
 
       /*
        * 过了截止时间、并且不允许迟交 → 不再收。
