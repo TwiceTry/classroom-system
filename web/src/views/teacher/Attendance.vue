@@ -571,12 +571,23 @@ function switchSlot(x) {
   reload()
 }
 
-/** 一条一条即时保存：点出勤 = 撤销这个人在本节的记录 */
+/**
+ * 明确选一个状态（表格里的按钮、批量操作走这里）—— **立即提交**。
+ *
+ * 和网格的 cycle 不同：那些是「我就是要这个」，没有中间态，
+ * 不需要等；网格是轮转，中间会经过别的状态，所以才要防抖。
+ */
 async function mark(sid, kind) {
-  if (!sid || busySet.has(sid)) return
+  if (!sid) return
   const prev = kindOf(sid)
-  const next = kind === prev ? '出勤' : kind
+  const next = kind === prev ? '出勤' : kind // 点同一个 = 撤销
   picked[sid] = next
+  return commit(sid, next)
+}
+
+/** 真正发请求的那一步。批量操作用它，cycle 防抖后也用它 */
+async function commit(sid, next) {
+  if (!sid || busySet.has(sid)) return
   busySet.add(sid)
   try {
     const res = await api.post(withItem(base('/attendance/mark')), {
@@ -585,7 +596,12 @@ async function mark(sid, kind) {
       date: day.value,
       slot: slot.value,
     })
-    picked[sid] = res.kind || next
+    /*
+     * 只在「用户没有再改」时采纳服务端的回值。
+     * 防抖期间他可能又点了一下，那时 picked 已经指向更新的状态，
+     * 这时把旧的 next 写回去会让格子跳回去 —— 看着像点丢了。
+     */
+    if (picked[sid] === next) picked[sid] = res.kind || next
     // 服务端会回这一项的新分值；万一没回，保留原值，绝不清零
     if (res && res.score !== undefined) scoreMap[sid] = res.score
 
@@ -641,18 +657,50 @@ async function mark(sid, kind) {
   }
 }
 
-/** 网格里点一下：按顺序切到下一个状态 */
+/**
+ * 网格里点一下：按顺序切到下一个状态。
+ *
+ * **节奏是防抖的，不是每点一次提交一次。**
+ *
+ * 为什么会需要：状态是轮转的（出勤 → 迟到 → 缺勤 → 请假 → 早退），
+ * 想把一个人从「出勤」改成「缺勤」得点两下。原来每一下都发一次请求，
+ * 于是「迟到」那条记录真的被写进库里、再被下一撤掉 ——
+ * 右栏流水里就留一条划掉的「迟到」，看着像老师改错了主意。
+ *
+ * 现在：本地立刻变（手感不变），420ms 内不再点才提交。
+ * 连点两下只会发一次「缺勤」，中间那个「迟到」**从不产生记录**。
+ */
 function cycle(sid) {
   const cur = kindOf(sid)
   const i = order.indexOf(cur)
-  mark(sid, order[(i + 1) % order.length])
+  const next = order[(i + 1) % order.length]
+
+  picked[sid] = next // 乐观更新：格子和计数当场就变
+
+  const old = pendingTimers.get(sid)
+  if (old) clearTimeout(old)
+  pendingTimers.set(
+    sid,
+    setTimeout(() => {
+      pendingTimers.delete(sid)
+      commit(sid, picked[sid] || next)
+    }, 420)
+  )
 }
+
+/** 每个学生一个待提交的定时器（连点合并） */
+const pendingTimers = new Map()
 
 /** 清空本节所有异常（全撤回「出勤」） */
 async function clearSlot() {
   const list = students.value.filter((s) => kindOf(s.sid) !== '出勤')
   if (!list.length) return
   if (!window.confirm('把本节已记的 ' + list.length + ' 条异常全部撤回？（等于全勤）')) return
+
+  /* 先把还没提交的防抖任务取消 —— 否则清完 420ms 后它们又各自提交回去 */
+  for (const t of pendingTimers.values()) clearTimeout(t)
+  pendingTimers.clear()
+
   for (const s of list) {
     // 串行，避免同一秒内写太多
     // eslint-disable-next-line no-await-in-loop
@@ -952,6 +1000,9 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (presenceTimer) clearInterval(presenceTimer)
+  /* 还有没提交的防抖任务：人已经离开了，别让它们 420ms 后再打一批请求 */
+  for (const t of pendingTimers.values()) clearTimeout(t)
+  pendingTimers.clear()
 })
 </script>
 

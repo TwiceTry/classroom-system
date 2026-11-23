@@ -471,7 +471,39 @@ async function loginTeacher() {
 .form {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
+}
+
+/*
+ * 登录页的输入框比全站大一档。
+ *
+ * 全局 --h-ctl 是 28px（表格、筛选条那些地方合适 —— 那些是一屏几十个控件，
+ * 紧凑优先）。但登录页一屏只有两三个框，而且是**第一次见面**，
+ * 28px 又矮又薄，手指点上去没底、眼睛也不容易聚焦。
+ *
+ * 38px + 大一号字 + 左右留白，是手机和桌面都舒服的尺寸。
+ * 只在本页覆盖，不动全局 —— 别把表格也顶高。
+ */
+.form .field > span {
+  display: block;
+  margin-bottom: 6px;
+  font-size: var(--fs-sm);
+  color: #5b6673;
+}
+
+.form .input,
+.form .select {
+  height: 38px;
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-lg);
+  border-radius: var(--r-md);
+}
+
+/* 验证码那个框不需要那么高，它和图片并排 */
+.form .input.cap-input {
+  height: 36px;
+  font-size: var(--fs-md);
+  letter-spacing: 1px;
 }
 
 .form .btn.primary {
