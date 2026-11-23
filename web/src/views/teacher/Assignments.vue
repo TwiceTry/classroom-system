@@ -58,7 +58,8 @@
       {{ a.title }}
       <span class="dim">{{ stateOf(a).text }}</span>
       <span v-if="a.weight && Number(a.weight) !== 1" class="cnt" :title="'权重 ' + a.weight">×{{ a.weight }}</span>
-      <span class="cnt">{{ a.studentCount }}</span>
+      <!-- 光一个数字没人知道是「交了几个人」还是「几个人应交」 -->
+      <span class="cnt" :title="'已有 ' + a.studentCount + ' 人交'">{{ a.studentCount }}人交</span>
     </button>
     <span v-if="!list.length && !loading" class="dim" style="font-size: var(--fs-md)">还没有作业，点右上角「＋ 新建作业」。</span>
     </div>
@@ -76,10 +77,14 @@
           <span v-if="d.assignment.note"> · {{ d.assignment.note }}</span>
         </p>
         <p class="mini dim">
-          <span v-if="d.assignment.openedAt">开始于 {{ when(d.assignment.openedAt) }}</span>
-          <!-- 有批在放人的时候不能说「学生端是灰的」—— 那批人是亮的 -->
-          <span v-else-if="d.assignment.openBatches">整场没开，正在按批次放人</span>
-          <span v-else>还没开始过，学生端现在是灰的</span>
+          <!--
+            一句话说清「学生那边现在什么状况」，不解释机制。
+            原来写「整场没开，正在按批次放人」——「整场」是系统里的概念，
+            老师想的是「有没有人在做」。
+          -->
+          <span v-if="d.assignment.openBatches">{{ d.assignment.openBatches }} 批在放人，学生正在做</span>
+          <span v-else-if="d.assignment.openedAt">开始于 {{ when(d.assignment.openedAt) }}</span>
+          <span v-else>还没放开，学生看不到提交按钮</span>
           <span v-if="d.assignment.closedAt"> · 结束于 {{ when(d.assignment.closedAt) }}</span>
         </p>
       </div>
@@ -113,9 +118,12 @@
     <div class="card batches">
       <CardHead>
         <template #title>分批开始</template>
-        <template #meta>
-          <span class="dim mini">勾几个人 → 开始这一批；这批做完点「结束这批」，再放下一批</span>
-        </template>
+        <!--
+          这里原来写「勾几个人 → 开始这一批；这批做完点「结束这批」，再放下一批」。
+          按钮上就写着「开始这一批」「结束这批」，再说一遍等于把人当不会点。
+          换成进度：开了几批、还有几人没排 —— 这才是老师每次都要看一眼的数。
+        -->
+        <template #meta><span class="dim mini">{{ batchSummary }}</span></template>
       </CardHead>
 
       <!-- 有批次在跑时给一个「全部结束」—— 原来那个「■ 结束作业」的替代 -->
@@ -182,7 +190,17 @@
         </button>
       </div>
 
-      <div class="pickers">
+      <!--
+        名单默认收起。
+        117 个名字铺开是 9 行、约 190px —— 而老师一天里真正需要「挑人」的时刻
+        只有开始一批的那十几秒，其余时间他在看批次进度和提交记录。
+        收起来之后这一整块从 400px 降到 200px 出头，下面能多看到两条提交。
+      -->
+      <button class="btn mini toggle-pickers" @click="showPickers = !showPickers">
+        {{ showPickers ? '▾ 收起名单' : '▸ 选人（' + (d.roster || []).length + ' 人）' }}
+      </button>
+
+      <div v-show="showPickers" class="pickers">
         <label
           v-for="s in d.roster || []"
           :key="s.sid"
@@ -198,31 +216,26 @@
       </div>
     </div>
 
-    <!-- 统计 -->
+    <!--
+      统计从 5 格收到 3 格。
+
+      原来「应交 117」「已交 1」「提交条数 1」「已批 0 · 还差 1 条」「未交 116」——
+        · 应交 / 未交 互补，两个数说的是同一件事
+        · 一人只交一次时，「已交人数」和「提交条数」是同一个数
+      现在只剩三个真正要看的分母：交了几个 / 还有多少要批 / 谁还没交。
+    -->
     <div class="stats">
       <div class="st">
-        <span class="stn">{{ d.stats.rosterCount }}</span>
-        <span class="stl">应交人数</span>
+        <span class="stn ok">{{ d.stats.submittedStudents }}<i>/{{ d.stats.rosterCount }}</i></span>
+        <span class="stl">已交</span>
       </div>
       <div class="st">
-        <span class="stn ok">{{ d.stats.submittedStudents }}</span>
-        <span class="stl">已交人数</span>
-      </div>
-      <div class="st">
-        <span class="stn">{{ d.stats.submissionCount }}</span>
-        <span class="stl">提交条数</span>
-      </div>
-      <div class="st">
-        <span class="stn" :class="{ warn: d.stats.submissionCount > d.stats.gradedCount }">{{ d.stats.gradedCount }}</span>
+        <span class="stn" :class="{ warn: d.stats.submissionCount > d.stats.gradedCount }">
+          {{ d.stats.submissionCount - d.stats.gradedCount }}
+        </span>
+        <!-- 一条都没交时说「都批完了」是反的 -->
         <span class="stl">
-          {{
-          /* 一条都没交的时候不要说「都批完了」—— 那是反的 */
-          !d.stats.submissionCount
-          ? '已批'
-          : d.stats.submissionCount > d.stats.gradedCount
-            ? '已批 · 还差 ' + (d.stats.submissionCount - d.stats.gradedCount) + ' 条'
-            : '已批 · 都批完了'
-          }}
+          {{ !d.stats.submissionCount ? '已批' : d.stats.submissionCount > d.stats.gradedCount ? '待批' : '都批完了' }}
         </span>
       </div>
       <div class="st">
@@ -639,6 +652,11 @@ const showMiss = ref(false)
 const picked = ref([])
 /** 这一批的限时（分钟）。空 = 不限时 */
 const batchMin = ref('')
+/**
+ * 名单展开状态。默认收起 —— 117 个名字铺开占 190px，
+ * 而老师大部分时间在看批次进度，不是挑人。
+ */
+const showPickers = ref(false)
 /** 正在提交（防止连点两下开出两批） */
 const busy = ref(false)
 
@@ -682,6 +700,19 @@ const classGroups = computed(() => {
 const unbatchedLeft = computed(() => {
   const r = (d.value && d.value.roster) || []
   return r.filter((s) => !s.submitted && !s.batched).length
+})
+
+/** 分批进度：开了几批、交了几份、还有几人没排 —— 比那句操作说明有用 */
+const batchSummary = computed(() => {
+  const bs = (d.value && d.value.batches) || []
+  const r = (d.value && d.value.roster) || []
+  if (!r.length) return ''
+  const done = r.filter((s) => s.submitted).length
+  const left = unbatchedLeft.value
+  const parts = [bs.length ? '已开 ' + bs.length + ' 批' : '还没开过批']
+  if (done) parts.push('已交 ' + done)
+  parts.push(left ? '还有 ' + left + ' 人没排' : '全都排过了')
+  return parts.join(' · ')
 })
 
 /** 有几个批次正在放人（没过时间的才算） */
@@ -731,6 +762,8 @@ async function startBatch() {
     await loadAll()
     /* 开完一批，下一批几乎总是「上批剩下的人」——直接勾好，老师确认一下就能点 */
     pickRest()
+    /* 名单收起来：接下来要看的是进度，不是名单 */
+    showPickers.value = false
   } catch (e) {
     toast.value = e.message
   } finally {
@@ -771,9 +804,16 @@ const hwSub = computed(() => {
     if (p.missing && p.missing.length) parts.push('未交 ' + p.missing.length)
     return parts.join(' · ')
   }
+  /*
+   * 没选中某一份时，说「整体在什么状况」，不说「点开一份看批阅进度」——
+   * 胶囊就在旁边，点一下就知道，这句是纯废话。
+   */
   const n = list.value.length
-  if (!n) return '还没有作业'
-  return n + ' 份作业 · 点开一份看批阅进度'
+  if (!n) return '还没有作业 · 点右上角「＋ 新建作业」'
+  const live = list.value.filter((a) => collectingOf(a)).length
+  const parts = [n + ' 份作业']
+  if (live) parts.push(live + ' 份在收')
+  return parts.join(' · ')
 })
 const missingText = computed(() => {
   if (!prog.value) return ''
@@ -1545,6 +1585,21 @@ async function clearGrade() {
 }
 .brow.live .bstat {
   color: var(--brand);
+}
+
+/* 统计里的分母（/117）比主数字小一号、淡一档 */
+.st .stn i {
+  margin-left: 1px;
+  font-style: normal;
+  font-size: 0.62em;
+  color: var(--dim);
+  font-weight: 500;
+}
+
+/* 「▸ 选人（117 人）」开关 */
+.toggle-pickers {
+  margin-bottom: var(--sp-2);
+  color: #5b6673;
 }
 
 /* 选人条 */
