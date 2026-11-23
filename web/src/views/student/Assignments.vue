@@ -3,7 +3,12 @@
     <template #head>
       <PageHead>
         <template #title>{{ moduleTitle() }}</template>
-        <template #sub>老师点了「开始」才收作业。改动先存本机，交上去老师就能看到你写的东西</template>
+        <!--
+          副标题放状态，不放操作说明。
+          「老师点了开始才收作业、改动先存本机…」是第一次用才需要看的，
+          第 100 次它就是噪音 —— 而且机试那边早就改成状态了，两页该一致。
+        -->
+        <template #sub>{{ subText }}</template>
         <template #right>
           <button class="btn mini" :disabled="loading" @click="load">刷新</button>
         </template>
@@ -28,15 +33,20 @@
 
         <p class="dim mini meta">{{ a.dirTitle }}</p>
         <!--
-          截止时间。学生最关心的其实是「还来不来得及」，所以除了时间点还带剩余量，
-          24 小时内标橙、过了截止标红。
+          截止时间只说「还剩多久」；确切时间点放 title。
+          原来两样并排（「还剩 3 天  截止 11-26 16:52」），
+          一个是另一个的另一种说法，白占一行。
+          24 小时内标橙、过了标红。
         -->
-        <p v-if="a.dueAt" class="due" :class="dueTone(a)">
+        <p v-if="a.dueAt" class="due" :class="dueTone(a)" :title="'截止 ' + dueWhen(a)">
           <b class="left">{{ dueLeftText(a) }}</b>
-          <span class="when">{{ dueWhen(a) }}</span>
         </p>
         <p v-if="a.note" class="note">{{ a.note }}</p>
-        <p v-else class="note dim">按老师的要求改代码，改完点提交。</p>
+        <!--
+          没写说明时的兜底：「按老师的要求改代码，改完点提交」。
+          但已经结束的作业不能再说「改完点提交」—— 那时候交不上去了。
+        -->
+        <p v-else-if="a.phase === 'open'" class="note dim">按老师的要求改代码，改完点提交。</p>
 
         <div class="hwfoot">
           <!--
@@ -100,7 +110,7 @@
  * 进来就能看到全部作业（没开始的也列出来），这样学生知道「马上要做哪几题」，
  * 但没开始的那张卡只有一个灰按钮 —— 点了也进不去，服务端同样拒收。
  */
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '../../api'
 import Toast from '../../components/Toast.vue'
 import { when, at as fmtAt } from '../../utils/time'
@@ -186,6 +196,21 @@ function statusOf(a) {
 function collectingOf(a) {
   return collectingBase(a, nowTick.value)
 }
+
+/**
+ * 页头副标题：我这边什么情况。
+ * 例：`3 份作业 · 1 份可以做 · 已交 1`
+ */
+const subText = computed(() => {
+  const n = list.value.length
+  if (!n) return '老师还没布置作业'
+  const open = list.value.filter((a) => collectingOf(a)).length
+  const done = list.value.filter((a) => a.mySubmission).length
+  const parts = [n + ' 份作业']
+  parts.push(open ? open + ' 份可以做' : '现在没有可以做的')
+  if (done) parts.push('已交 ' + done)
+  return parts.join(' · ')
+})
 
 function tagOf(a) {
   return stateOf(a, nowTick.value, '进行中').tone

@@ -26,9 +26,8 @@
         比读一个词快。后面的「已交 · 等老师批 · 截止 …」是补充，走灰字。
       -->
       <template #sub>
-        <span class="tag" :class="canStillSubmit ? 'ok' : 'mute'">
-          {{ canStillSubmit ? '进行中' : '已截止' }}
-        </span>
+        <!-- 状态用 state（后端四个值），和列表页一致 -->
+        <span class="tag" :class="state.tone">{{ state.text }}</span>
         <span v-if="subText" class="sub-rest">{{ subText }}</span>
       </template>
 
@@ -281,10 +280,28 @@ const subText = computed(() => {
   else if (last.graded) parts.push('已交 · 得分 ' + last.score)
   else parts.push('已交 · 等老师批')
   if (last && last.late) parts.push('迟交')
-  /* ③ 截止时间放最后，它是参考不是结论 */
-  if (x.dueAt && dueText.value) parts.push('截止 ' + dueText.value)
+  /*
+   * ③ 截止时间。
+   * 说「还剩 3 天」而不是「截止 2026-11-26 16:55」——
+   * 学生关心的是还来不来得及，确切时间点放 title。
+   * 这一点和列表页保持一致，两处说法不同会让人以为不是同一个截止。
+   */
+  if (x.dueAt && dueText.value) parts.push(dueLeftWord(x))
   return parts.join(' · ')
 })
+
+/** 「还剩 3 天 / 今天 16:55 截止 / 已过期」—— 和列表页同一套说法 */
+function dueLeftWord(x) {
+  const t = Date.parse(x.dueAt || '')
+  if (!isFinite(t)) return ''
+  const ms = t - nowTick.value
+  if (ms <= 0) return '已过期'
+  const min = Math.floor(ms / 60000)
+  if (min < 60) return '还剩 ' + Math.max(1, min) + ' 分钟'
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return '还剩 ' + hr + ' 小时'
+  return '还剩 ' + Math.floor(hr / 24) + ' 天'
+}
 
 /** 截止那一天的显示（有就提示一句，没有就不提） */
 const dueText = computed(() => {
@@ -461,6 +478,7 @@ async function peek(s) {
 
 /* 副标题里，标签后面那段补充说明（已交 / 等老师批 / 截止 …） */
 .sub-rest {
+  margin-left: var(--sp-2);
   color: var(--sub);
 }
 
