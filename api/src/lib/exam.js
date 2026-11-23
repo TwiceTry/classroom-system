@@ -208,7 +208,15 @@ function printPaper(exam, seed) {
   return paper
 }
 
-/** 发给学生的版本：把答案和解析摘掉 */
+/**
+ * 发给学生的版本：把答案和解析摘掉。
+ *
+ * 但**多选还是单选要留下来** —— 这不是答案，是题型。
+ * 不给的话前端只能一律渲染成单选圆点，学生看见「正确的有」却只能点一个，
+ * 会以为自己看错了题。
+ *
+ * 判据就是标准答案有几个字母：一个=单选，多个=多选。
+ */
 function publicPaper(paper) {
   return {
     title: paper.title,
@@ -219,7 +227,14 @@ function publicPaper(paper) {
       title: s.title,
       type: s.type,
       score: s.score,
-      questions: s.questions.map((q) => ({ id: q.id, stem: q.stem, options: q.options.slice(), score: q.score })),
+      questions: s.questions.map((q) => ({
+        id: q.id,
+        stem: q.stem,
+        options: q.options.slice(),
+        score: q.score,
+        /* 只在选择题上有意义；其它题型忽略 */
+        multi: s.type === 'choice' ? String(q.answer || '').replace(/[^A-Za-z]/g, '').length > 1 : false,
+      })),
     })),
   }
 }

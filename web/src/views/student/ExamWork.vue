@@ -70,24 +70,31 @@
         </CardHead>
 
         <article v-for="(q, qi) in s.questions" :key="q.id" class="q">
+          <!--
+            不再每题标「（4 分）」—— 段头已经写着「每题 4 分」，
+            22 道题重复 22 遍只是在题干后面加噪点。
+          -->
           <p class="stem">
             <b>{{ qi + 1 }}.</b> {{ plain(q.stem) }}
-            <span class="dim mini">（{{ q.score }} 分）</span>
           </p>
 
-          <!-- 选择 -->
+          <!--
+            选择题。**多选用方框，单选用圆点** ——
+            一律渲染成 radio 的话，学生看到题干写着「正确的有」却只能点一个，
+            会以为自己看错了题。题型由后端的 multi 决定（不是答案，是题型）。
+          -->
           <div v-if="s.type === 'choice'" class="opts">
-            <label v-for="(o, oi) in q.options" :key="oi" class="opt" :class="{ on: answers[q.id] === letter(oi) }">
+            <label v-for="(o, oi) in q.options" :key="oi" class="opt" :class="{ on: isChosen(q, oi) }">
               <input
-              type="radio"
-              :name="q.id"
-              :value="letter(oi)"
-              :checked="answers[q.id] === letter(oi)"
-              :disabled="submitted"
-              @change="pick(q.id, letter(oi))"
+                :type="q.multi ? 'checkbox' : 'radio'"
+                :name="q.id"
+                :value="letter(oi)"
+                :checked="isChosen(q, oi)"
+                :disabled="submitted"
+                @change="q.multi ? pickMulti(q, letter(oi), $event.target.checked) : pick(q.id, letter(oi))"
               />
               {{ plain(typeof o === 'string' ? o : o.text || o.label || o.key) }}
-              </label>
+            </label>
           </div>
 
           <!-- 判断 -->
@@ -393,6 +400,31 @@ function plain(s) {
 
 function pick(qid, v) {
   state.answers[qid] = v
+  queueSave()
+}
+
+/** 这一项选中了没（单选比字面，多选看字母串里有没有） */
+function isChosen(q, oi) {
+  const v = state.answers[q.id]
+  if (q.multi) return String(v || '').toUpperCase().indexOf(letter(oi)) >= 0
+  return v === letter(oi)
+}
+
+/**
+ * 多选：勾上 / 取消。
+ *
+ * 存成**排好序的字母串**（"ABD"），和后端判分的口径一致 ——
+ * 那边是 `String(given).toUpperCase().replace(/[^A-Z]/g,'').split('').sort()`，
+ * 所以 "DBA" 和 "ABD" 等价，少一个多一个都不算。
+ */
+function pickMulti(q, ch, on) {
+  const cur = String(state.answers[q.id] || '')
+    .toUpperCase()
+    .replace(/[^A-Z]/g, '')
+    .split('')
+  const next = on ? Array.from(new Set(cur.concat([ch]))) : cur.filter((x) => x !== ch)
+  next.sort()
+  state.answers[q.id] = next.join('')
   queueSave()
 }
 
