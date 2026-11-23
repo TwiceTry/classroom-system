@@ -36,7 +36,12 @@
             三种情况显示得一模一样），上面那个状态标签又已经说过一遍。
             换成考试信息 —— 学生决定点不点「开考」之前，想知道的是这些。
           -->
-          <span v-if="!a.mySubmission && infoText(a)" class="dim mini">{{ infoText(a) }}</span>
+          <!--
+            卷面信息（限时 / 满分 / 题量）**每张卡都显示**，不只没交的那几张。
+            原来只给「还没交卷」的人看，于是已交的卡片少一行、高度参差，
+            而交完的学生回头看也会想知道「这场多长、多少分」。
+          -->
+          <span v-if="infoText(a)" class="dim mini info">{{ infoText(a) }}</span>
           <!--
             列表里拿不到「还剩几分钟」—— 限时是试卷上的（duration），
             而列表接口只给作业级字段。剩余时间在开考页里显示，那里有完整状态。
@@ -139,10 +144,16 @@ function infoText(a) {
 const subText = computed(() => {
   const n = list.value.length
   if (!n) return '老师还没安排机试'
-  const open = list.value.filter(collectingOf).length
+  /*
+   * 「可以开考」要排除已经交了的 ——
+   * 交完卷的人 collecting 仍是 true（场次还在收），
+   * 直接数会把「已交 1 场」的那场也算进「可以开考」，看着自相矛盾。
+   */
+  const canNow = (a) => collectingOf(a) && !(a.mySubmission && a.mySubmission.submittedAt)
+  const open = list.value.filter(canNow).length
   const done = list.value.filter((a) => a.mySubmission && a.mySubmission.submittedAt).length
   const parts = []
-  parts.push(open ? open + ' 场可以开考' : '现在没有可以开考的')
+  parts.push(open ? open + ' 场可以开考' : '没有待考的')
   if (done) parts.push('已交 ' + done + ' 场')
   return parts.join(' · ')
 })

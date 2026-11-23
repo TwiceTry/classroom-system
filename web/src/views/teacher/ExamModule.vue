@@ -176,7 +176,15 @@
         </button>
       </div>
 
-      <div class="pickers">
+      <!--
+        名单默认收起（和课堂作业页一致）。
+        117 个名字铺开是 9 行、约 190px，而老师真正要挑人只有开始一批那十几秒。
+      -->
+      <button class="btn mini toggle-pickers" @click="showPickers = !showPickers">
+        {{ showPickers ? '▾ 收起名单' : '▸ 选人（' + (d.roster || []).length + ' 人）' }}
+      </button>
+
+      <div v-show="showPickers" class="pickers">
         <label
           v-for="s in d.roster || []"
           :key="s.sid"
@@ -211,13 +219,19 @@
         @row-click="open"
       >
         <template #cell-no="{ index }">{{ index + 1 }}</template>
+        <!-- 学号不占一列了，挂在姓名上：要核对身份时鼠标停一下 -->
+        <template #cell-name="{ row }">
+          <span :title="'学号 ' + (row.sid || '—')">{{ row.name || row.sid }}</span>
+        </template>
         <template #cell-answered="{ row }">{{ row.answered }} / {{ row.itemCount }}</template>
         <template #cell-total="{ row }"><b>{{ row.total === null ? '—' : row.total }}</b></template>
         <template #cell-score="{ row }">
           <span :class="{ ok: row.score !== null }">{{ row.score === null ? '—' : row.score }}</span>
         </template>
         <template #cell-actions="{ row }">
-          <button class="btn mini" @click.stop="open(row)">{{ row.submittedAt ? '看答卷 / 判分' : '看进度' }}</button>
+          <button class="btn mini" :title="row.submittedAt ? '看他的答卷并判主观题' : '看进度'" @click.stop="open(row)">
+            {{ row.submittedAt ? '判分' : '看进度' }}
+          </button>
           <!--
             立即交卷：只给「开考了还没交」的人。
             设备坏了、违纪、卡住的时候用 —— 把他已经答的收上来正常判分。
@@ -364,15 +378,19 @@ const toast = ref('')
 
 /* 学生答卷表 */
 const rowCols = [
-  { key: 'no', label: '#', num: true, width: '46px' },
-  { key: 'sid', label: '学号', tdClass: 'mono' },
+  { key: 'no', label: '#', num: true, width: '42px' },
+  /*
+   * 去掉「学号」列：姓名 + 班级已经够定位，一个班内不会重名。
+   * 学号放 name 那格的 title 里，要核对身份时鼠标一停就有。
+   */
   { key: 'name', label: '姓名' },
   { key: 'startedAt', label: '开考', value: (r) => (r.startedAt ? clock(r.startedAt) : '—') },
   { key: 'answered', label: '作答' },
   { key: 'autoScore', label: '客观', num: true },
   { key: 'manualScore', label: '主观', num: true },
   { key: 'total', label: '总分', num: true },
-  { key: 'score', label: '计分表', num: true },
+  /* 「总分」是卷面分（80/100），「计入」是折算后进计分表的分数 —— 一眼看出区别 */
+  { key: 'score', label: '计入', num: true, width: '64px' },
   /* 三个按钮（看进度 / 立即交卷 / 重考）—— 132px 装不下，会挤成两行 */
   { key: 'actions', label: '', width: '214px' },
 ]
@@ -705,6 +723,8 @@ async function forceSubmit(row) {
 const picked = ref([])
 const batchMin = ref('')
 const busy = ref(false)
+/** 名单展开状态。默认收起 —— 117 个名字铺开占 190px */
+const showPickers = ref(false)
 
 function togglePick(sid) {
   const i = picked.value.indexOf(sid)
@@ -802,6 +822,8 @@ async function startBatch() {
     await loadAll()
     /* 开完一批，下一批默认就是「上批剩下的人」 */
     pickRest()
+    /* 名单收起来：接下来要看的是进度 */
+    showPickers.value = false
   } catch (e) {
     toast.value = e.message
   } finally {
@@ -931,6 +953,11 @@ async function saveGrade() {
 </script>
 
 <style scoped>
+/* 操作列里几个按钮挨着时给点间隙（不然「判分」「重考」挤成一坨） */
+.grid tbody td .btn + .btn {
+  margin-left: 6px;
+}
+
 /* 「正在放 N 个批次 + 全部结束」那条 */
 .ball {
   display: flex;
@@ -988,6 +1015,12 @@ async function saveGrade() {
 .brow .bleft.over {
   color: var(--err);
   font-weight: 600;
+}
+
+/* 「▸ 选人（117 人）」开关 */
+.toggle-pickers {
+  margin-bottom: var(--sp-2);
+  color: #5b6673;
 }
 
 .pickbar {

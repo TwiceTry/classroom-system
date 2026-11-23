@@ -204,7 +204,8 @@ function collectingOf(a) {
 const subText = computed(() => {
   const n = list.value.length
   if (!n) return '老师还没布置作业'
-  const open = list.value.filter((a) => collectingOf(a)).length
+  /* 已交的不算「可以做」—— 交完还能重交，但副标题说的是「还有几份等着我」 */
+  const open = list.value.filter((a) => collectingOf(a) && !a.mySubmission).length
   const done = list.value.filter((a) => a.mySubmission).length
   const parts = [n + ' 份作业']
   parts.push(open ? open + ' 份可以做' : '现在没有可以做的')

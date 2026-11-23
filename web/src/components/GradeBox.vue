@@ -38,7 +38,14 @@
           <input v-model="v.late" type="checkbox" />
           迟交（×{{ item.lateFactor === undefined ? 1 : item.lateFactor }}）
         </label>
-        <span class="dim mini">= {{ letterScore }} 分，记入「{{ item.name }}」项</span>
+        <!--
+          还没选等级时 letterScore 是「—」，直接拼会显示成「= — 分」，
+          屏幕上看着像「一 分」（截图里就是这样）。没选就不说分。
+        -->
+        <span v-if="letterScore !== null && letterScore !== undefined && letterScore !== '—'" class="dim mini">
+          = {{ letterScore }} 分，记入「{{ item.name }}」项
+        </span>
+        <span v-else class="dim mini">选等级后自动折算，记入「{{ item.name }}」项</span>
       </div>
     </template>
   </div>
