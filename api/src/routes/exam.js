@@ -494,7 +494,7 @@ export default async function examRoutes(app) {
     handler: async (req) => {
       const a = repo.getAssignment(req.params.id)
       if (!a) throw notFound('作业不存在')
-      const sub = repo.findSubmission(a.id, req.params.subId) || hydrateById(req.params.subId)
+      const sub = repo.submissionById(req.params.subId)
       if (!sub) throw notFound('答卷不存在')
       const patch = { comment: req.body.comment || '' }
       if (req.body.raw !== undefined && req.body.raw !== null && String(req.body.raw) !== '') patch.raw = Number(req.body.raw)
@@ -524,7 +524,7 @@ export default async function examRoutes(app) {
     const a = repo.getAssignment(req.params.id)
     if (!a) throw notFound('作业不存在')
     examItemOf(a)
-    const sub = repo.findSubmission(a.id, req.params.subId) || hydrateById(req.params.subId)
+    const sub = repo.submissionById(req.params.subId)
     if (!sub) throw notFound('答卷不存在')
 
     /* ① 撤分 */
@@ -620,7 +620,7 @@ export default async function examRoutes(app) {
     const a = repo.getAssignment(req.params.id)
     if (!a) throw notFound('作业不存在')
     examItemOf(a)
-    const sub = repo.findSubmission(a.id, req.params.subId) || hydrateById(req.params.subId)
+    const sub = repo.submissionById(req.params.subId)
     if (!sub) throw notFound('答卷不存在')
 
     const state = readState(a, sub)
@@ -659,7 +659,7 @@ export default async function examRoutes(app) {
   app.get('/api/exams/:id/submissions/:subId', { preHandler: requireAuth('teacher') }, async (req) => {
     const a = repo.getAssignment(req.params.id)
     if (!a) throw notFound('作业不存在')
-    const sub = repo.findSubmission(a.id, req.params.subId) || hydrateById(req.params.subId)
+    const sub = repo.submissionById(req.params.subId)
     if (!sub) throw notFound('答卷不存在')
     const st = readState(a, sub)
     return {
@@ -673,7 +673,7 @@ export default async function examRoutes(app) {
   app.get('/api/exams/:id/submissions/:subId/paper-file/:fmt', { preHandler: requireAuth('teacher') }, async (req, reply) => {
     const a = repo.getAssignment(req.params.id)
     if (!a) throw notFound('作业不存在')
-    const sub = repo.findSubmission(a.id, req.params.subId) || hydrateById(req.params.subId)
+    const sub = repo.submissionById(req.params.subId)
     if (!sub) throw notFound('答卷不存在')
     const st = readState(a, sub)
     if (!st || !st.graded) throw notFound('这份答卷还没交卷')

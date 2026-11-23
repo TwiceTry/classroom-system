@@ -482,6 +482,17 @@ export function findSubmission(assignmentId, sid) {
   )
 }
 
+/**
+ * 按**提交 id** 取一条记录。
+ *
+ * 和 findSubmission(assignmentId, sid) 的区别：那个按**学号**取最新一条，
+ * 这个是按主键取。学生端「看自己某一次提交」传的是提交 id，
+ * 用错函数会永远查不到（表现为「这份提交不存在」）。
+ */
+export function submissionById(id) {
+  return hydrate(db().prepare(`SELECT * FROM submissions WHERE id = ?`).get(String(id)))
+}
+
 /* ---------------- 分批开始（一份作业 / 一场考试分几批放人） ---------------- */
 
 function batchRow(r) {

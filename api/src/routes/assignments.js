@@ -1176,14 +1176,23 @@ export default async function assignmentRoutes(app) {
     },
   })
 
-  /** 学生看自己那份提交的详情（含文件正文） */
+  /**
+   * 学生看自己那份提交的详情（含文件正文）。
+   *
+   * 路径里的 :sid 是**提交记录的 id**（sb…），不是学号。
+   *
+   * 原来这里写成 `if (String(req.params.sid) !== t.sid) throw forbidden('只能看自己的')`——
+   * 拿提交 id 去比学号，永远不相等，于是**学生点自己任何一次提交都被拒**。
+   * 正确做法是先按 id 取出这条记录，再比它属于谁。
+   */
   app.get('/api/student/assignments/:id/submissions/:sid', { preHandler: requireAuth('student') }, async (req) => {
     const t = req.user
-    if (String(req.params.sid) !== t.sid) throw forbidden('只能看自己的')
     const a = repo.getAssignment(req.params.id)
     if (!a) throw notFound('作业不存在')
-    const mine = repo.findSubmission(a.id, t.sid)
-    if (!mine) throw notFound('你还没有提交')
+    /* 按**提交 id** 取（不是按学号 —— findSubmission 那个签名是学号） */
+    const mine = repo.submissionById(req.params.sid)
+    if (!mine || String(mine.assignmentId) !== String(a.id)) throw notFound('这份提交不存在')
+    if (String(mine.sid) !== String(t.sid)) throw forbidden('只能看自己的')
     return {
       submission: subView(mine),
       files: a.kind === 'project' ? [] : store.readTextFiles(a.kind, mine.classId, mine.sid, a.id, mine.files),

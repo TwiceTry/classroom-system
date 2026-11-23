@@ -71,35 +71,32 @@
         <template #title>{{ a.title }}</template>
         <template #sub>{{ a.note || '这次作业有自己的起手代码' }}<template v-if="dueText"> · 截止 {{ dueText }}</template></template>
         <template #right>
-          <span class="tag" :class="a.myBatch || a.started ? 'mute' : 'warn'">
-            {{ a.myBatch && a.myBatch.overDue ? '时间到' : a.myBatch ? '这一批结束' : a.started ? '已结束' : '未开始' }}
-          </span>
+          <!-- 状态读 phase（后端算好的四个值），不再自己拼 myBatch / started -->
+          <span class="tag" :class="state.tone">{{ state.text }}</span>
           <router-link class="btn mini" to="/student/assignments">← 列表</router-link>
         </template>
       </PageHead>
 
       <div class="content">
+        <!--
+          进不来时交代清楚为什么。
+          文案只说「现在能不能做」，不提分批 —— 那是老师怎么排班，学生不用理解。
+        -->
         <div class="card lock">
-          <!--
-            进不来有四种原因，分开说。
-            原来只有「已结束 / 还没开始」两种，分批模式下会说错 ——
-            老师明明已经开始了，只是还没轮到这个人。
-          -->
-          <h3>{{ lockTitle }}</h3>
+          <h3>{{ state.text }}</h3>
           <p class="dim">
-            <template v-if="a.myBatch && a.myBatch.overDue">
-              这一批的限时到了，不能再提交。老师会在下一批/补考时安排你，或者直接找老师说明情况。
+            <template v-if="a.phase === 'overdue'">
+              这次作业的时间到了，不能再提交。有特殊情况请找老师。
             </template>
-            <template v-else-if="a.myBatch">这一批已经收了。等老师放下一批，或者找老师安排补交。</template>
-            <template v-else-if="a.started">
-              结束于 {{ when(a.closedAt) }}。交上去的作业还在，下面可以翻回自己写过的代码；
-              老师批完之后这里会显示分数。
-            </template>
-            <template v-else-if="Number(a.openBatches) > 0">
-              老师在分批放人，还没轮到你。轮到你这一批时这里会出现编辑器和提交按钮（不用刷新）。
+            <template v-else-if="a.phase === 'closed'">
+              <!--
+                不写「结束于 X」：分批结束时写的是批次上的时间，作业本身的 closedAt 是空的，
+                于是会渲染成「结束于 。」——一句话缺了主语。时间在提交记录里本来也有。
+              -->
+              交上去的作业还在，下面可以翻回自己写过的代码；老师批完之后这里会显示分数。
             </template>
             <template v-else>
-              老师还没放开。等老师点「开始」，这里就会出现编辑器和提交按钮。
+              老师还没开始。开始之后这里会出现编辑器和提交按钮（不用刷新）。
             </template>
           </p>
         </div>
@@ -170,6 +167,8 @@ import CodeViewer from '../../components/CodeViewer.vue'
 import Toast from '../../components/Toast.vue'
 import { when } from '../../utils/time'
 import { onPresenceMessage } from '../../utils/presence'
+/* 状态只有一个来源 —— 和列表页同一份，别在这里再拼 myBatch / started */
+import { stateOf } from '../../utils/assignmentState'
 import PageHead from '../../components/PageHead.vue'
 import DataTable from '../../components/DataTable.vue'
 import CardHead from '../../components/CardHead.vue'
@@ -211,6 +210,13 @@ const mineCols = [
 const files = ref([])
 const loadingFiles = ref(false)
 let off = null
+let clockTimer = null
+
+/*
+ * 时钟。状态是算出来的（作业到期不落库），Vue 追踪不到 Date.now()，
+ * 要有 ref 在推，否则到了截止时间这一页还写着「进行中」。
+ */
+const nowTick = ref(Date.now())
 
 /**
  * 还能不能交 —— 界面口径，和后端那条拦截完全一致：
@@ -237,15 +243,17 @@ const canStillSubmit = computed(() => {
 })
 
 /** 锁定页的标题：到底为什么不让你交 */
-const lockTitle = computed(() => {
-  const x = a.value || {}
-  if (x.myBatch && x.myBatch.overDue) return '你这一批的时间到了'
-  if (x.myBatch) return '你这一批已经结束了'
-  /* 老师已经在放别人了，只是没轮到他 —— 说「还没开始」会让他一直等 */
-  if (Number(x.openBatches) > 0) return '还没轮到你'
-  if (x.started) return '这次课堂作业已经结束了'
-  return '老师还没开始这次课堂作业'
-})
+/**
+ * 这一页看到的状态。
+ *
+ * 原来这里自己拼了五种情况（myBatch / openBatches / started…），
+ * 而学生接口已经不返回 myBatch / openBatches 了 —— 于是全部落空，
+ * 一场**已经结束**的作业显示成「老师还没开始」。
+ *
+ * 现在只读 phase（后端算好的四个值），和列表页同一份。
+ * 时钟 tick 是给它用的：作业到期不需要谁去点一下才变。
+ */
+const state = computed(() => stateOf(a.value, nowTick.value, '进行中'))
 
 /**
  * 页头副标题 = 这次作业现在什么情况。
@@ -293,9 +301,10 @@ onMounted(async () => {
   // 老师中途点「结束」：立刻切到结束态（改动仍在本机，不会丢）
   off = onPresenceMessage((m) => {
     if (m && m.t === 'assignment' && m.id === id) {
-      const wasOpen = a.value && a.value.status === 'open'
+      /* 「本来能做、现在不能做了」才提示 —— 判据用 phase，不用 status（分批时 status 恒 closed） */
+      const wasOpen = !!(a.value && a.value.phase === 'open')
       load().then(() => {
-        if (wasOpen && a.value && a.value.status !== 'open') toast.value = '老师已经结束这次作业，交不上了'
+        if (wasOpen && a.value && a.value.phase !== 'open') toast.value = '这次作业已经结束，交不上了'
       })
     }
   })
@@ -308,10 +317,16 @@ onMounted(async () => {
    * 网络断了也就是老师那边看不到你在写，功能照旧。
    */
   report('homework')
+
+  /* 推时钟：到点之后这一页自己翻成「时间到」，不用刷新 */
+  clockTimer = setInterval(() => {
+    nowTick.value = Date.now()
+  }, 8000)
 })
 
 onUnmounted(() => {
   if (off) off()
+  if (clockTimer) clearInterval(clockTimer)
   /* 离开页面：把「在做作业」还回去，否则会一直显示你在写这份 */
   report('idle')
 })
