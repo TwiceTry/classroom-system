@@ -157,6 +157,37 @@ function isExamAssignment(a) {
 }
 
 /**
+ * 机试卡片上的「考试信息」：限时 / 满分 / 题量 / 是不是题库随机卷。
+ *
+ * 学生决定点不点「开考」之前，真正想知道的是这几件事。原来列表一个都不给，
+ * 卡片上只能写一句死板的「还没开考」—— 那句话既不是状态，也算不上信息，
+ * 而且老师没开、已结束、没交卷三种情况显示得一模一样。
+ *
+ * 读的是老师上传的试卷源文件（data/exams/<作业id>.json）。
+ * 没装卷子 / 读坏了 → 返回 null，前端就不显示这一行，
+ * 而不是显示「满分 0 分 · 0 题」。
+ */
+function paperInfoOf(a) {
+  if (!isExamAssignment(a)) return null
+  try {
+    const raw = examLib.readJson(examLib.sourceFile(a.id), null)
+    if (!raw) return null
+    const exam = examLib.normalize(raw)
+    let questions = 0
+    for (const s of exam.sections) {
+      const n = exam.kind === 'bank' || s.pick > 0
+        ? Math.min(s.pick || s.questions.length, s.questions.length)
+        : s.questions.length
+      questions += n
+    }
+    return { kind: exam.kind, duration: exam.duration, fullScore: exam.fullScore, questions }
+  } catch (e) {
+    /* 卷子是老师手改的 JSON，读坏了不该让整个列表 500 */
+    return null
+  }
+}
+
+/**
  * 学生端看到的「我在哪一批」。
  *
  * 只给序号、开始时间和这一批自己的截止时刻 —— **不给 sids**：
@@ -980,6 +1011,8 @@ export default async function assignmentRoutes(app) {
          * 否则老师点了「开始这一批」，标签还写着「未开始」，自相矛盾。
          */
         me.openBatches = repo.batchesOf(a.id).filter((b) => b.status === 'open').length
+        /* 机试卡片上的考试信息（限时 / 满分 / 题量）；非机试为 null */
+        me.paperInfo = paperInfoOf(a)
         /*
          * 机试「单人放行」：整场已经结束，但老师让这个人补考。
          *

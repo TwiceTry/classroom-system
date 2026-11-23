@@ -542,6 +542,8 @@ import Toast from '../../components/Toast.vue'
 import { clock, when, at as fmtAt } from '../../utils/time'
 import { buildPreviewDoc, ensureSfcSrcdoc, isNpmProject, pagesOf } from '../../utils/pgPreview'
 import { loadScheme, scheme } from '../../utils/scheme'
+/* 教师口径的状态判断（整场视角）—— 别再在页面里各写一份，会和学生口径分叉 */
+import { assertTeacherState, overDueOf as overDueBase, teacherCollectingOf, teacherStateOf } from '../../utils/assignmentState'
 import PageHead from '../../components/PageHead.vue'
 import DataTable from '../../components/DataTable.vue'
 import CardHead from '../../components/CardHead.vue'
@@ -1099,31 +1101,16 @@ function fresh(iso) {
 const nowTick = ref(Date.now())
 
 function overDueOf(x) {
-  if (!x || !x.dueAt) return false
-  const t = Date.parse(x.dueAt)
-  return isFinite(t) && nowTick.value > t
+  return overDueBase(x, nowTick.value)
 }
 
-/** 实际还在收吗：老师开着 **且** 没到期（不收迟交时） */
+/** 实际还在收吗：老师开着 **且** 没到期（不收迟交时）—— 教师口径 */
 function collectingOf(x) {
-  if (!x || x.status !== 'open') return false
-  if (overDueOf(x) && x.allowLate === false) return false
-  return true
+  return teacherCollectingOf(x, nowTick.value)
 }
 
 function stateOf(x) {
-  if (!x) return { text: '', tone: '' }
-  /* 整场开着 = 全班都能交 */
-  if (collectingOf(x)) return { text: '进行中', tone: 'ok' }
-  /*
-   * 整场没开、但有一批在放人 → 「分批进行中」。
-   * 不加这一条的话，老师刚点了「开始这一批」，标签还写着「未开始」——
-   * 而下面明明列着「第 1 批 进行中 2 人」，两句话互相打脸。
-   */
-  if (Number(x.openBatches) > 0) return { text: '分批进行中', tone: 'ok' }
-  if (overDueOf(x) && x.allowLate === false) return { text: '已截止（时间到）', tone: 'mute' }
-  if (x.started) return { text: '已结束', tone: 'mute' }
-  return { text: '未开始', tone: 'warn' }
+  return assertTeacherState(teacherStateOf(x, nowTick.value, '进行中'), 'Assignments')
 }
 
 async function start() {

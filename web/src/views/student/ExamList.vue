@@ -28,20 +28,24 @@
             考试中刷新一下列表会看到自己「已交卷」，实际还在答题。
 
             三种情况分开说：
-              没开考          → 还没开考
+              还没交卷        → 考试信息（限时 / 满分 / 题量）
               开考了没交       → 考到一半 / 时间到还没交
               交了           → 已交卷（有分就带分）
+
+            第一格原来写死一句「还没开考」：不跟状态变（老师没开、已结束、没交卷
+            三种情况显示得一模一样），上面那个状态标签又已经说过一遍。
+            换成考试信息 —— 学生决定点不点「开考」之前，想知道的是这些。
           -->
-          <span v-if="!a.mySubmission" class="dim mini">还没开考</span>
+          <span v-if="!a.mySubmission && infoText(a)" class="dim mini">{{ infoText(a) }}</span>
           <!--
             列表里拿不到「还剩几分钟」—— 限时是试卷上的（duration），
             而列表接口只给作业级字段。剩余时间在开考页里显示，那里有完整状态。
             这里只交代「开考了、还没交卷」这一件事。
           -->
-          <span v-else-if="!a.mySubmission.submittedAt" class="mini">
+          <span v-if="a.mySubmission && !a.mySubmission.submittedAt" class="mini">
             已开考 · <b class="over">还没交卷</b>
           </span>
-          <span v-else class="mini">
+          <span v-if="a.mySubmission && a.mySubmission.submittedAt" class="mini">
             <template v-if="a.mySubmission.score !== undefined && a.mySubmission.score !== null">
               已交卷 · <b class="score">{{ a.mySubmission.score }}</b> 分
             </template>
@@ -53,7 +57,7 @@
             class="btn mini primary"
             :to="'/student/modules/' + itemKey + '/' + a.id"
           >
-            {{ a.mySubmission ? (a.mySubmission.submittedAt ? '再看我的答卷' : '继续答题') : '开考' }}
+            {{ a.mySubmission ? (a.mySubmission.submittedAt ? '再看我的答卷' : '继续答题') : '进入考试' }}
           </router-link>
           <router-link
             v-else-if="a.mySubmission"
@@ -108,6 +112,23 @@ function collectingOf(x) {
 }
 function stateOf(x) {
   return stateBase(x, nowTick.value, '考试中')
+}
+
+/**
+ * 卡片上那行考试信息：限时 45 分钟 · 满分 100 分 · 20 题 · 题库随机卷。
+ *
+ * 数据来自列表接口的 paperInfo（后端读老师上传的试卷源文件算出来的）。
+ * 没装卷子时 paperInfo 是 null —— 那就什么都不显示，别写「限时 0 分钟」。
+ */
+function infoText(a) {
+  const p = a && a.paperInfo
+  if (!p) return ''
+  const out = []
+  out.push(p.duration ? '限时 ' + p.duration + ' 分钟' : '不限时')
+  if (p.fullScore) out.push('满分 ' + p.fullScore + ' 分')
+  if (p.questions) out.push(p.questions + ' 题')
+  if (p.kind === 'bank') out.push('题库随机卷')
+  return out.join(' · ')
 }
 
 /**

@@ -332,8 +332,10 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { api, openDoc } from '../../api'
 import Toast from '../../components/Toast.vue'
 import { clock, when } from '../../utils/time'
-/* 状态是算出来的 —— 和课堂作业页共用同一份判断，避免两个页面各写一套又分叉 */
-import { collectingOf as collectingBase } from '../../utils/assignmentState'
+/* 状态是算出来的 —— 和课堂作业页共用**教师口径**那份，避免两个页面各写一套又分叉。
+ * 注意别引 assignmentState 里的 stateOf / collectingOf：那是学生口径（按人算），
+ * 教师端会显示成「还没轮到你」这类对学生说的话。 */
+import { assertTeacherState, teacherCollectingOf, teacherStateOf } from '../../utils/assignmentState'
 import { loadScheme, scheme } from '../../utils/scheme'
 import PageHead from '../../components/PageHead.vue'
 import DirIO from '../../components/DirIO.vue'
@@ -400,47 +402,34 @@ const totalPreview = computed(() => {
  */
 const nowTick = ref(Date.now())
 
-/** 这场考试还收不收 —— 包一层只是把 nowTick 带上 */
+/** 这场考试还收不收 —— 包一层只是把 nowTick 带上（教师口径，整场视角） */
 function collectingOf(x) {
-  return collectingBase(x, nowTick.value)
+  return teacherCollectingOf(x, nowTick.value)
 }
+
 /**
- * 教师端看到的状态。**不能直接复用学生那份 stateOf**。
+ * 教师端看到的状态：分批进行中 / 考试中 / 已截止 / 已结束 / 未开始。
  *
- * 学生那份要回答「我能不能进」：还没轮到你 / 这一批时间到 / 这批已结束 ——
- * 老师问的是「这场考试现在处于什么阶段」：分批进行中 / 考试中 / 已结束 / 未开始。
- * 拿学生那份来渲染，老师会看到「还没轮到你」这种对他说不通的话。
- *
- * 判据和作业页一致：
- *   有批次在放人（且没过时间）→ 分批进行中
- *   整场开着                    → 考试中（老数据没有批次时才走到这里）
- *   开过                        → 已结束
- *   其余                        → 未开始
- *
- * 注意「有批次在放人」放在最前：分批时整场 status 永远是 closed，
- * 只看 collecting 会一律显示「未开始」—— 这正是「状态没实时更新」的观感，
- * 其实数据一直在刷，只是这一句话没跟着变。
+ * 判据全在 utils/assignmentState 的 teacherStateOf 里（和课堂作业页同一份），
+ * 这里只补一个「机试」的用词。它不会返回「还没轮到你」这类第二人称的话 ——
+ * 那是学生口径 stateOf 的产物，教师页面用错就会显示成对学生说的话。
  */
 function stateOf(x) {
-  if (!x) return { key: 'none', text: '', tone: '' }
-  if (Number(x.openBatches) > 0) return { key: 'batch', text: '分批进行中', tone: 'ok' }
-  if (collectingBase(x, nowTick.value)) return { key: 'open', text: '考试中', tone: 'ok' }
-  if (x.started) return { key: 'closed', text: '已结束', tone: 'mute' }
-  return { key: 'draft', text: '未开始', tone: 'warn' }
+  return assertTeacherState(teacherStateOf(x, nowTick.value, '考试中'), 'ExamModule')
 }
 
 /** 胶囊上的小灯：有批在放人就亮 */
 function ledOf(x) {
   if (!x) return ''
   if (Number(x.openBatches) > 0) return 'on'
-  if (collectingBase(x, nowTick.value)) return 'on'
+  if (teacherCollectingOf(x, nowTick.value)) return 'on'
   return x.started ? 'off' : ''
 }
 
 /** 这场现在「活着」吗（有批在放人，或整场开着）—— 默认选中用 */
 function liveOf(x) {
   if (!x) return false
-  return Number(x.openBatches) > 0 || collectingBase(x, nowTick.value)
+  return Number(x.openBatches) > 0 || teacherCollectingOf(x, nowTick.value)
 }
 
 onMounted(async () => {

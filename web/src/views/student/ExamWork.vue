@@ -11,7 +11,10 @@
         <template #right>
           <span v-if="state.paper && !submitted" class="tag" :class="left < 60 ? 'err' : 'ok'">{{ clockText }}</span>
           <span v-if="submitted" class="tag ok">已交卷</span>
-          <button v-if="!state.started && canStart" class="btn primary" :disabled="busy" @click="start">开始考试</button>
+          <!--
+            「开始考试」按钮去掉了 —— 点进来就是要考，不该再确认一次。
+            进来时自动调一次 start（见 onMounted），判不起就直接说原因。
+          -->
           <button v-if="state.started && !submitted" class="btn primary" :disabled="busy" @click="submit">交卷</button>
           <router-link class="btn mini" :to="'/student/modules/' + itemKey">← 返回</router-link>
         </template>
@@ -19,10 +22,20 @@
     </template>
     <p v-if="err" class="hint err">{{ err }}</p>
 
+    <!--
+      进不来时才显示这张卡。
+      进来时已经自动调过一次 start（onMounted），所以这里说的不是「你去点一下」，
+      而是「为什么没进来」—— 后端把原因写在 startErr 里（还没轮到你 / 已结束 / 没开始）。
+    -->
     <div v-if="!state.started" class="card empty">
-      <template v-if="canStart">
-        <b>还没开始。</b> 点右上角「开始考试」出卷并计时；开始后答案会随打随存，
-        {{ state.paper && state.paper.duration ? '时间到自动截止。' : '交卷后不能再改。' }}
+      <template v-if="busy">
+        <b>正在出卷…</b> 马上就好
+      </template>
+      <template v-else-if="startErr">
+        <b>{{ startErr }}</b>
+        <p class="dim mini" style="margin: 6px 0 0">
+          等老师放你进来之后刷新一下就好；如果是分批考试，轮到你那一批时会自动进来。
+        </p>
       </template>
       <template v-else>老师还没开始这场机试，等一会儿再来。</template>
     </div>
@@ -137,6 +150,8 @@ const toast = ref('')
 const busy = ref(false)
 const canStart = ref(false)
 const left = ref(0)
+/** 自动开考失败的原因（还没轮到你 / 已结束 / 没开始），显示在空态卡里 */
+const startErr = ref('')
 
 let saveTimer = null
 let tick = null
@@ -161,6 +176,15 @@ onMounted(async () => {
   const mod = scheme.modules.find((m) => m.itemKey === itemKey)
   canStart.value = !!mod
   await load()
+  /*
+   * 还没在考 → 直接开考。
+   *
+   * 点进这场考试就等于说「我要考」，再让他点一次「开始考试」是多余的；
+   * 而且那一屏占着位置，学生一进来看到「还没开始」，会以为老师没放他进来。
+   *
+   * 幂等：后端 start 里 ensureSubmission 会复用已有答卷，重复进入不重开计时。
+   */
+  if (!state.started && canStart.value) await start()
 
   /*
    * 老师那边的三个动作要立刻反映到这一页，不能等学生刷新：
@@ -289,15 +313,24 @@ function apply(res) {
   comment.value = res.comment || ''
 }
 
+/**
+ * 开考。**进来就自动调一次**，不再让用户点按钮。
+ *
+ * 点进这场考试本身就是「我要考」的表示，多一步确认只会让人以为还没开始。
+ * 后端 start 是幂等的（ensureSubmission 复用已有答卷），重复进来不会重开计时。
+ *
+ * 失败不是错误，是「现在进不来」——403 的 message 已经写清了是
+ * 「还没轮到你」还是「这场已经结束了」，直接拿来当说明。
+ */
 async function start() {
   busy.value = true
+  startErr.value = ''
   err.value = ''
   try {
     const res = await api.post('/api/student/exams/' + encodeURIComponent(id) + '/start')
     apply(res)
-    toast.value = '卷子出好了，开始计时'
   } catch (e) {
-    err.value = e.message
+    startErr.value = e.message || '这场考试现在进不来'
   } finally {
     busy.value = false
   }

@@ -64,6 +64,10 @@ export function collectingOf(x, now) {
 /**
  * 给人看的状态：{ key, text, tone }。
  *
+ * ⚠️ **只在学生端用**。它回答的是「**我**能不能进」——
+ * 所以会出现「还没轮到你」「这批已结束」这种第二人称的话。
+ * 教师端请用下面的 teacherStateOf()，别在这里加 if 迁就两边。
+ *
  * key 拿来给代码判断，text 直接显示，tone 对应全站的 tag 配色。
  * 作业和机试只差一个词（进行中 / 考试中），用 word 参数区分。
  *
@@ -90,6 +94,68 @@ export function stateOf(x, now, word = '进行中') {
   }
   if (x.started) return { key: 'closed', text: '已结束', tone: 'mute' }
   return { key: 'draft', text: '未开始', tone: 'warn' }
+}
+
+/* ============================ 教师端 ============================ */
+
+/**
+ * 学生端才会出现的措辞。
+ *
+ * 教师端一句话都不该出现这些 —— 「还没轮到你」「这批已结束」是回答
+ * 「**我**能不能进」的，老师的视角里没有「我」，只有「这场现在是什么阶段」。
+ * 放在这里是为了能被断言/回归测试直接引用，别再靠眼睛盯。
+ */
+export const STUDENT_ONLY_TEXTS = ['还没轮到你', '这批已结束', '这批时间到', '已交 · 等老师批']
+
+/**
+ * 这场现在还收吗 —— **教师口径**（整场视角）。
+ *
+ * 只看两件事：老师开没开（status）、过没过截止时间。
+ * 刻意**不读** x.collecting 和 x.myBatch：那两样在接口里是「按当前登录者算的」，
+ * 学生调用时代表「这个人能不能进」，教师调用时才代表整场 —— 一旦哪天
+ * 后端把教师列表也返回成按人算，复用学生那份 collectingOf 的页面就会
+ * 静默变成学生口径（历史上作业页就是这么错的）。
+ */
+export function teacherCollectingOf(x, now) {
+  if (!x) return false
+  if (x.status !== 'open') return false
+  if (overDueOf(x, now) && x.allowLate === false) return false
+  return true
+}
+
+/**
+ * 教师端看到的状态：这场考试/作业现在处于什么阶段。
+ *
+ * 取值范围是封闭的：考试中(或进行中) / 分批进行中 / 已截止（时间到） / 已结束 / 未开始。
+ * 没有「还没轮到你」这类第二人称的话 —— 见 STUDENT_ONLY_TEXTS。
+ *
+ * 排序有讲究：
+ *   整场开着且没到期   → 全班都能进
+ *   有批次在放人       → 分批进行中（分批时整场 status 是 closed，只看上面那条会全显示未开始）
+ *   过截止且不收迟交   → 已截止，改截止时间就能再开
+ *   开过               → 已结束，要重新点开始
+ */
+export function teacherStateOf(x, now, word = '进行中') {
+  if (!x) return { key: 'none', text: '', tone: '' }
+  if (teacherCollectingOf(x, now)) return { key: 'open', text: word, tone: 'ok' }
+  if (Number(x.openBatches) > 0) return { key: 'batch', text: '分批进行中', tone: 'ok' }
+  if (overDueOf(x, now) && x.allowLate === false) return { key: 'overdue', text: '已截止（时间到）', tone: 'mute' }
+  if (x.started) return { key: 'closed', text: '已结束', tone: 'mute' }
+  return { key: 'draft', text: '未开始', tone: 'warn' }
+}
+
+/**
+ * 兜底断言：教师页面拿到学生口径的文案就报警。
+ *
+ * 这不是防御式编程的洁癖 —— 「教师端出现还没轮到你」这种错，
+ * 肉眼看不出来（页面照样渲染，只是那句话对老师没意义），
+ * 一报警就能在控制台定位到是哪个页面又引错了函数。
+ */
+export function assertTeacherState(st, where = '') {
+  if (st && STUDENT_ONLY_TEXTS.indexOf(st.text) >= 0 && typeof console !== 'undefined') {
+    console.warn('[assignmentState] 教师端出现了学生口径的文案「' + st.text + '」' + (where ? '（' + where + '）' : ''))
+  }
+  return st
 }
 
 /**
