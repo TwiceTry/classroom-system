@@ -46,7 +46,7 @@
       <template v-else-if="startErr">
         <b>{{ startErr }}</b>
         <p class="dim mini" style="margin: 6px 0 0">
-          等老师放你进来之后刷新一下就好；如果是分批考试，轮到你那一批时会自动进来。
+          页面会自己变，不用刷新。
         </p>
       </template>
       <template v-else>老师还没开始这场机试，等一会儿再来。</template>

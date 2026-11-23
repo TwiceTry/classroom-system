@@ -23,43 +23,60 @@ import * as repo from './repo.js'
 /* ---------------- 学生视角 ---------------- */
 
 /**
- * @typedef {'open'|'waiting'|'batch-overdue'|'batch-closed'|'overdue'|'closed'|'draft'} StudentPhase
+ * **学生视角只有四个状态**，而且都是「他能不能做这件事」的口径：
  *
- * @returns {{ phase: StudentPhase, batch: object|null }}
+ *   open      进行中 —— 能交 / 能考
+ *   waiting   还没开始 —— 老师还没放开
+ *   overdue   已截止 —— 时间到了
+ *   closed    已结束 —— 老师收了
+ *
+ * ============================ 为什么没有「分批」的词 ============================
+ *
+ * 分批是**老师的管理工具**（机器不够、要盯纪律），不是学生要理解的概念。
+ *
+ * 学生不该看到「第 1 批」「这批已结束」「还没轮到你」——
+ * 那等于告诉他「你们被分成几组，你是第 2 组」，而他只需要知道
+ * 「现在能不能做」。教室里的安排老师会口头说，系统不必复述。
+ *
+ * 所以「他这一批到点了」归一成 `overdue`，「他所在那批被收了」归一成 `closed`。
+ * 老师那边仍然知道是哪一批（teacherPhaseOf 只关心「有没有批在跑」）。
+ *
+ * @returns {{ phase: 'open'|'waiting'|'overdue'|'closed', batch: object|null }}
+ *          batch 只给后端自己用（算批次统计），**不往学生接口上暴露**
  */
 export function phaseOf(a, sid, now) {
   const t = now || Date.now()
   const batches = repo.batchesOf(a.id)
 
-  /* 没有批次的老数据：只看整场，行为和以前完全一致 */
+  /* 整场的截止时间：和批次无关，任何时候都算 */
+  const overDue = !!(a.dueAt && Date.parse(a.dueAt) && t > Date.parse(a.dueAt) && !a.allowLate)
+
+  /* 没有批次的老数据：只看整场，行为和以前一致 */
   if (!batches.length) {
-    if (a.status !== 'open') return { phase: a.openedAt ? 'closed' : 'draft', batch: null }
-    if (a.dueAt && Date.parse(a.dueAt) && t > Date.parse(a.dueAt) && !a.allowLate) {
-      return { phase: 'overdue', batch: null }
-    }
+    if (a.status !== 'open') return { phase: a.openedAt ? 'closed' : 'waiting', batch: null }
+    if (overDue) return { phase: 'overdue', batch: null }
     return { phase: 'open', batch: null }
   }
 
   /*
-   * 有批次就**只认批次**，整场 status 不参与判定。
-   * 顺序有讲究：先找他能进的，再找他进的但已经不能交的，最后才轮到「别人在考」。
+   * 有批次就只认批次，整场 status 不参与判定。
+   * 顺序：先找他能进的，再找他进的但已经不能做的，最后才轮到「别人在做」。
    */
   const mine = batches.filter((b) => b.sids.includes(String(sid)))
 
   const live = mine.find((b) => b.status === 'open' && !repo.batchOverdue(b, t))
   if (live) return { phase: 'open', batch: live }
 
-  /* 他这一批到点了：和「被老师收了」是两件事，前者可能还有商量余地 */
-  const expired = mine.find((b) => b.status === 'open' && repo.batchOverdue(b, t))
-  if (expired) return { phase: 'batch-overdue', batch: expired }
+  /* 他这一批到点 / 被关：对学生都是「不能做了」，不细分是哪一种 */
+  if (mine.length) {
+    const last = mine[mine.length - 1]
+    const expired = last.status === 'open' && repo.batchOverdue(last, t)
+    return { phase: expired ? 'overdue' : 'closed', batch: last }
+  }
 
-  /* 他进过某一批，但那批已经关了 */
-  if (mine.length) return { phase: 'batch-closed', batch: mine[mine.length - 1] }
-
-  /* 他不在任何一批里：还有别的批在放人就叫「没轮到你」，否则就是结束了 */
+  /* 他不在任何一批里：有别的批在跑就是「还没开始」，否则就是结束了 */
   const waiting = batches.some((b) => b.status === 'open' && !repo.batchOverdue(b, t))
-  if (waiting) return { phase: 'waiting', batch: null }
-  return { phase: 'closed', batch: null }
+  return { phase: waiting ? 'waiting' : 'closed', batch: null }
 }
 
 /* ---------------- 教师视角 ---------------- */
@@ -103,19 +120,20 @@ export function teacherPhaseOf(a, now) {
  */
 export function phaseMessage(phase, a) {
   const exam = a && (a.kind === 'paper' || a.kind === 'exam' || String(a.itemKey || '') === 'exam')
+  const what = exam ? '这场考试' : '这次作业'
   switch (phase) {
-    case 'batch-overdue':
-      return '你这一批的时间到了，不能再提交'
-    case 'batch-closed':
-      return '你这一批已经结束了'
-    case 'waiting':
-      return '还没有轮到你（老师正在分批放人），等一会儿再试'
+    /*
+     * 文案里**不出现「批」字**。
+     * 分批是老师那边的排班方式，学生只需要知道「现在能不能做」。
+     */
     case 'overdue':
-      return '已经过了截止时间，不再接收。有特殊情况请找老师'
+      return '时间到了，不能再提交'
     case 'closed':
-      return exam ? '这场机试已经结束了' : '这次作业已经结束了'
+      return what + '已经结束了'
+    case 'waiting':
+      return what + '还没开始，等老师开始后再来'
     default:
-      return exam ? '老师还没开始这场机试' : '这次作业还没开始'
+      return what + '还没开始'
   }
 }
 

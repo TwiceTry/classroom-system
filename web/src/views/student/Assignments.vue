@@ -19,13 +19,10 @@
         <div class="hwtop">
           <span class="tag" :class="tagOf(a)">{{ statusOf(a) }}</span>
           <!--
-            分批模式：让他知道自己是第几批，而不是以为「老师把我漏了」。
-            这一批有自己的时限时把剩余也带上 —— 否则他只能靠整场的截止时间猜。
+            这里原来有个「第 N 批 · 还剩 X 分钟」的角标。
+            去掉了 —— 分批是老师怎么排班，不是学生要理解的概念。
+            学生只需要知道「现在能不能做」，那是状态标签的事。
           -->
-          <span v-if="a.myBatch" class="batchno" :class="{ over: a.myBatch.overDue }">
-            第 {{ a.myBatch.seq }} 批<template v-if="a.myBatch.overDue"> · 时间到</template>
-            <template v-else-if="a.myBatch.leftMin"> · 还剩 {{ a.myBatch.leftMin }} 分钟</template>
-          </span>
           <b class="ellip">{{ a.title }}</b>
         </div>
 
@@ -286,15 +283,6 @@ function dueTone(a) {
   color: #8b95a1;
 }
 
-/* 分批时的批次号：小方块，和状态标签并排但更弱 —— 它是补充说明 */
-.hw .batchno {
-  padding: 1px 6px;
-  border-radius: var(--r-sm);
-  background: var(--bg-sub);
-  font-size: var(--fs-xs);
-  color: #7b8794;
-  font-variant-numeric: tabular-nums;
-}
 
 /*
  * 老师评语：卡片底部单独一块浅底，和上面「已提交 …」那行状态分开。

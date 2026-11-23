@@ -199,32 +199,6 @@ function paperInfoOf(a) {
 }
 
 /**
- * 学生端看到的「我在哪一批」。
- *
- * 只给序号、开始时间和这一批自己的截止时刻 —— **不给 sids**：
- * 那是这一批的完整名单，学生没必要看到同批还有谁。
- */
-function batchBrief(b) {
-  const closed = b.status !== 'open'
-  /*
-   * 已经关掉的批次不算「时间到」——
-   * 两句话对学生是不同的意思：「时间到了，你没能交」和「老师把这一批收了」。
-   * 前者可能还想找老师补，后者已经过去了。
-   */
-  const over = !closed && repo.batchOverdue(b)
-  const leftMs = b.dueAt ? Date.parse(b.dueAt) - Date.now() : 0
-  return {
-    id: b.id,
-    seq: b.seq,
-    openedAt: b.openedAt,
-    dueAt: b.dueAt,
-    overDue: over,
-    closed,
-    leftMin: b.dueAt && !over && !closed ? Math.max(1, Math.ceil(leftMs / 60000)) : 0,
-  }
-}
-
-/**
  * 学生端看到的「我的提交」。
  *
  * 机试要多补两个字段：startedAt / submittedAt。
@@ -956,21 +930,16 @@ export default async function assignmentRoutes(app) {
         const gate = gateOf(a, t.sid)
         const me = Object.assign(view(a), {
           mySubmission: mine ? subForStudent(a, mine) : null,
-          /*
-           * 我在哪一批。只给序号和状态，**不给 sids** ——
-           * 那是这一批的完整名单，学生没必要看到同批还有谁。
-           */
-          myBatch: gate.batch ? batchBrief(gate.batch) : null,
         })
-        /* 状态只有一个来源：phaseOf 算出的 phase，前端只做翻译 */
+        /*
+         * 状态只有一个来源：phaseOf 算出的 phase，前端只做翻译。
+         *
+         * **不给 myBatch / openBatches**：分批是老师的管理工具，
+         * 学生不该知道「第 1 批」「有多少批在跑」——
+         * 他只需要知道「现在能不能做」，那是 phase 的三个值。
+         */
         me.phase = gate.via
         if (gate.ok) me.collecting = true
-        /*
-         * 有多少批正在放人。
-         * 整场 status 是 closed、却有批在跑 —— 界面该显示「分批进行中」，
-         * 否则老师点了「开始这一批」，标签还写着「未开始」，自相矛盾。
-         */
-        me.openBatches = repo.batchesOf(a.id).filter((b) => b.status === 'open').length
         /* 机试卡片上的考试信息（限时 / 满分 / 题量）；非机试为 null */
         me.paperInfo = paperInfoOf(a)
         /*
@@ -1011,13 +980,10 @@ export default async function assignmentRoutes(app) {
         /* 状态只有一个来源：phaseOf 算出的 phase，前端只做翻译 */
         collecting: gate.ok,
         phase: gate.via,
-        myBatch: gate.batch ? batchBrief(gate.batch) : null,
         /*
-         * 有几批在放人（且没过时间）。
-         * 学生端靠它区分「老师还没开始」和「开始了但还没轮到我」——
-         * 后者不该让他一直等，也不该让他以为老师忘了。
+         * 不给 myBatch / openBatches —— 分批是老师的管理工具，
+         * 学生只看 phase 就够（见 phaseOf 的注释）。
          */
-        openBatches: repo.batchesOf(a.id).filter((b) => b.status === 'open' && !repo.batchOverdue(b)).length,
       }),
       mySubmission: mine ? subView(mine) : null,
       /*

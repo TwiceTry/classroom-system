@@ -85,13 +85,16 @@ export function collectingOf(x, now) {
  * 在后端 403 里再拼一次，两处措辞还不一样。现在措辞只在这里，
  * 后端那句（phaseMessage）负责「为什么交不上」的长解释。
  */
+/*
+ * 学生端**只有四个状态**，而且都是「他能不能做」的口径。
+ *
+ * 文案里不出现「批」字 —— 分批是老师的排班方式，不是学生要理解的概念。
+ * 他不需要知道「你们分成几组、你是第 2 组」，只需要知道现在能不能做。
+ */
 const STUDENT_TEXT = {
-  waiting: { key: 'waiting', text: '还没轮到你', tone: 'warn' },
-  'batch-overdue': { key: 'b-overdue', text: '这批时间到', tone: 'mute' },
-  'batch-closed': { key: 'b-closed', text: '这批已结束', tone: 'mute' },
-  overdue: { key: 'overdue', text: '已截止（时间到）', tone: 'mute' },
+  waiting: { key: 'waiting', text: '还没开始', tone: 'warn' },
+  overdue: { key: 'overdue', text: '时间到', tone: 'mute' },
   closed: { key: 'closed', text: '已结束', tone: 'mute' },
-  draft: { key: 'draft', text: '未开始', tone: 'warn' },
 }
 
 export function stateOf(x, now, word = '进行中') {
@@ -108,20 +111,16 @@ export function stateOf(x, now, word = '进行中') {
   if (collectingOf(x, now)) return { key: 'open', text: word, tone: 'ok' }
 
   /*
-   * 下面几种「进不来」要分开说。
-   * 分批模式下整场从没 open 过（started 永远是 false），
-   * 如果只按 started 判，所有没轮到的人都会显示「未开始」——
-   * 而老师明明已经开始了，他只是还没被点到。
+   * 兜底（老接口 / 没有 phase 时）：按时间 + 整场状态推。
+   *
+   * 不再读 myBatch / openBatches —— 学生接口已经不返回它们了，
+   * 而且那两个字段本身就是在向学生暴露「分批」这件事。
    */
-  if (x.myBatch && x.myBatch.overDue) return { key: 'b-overdue', text: '这批时间到', tone: 'mute' }
-  if (x.myBatch) return { key: 'b-closed', text: '这批已结束', tone: 'mute' }
-  if (Number(x.openBatches) > 0) return { key: 'waiting', text: '还没轮到你', tone: 'warn' }
-
   if (overDueOf(x, now) && x.allowLate === false) {
-    return { key: 'overdue', text: '已截止（时间到）', tone: 'mute' }
+    return { key: 'overdue', text: '时间到', tone: 'mute' }
   }
   if (x.started) return { key: 'closed', text: '已结束', tone: 'mute' }
-  return { key: 'draft', text: '未开始', tone: 'warn' }
+  return { key: 'waiting', text: '还没开始', tone: 'warn' }
 }
 
 /* ============================ 教师端 ============================ */
