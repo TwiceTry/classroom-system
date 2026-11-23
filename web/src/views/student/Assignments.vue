@@ -57,7 +57,12 @@
             <template v-if="a.mySubmission.late"> · 迟交</template>
           </span>
           <span class="spacer"></span>
-          <router-link v-if="a.status === 'open'" class="btn mini primary" :to="'/student/assignments/' + a.id">
+          <!--
+            按钮的判据是 **collecting**（后端算好的「对我而言还能交」），不是 status。
+            分批放行时整场是 closed，只看 status 会一直显示「看看题目」——
+            而点进去其实能写能交，等于把入口藏起来了。
+          -->
+          <router-link v-if="collectingOf(a)" class="btn mini primary" :to="'/student/assignments/' + a.id">
             {{ a.mySubmission ? '继续改 / 重交' : '去做作业' }}
           </router-link>
           <router-link v-else-if="a.mySubmission" class="btn mini" :to="'/student/assignments/' + a.id">
@@ -104,6 +109,8 @@ import Toast from '../../components/Toast.vue'
 import { when, at as fmtAt } from '../../utils/time'
 import { onPresenceMessage } from '../../utils/presence'
 import { loadScheme, scheme } from '../../utils/scheme'
+/* 状态只有一个来源 —— 和机试列表同一份，别再在页面里各写一套 */
+import { collectingOf as collectingBase, stateOf } from '../../utils/assignmentState'
 import PageHead from '../../components/PageHead.vue'
 import PageShell from '../../components/PageShell.vue'
 
@@ -116,6 +123,14 @@ const loading = ref(false)
 const err = ref('')
 const toast = ref('')
 let off = null
+let timer = null
+
+/*
+ * 时钟。状态是「算出来的」（批次到点、作业到期都不落库），
+ * 而 Vue 追踪不到 Date.now() —— 必须有个 ref 在推，依赖它的地方才会重算。
+ * 不然批次到点之后卡片还写着「进行中」，学生点进去交不上才发现。
+ */
+const nowTick = ref(Date.now())
 
 onMounted(async () => {
   await loadScheme()
@@ -124,10 +139,17 @@ onMounted(async () => {
   off = onPresenceMessage((m) => {
     if (m && m.t === 'assignment') load()
   })
+  timer = setInterval(() => {
+    /* 先推时钟（纯本地不发请求），所以放在 hidden 判断之前 */
+    nowTick.value = Date.now()
+    if (document.hidden) return
+    load()
+  }, 8000)
 })
 
 onUnmounted(() => {
   if (off) off()
+  if (timer) clearInterval(timer)
 })
 
 async function load() {
@@ -150,18 +172,26 @@ async function load() {
  * 卡片明明能点（正文里已经有编辑器），标签却写「未开始」，自相矛盾。
  * 同一个毛病在教师端犯过一次（标签说未开始、批次说进行中），这里必须对齐。
  */
+/*
+ * 状态一律走 utils/assignmentState 的 stateOf —— **不要在这里再写一套**。
+ *
+ * 原来这里裸写了一份（「进行中 / 时间到 / 已结束 / 未开始」），
+ * 而机试列表用的是公共 stateOf（「进行中 / 这批时间到 / 这批已结束 / …」）。
+ * 同一件事，两个学生页面两种说法，学生换一页会以为自己看错了。
+ *
+ * 判据和文案都只在那一处维护；这里只负责把 key/tone 取出来。
+ */
 function statusOf(a) {
-  if (a.collecting) return '进行中'
-  /* 我这一批到点了：说清楚是「时间到」而不是笼统的「已结束」 */
-  if (a.myBatch && a.myBatch.overDue) return '时间到'
-  if (a.myBatch) return '已结束'
-  return a.started ? '已结束' : '未开始'
+  return stateOf(a, nowTick.value, '进行中').text
+}
+
+/** 对我而言现在能不能交（后端算好的 collecting，带上现算的时钟） */
+function collectingOf(a) {
+  return collectingBase(a, nowTick.value)
 }
 
 function tagOf(a) {
-  if (a.collecting) return 'ok'
-  if (a.myBatch && a.myBatch.overDue) return 'mute'
-  return a.started || a.myBatch ? 'mute' : 'warn'
+  return stateOf(a, nowTick.value, '进行中').tone
 }
 
 /* ---------------- 截止时间 ---------------- */
