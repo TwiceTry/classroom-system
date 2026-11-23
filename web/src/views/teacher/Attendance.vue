@@ -667,7 +667,7 @@ async function commit(sid, next) {
  * 于是「迟到」那条记录真的被写进库里、再被下一撤掉 ——
  * 右栏流水里就留一条划掉的「迟到」，看着像老师改错了主意。
  *
- * 现在：本地立刻变（手感不变），420ms 内不再点才提交。
+ * 现在：本地立刻变（手感不变），一小段时间内不再点才提交。
  * 连点两下只会发一次「缺勤」，中间那个「迟到」**从不产生记录**。
  */
 function cycle(sid) {
@@ -684,9 +684,20 @@ function cycle(sid) {
     setTimeout(() => {
       pendingTimers.delete(sid)
       commit(sid, picked[sid] || next)
-    }, 420)
+    }, DEBOUNCE_MS)
   )
 }
+
+/**
+ * 连点合并的等待时间。
+ *
+ * 420ms 太紧：老师从「出勤」点到「缺勤」是两下，中间常有 500ms 以上的停顿
+ * （眼睛要先确认格子上写的是不是「迟到」），一停就提交了中间态，等于没防抖。
+ *
+ * 800ms 足够把这两下圈进同一个窗口。代价是「点完到落库」多等半秒 ——
+ * 但格子是立刻变的，老师感知不到这个延迟，只在右栏流水里看到少了一条垃圾记录。
+ */
+const DEBOUNCE_MS = 800
 
 /** 每个学生一个待提交的定时器（连点合并） */
 const pendingTimers = new Map()
@@ -697,7 +708,7 @@ async function clearSlot() {
   if (!list.length) return
   if (!window.confirm('把本节已记的 ' + list.length + ' 条异常全部撤回？（等于全勤）')) return
 
-  /* 先把还没提交的防抖任务取消 —— 否则清完 420ms 后它们又各自提交回去 */
+  /* 先把还没提交的防抖任务取消 —— 否则清完 防抖到点后它们又各自提交回去 */
   for (const t of pendingTimers.values()) clearTimeout(t)
   pendingTimers.clear()
 
@@ -1000,7 +1011,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (presenceTimer) clearInterval(presenceTimer)
-  /* 还有没提交的防抖任务：人已经离开了，别让它们 420ms 后再打一批请求 */
+  /* 还有没提交的防抖任务：人已经离开了，别让它们 防抖到点后再打一批请求 */
   for (const t of pendingTimers.values()) clearTimeout(t)
   pendingTimers.clear()
 })

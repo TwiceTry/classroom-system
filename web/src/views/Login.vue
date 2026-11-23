@@ -493,16 +493,23 @@ async function loginTeacher() {
 
 .form .input,
 .form .select {
-  height: 38px;
+  height: 40px;
   padding: 0 var(--sp-3);
-  font-size: var(--fs-lg);
+  /*
+   * 16px，比正文（13.5）和区块标题（15）都大一档。
+   *
+   * 一是登录页就这几个框，字大点看着不费劲；
+   * 二是 16px 正好躲开 iOS Safari 的坑 —— 小于 16px 的输入框一聚焦，
+   * 浏览器会自动把页面放大，学生输完还得手动缩回去。
+   */
+  font-size: 16px;
   border-radius: var(--r-md);
 }
 
 /* 验证码那个框不需要那么高，它和图片并排 */
 .form .input.cap-input {
-  height: 36px;
-  font-size: var(--fs-md);
+  height: 38px;
+  font-size: var(--fs-lg);
   letter-spacing: 1px;
 }
 
