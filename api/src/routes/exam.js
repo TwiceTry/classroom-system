@@ -388,6 +388,17 @@ export default async function examRoutes(app) {
           startedAt: st ? st.startedAt : '',
           submittedAt: st ? st.submittedAt || '' : '',
           answered: st && st.answers ? Object.keys(st.answers).length : 0,
+          /*
+           * 这份卷子一共几题 —— 前端显示「已答 0 / 22」要用。
+           *
+           * 必须从**他自己那份 paper** 算：题库卷每人抽到的题数可能不同，
+           * 拿试卷的全局题数会显示成「0 / 30」而实际他只有 22 题。
+           * 没有答卷的就是 0（还没开考，没有「几题」可言）。
+           */
+          itemCount:
+            st && st.paper && st.paper.sections
+              ? st.paper.sections.reduce((n, sec) => n + (sec.questions || []).length, 0)
+              : 0,
           autoScore: st && st.graded ? st.graded.autoScore : null,
           })
           }),

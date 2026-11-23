@@ -3,13 +3,25 @@
     <template #head>
       <PageHead>
         <template #title>{{ state.paper ? state.paper.title : '机试' }}</template>
-        <template #sub><template v-if="state.paper">
-            共 {{ totalCount }} 题 · 满分 {{ state.paper.fullScore }} 分
-            <template v-if="state.paper.duration"> · 限时 {{ state.paper.duration }} 分钟</template>
+        <!--
+          副标题：答题进度比「共 22 题 · 满分 100 分」有用 ——
+          满分多少是卷子上的事，答了几题才是我此刻该关心的。
+          时间在右边单独一个标签（考试中它比什么都显眼）。
+        -->
+        <template #sub>
+          <template v-if="state.paper">
+            <b :class="{ ok: answeredCount === totalCount }">{{ answeredCount }} / {{ totalCount }}</b> 已答
+            · {{ state.paper.fullScore }} 分
+            <template v-if="state.paper.duration"> · {{ state.paper.duration }} 分钟</template>
           </template>
-          <template v-else>开考后计时开始，答案随时自动保存</template></template>
+          <template v-else>开考后计时开始，答案随时自动保存</template>
+        </template>
         <template #right>
-          <span v-if="state.paper && !submitted" class="tag" :class="left < 60 ? 'err' : 'ok'">{{ clockText }}</span>
+          <!--
+            剩 5 分钟就变红。原来阈值是 60 秒 —— 那时候看到红色，
+            主观题已经写不完了，等于没提醒。
+          -->
+          <span v-if="state.paper && !submitted" class="tag" :class="left <= 300 ? 'err' : 'ok'">{{ clockText }}</span>
           <span v-if="submitted" class="tag ok">已交卷</span>
           <!--
             「开始考试」按钮去掉了 —— 点进来就是要考，不该再确认一次。
@@ -58,7 +70,10 @@
         </CardHead>
 
         <article v-for="(q, qi) in s.questions" :key="q.id" class="q">
-          <p class="stem"><b>{{ qi + 1 }}.</b> {{ q.stem }} <span class="dim mini">（{{ q.score }} 分）</span></p>
+          <p class="stem">
+            <b>{{ qi + 1 }}.</b> {{ plain(q.stem) }}
+            <span class="dim mini">（{{ q.score }} 分）</span>
+          </p>
 
           <!-- 选择 -->
           <div v-if="s.type === 'choice'" class="opts">
@@ -71,7 +86,7 @@
               :disabled="submitted"
               @change="pick(q.id, letter(oi))"
               />
-              {{ typeof o === 'string' ? o : o.text || o.label || o.key }}
+              {{ plain(typeof o === 'string' ? o : o.text || o.label || o.key) }}
               </label>
           </div>
 
@@ -164,6 +179,24 @@ const submitted = computed(() => state.submitted)
 const answers = computed(() => state.answers)
 const sections = computed(() => (state.paper ? state.paper.sections : []))
 const totalCount = computed(() => sections.value.reduce((n, s) => n + s.questions.length, 0))
+
+/**
+ * 已答几题。
+ *
+ * 空字符串 / 空数组 / 没选中 都算没答 —— 学生点过又清掉的不该计入。
+ * 这一行是他在考场上唯一能确认「我漏没漏题」的地方。
+ */
+const answeredCount = computed(() => {
+  const ans = answers.value || {}
+  let n = 0
+  for (const s of sections.value) {
+    for (const q of s.questions) {
+      const v = ans[q.id]
+      if (Array.isArray(v) ? v.length : String(v == null ? '' : v).trim()) n++
+    }
+  }
+  return n
+})
 const clockText = computed(() => {
   if (!state.paper || !state.paper.duration) return '不限时'
   const m = Math.floor(left.value / 60)
@@ -337,6 +370,26 @@ async function start() {
 }
 
 const letter = (i) => String.fromCharCode(65 + i)
+
+/*
+ * 题干里可能混进排版标签：老师从网页复制题目、或者手写 JSON 时写 `<b>`、`<br>`。
+ * 直接当文本插值会**原样显示**，学生看到「传一个<b>插槽内容</b>」像乱码。
+ *
+ * 但**不能把所有 `<...>` 都当标签剥掉** —— 这是一门前端课，
+ * 题干里 `<script setup>`、`<Child />`、`<slot>` 全是**正文内容**。
+ * 全剥的话第 1 题会变成「在 Vue 3 的  里，下面哪种写法…」，题就废了。
+ *
+ * 所以只剥一份白名单（排版用的那几个），其余原样留着。
+ */
+const FMT_TAG = /<\/?(?:b|i|em|strong|u|s|del|ins|br|p|div|span|sub|sup|small|mark|code|pre|blockquote)\b[^>]*>/gi
+
+function plain(s) {
+  return String(s || '')
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(FMT_TAG, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
 
 function pick(qid, v) {
   state.answers[qid] = v

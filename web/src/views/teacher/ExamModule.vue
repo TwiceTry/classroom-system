@@ -3,7 +3,17 @@
     <template #head>
       <PageHead @reload="loadAll">
         <template #title>{{ moduleTitle }}</template>
-        <template #sub>导入试卷 / 题库 → 开始 → 学生限时作答 → 客观题自动判、主观题你判 → 自动出答卷文件</template>
+        <!--
+          副标题放**现状**，不放流程说明。
+          「导入 → 开始 → 作答 → 判分 → 出文件」是第一次用才需要看的，
+          第 100 次它就是噪音 —— 而这里本该说「现在几场在考、收了多少」。
+          说明挪进 title，鼠标停一下能看到。
+        -->
+        <template #sub>
+          <span :title="'导入试卷 / 题库 → 分批开考 → 学生限时作答 → 客观题自动判、主观题你判 → 自动出答卷文件'">
+            {{ pageSub }}
+          </span>
+        </template>
         <!--
           专属区。label 用「试卷库」而不是「试卷」：这里是**整个 content/exams 目录**
           的搬运（批量搬走/搬入试卷库），而列表里每个机试还有「导入这份卷子」的按钮
@@ -41,11 +51,19 @@
           {{ d.assignment.title }}
           <span class="tag" :class="stateOf(d.assignment).tone">{{ stateOf(d.assignment).text }}</span>
         </h3>
-        <p class="dim mini" v-if="d.paper">
+        <!--
+          卷面摘要只留四个数：卷型 / 总分 / 限时 / 几段几题。
+          原来把四段标题全铺开（「一、单项与多项选择（每题 4 分）(10题)、二、判断…」），
+          一行挤成两行，读的人其实只想知道「100 分、45 分钟、22 题」。
+          分段详情挪进 title，要细看的人鼠标一停就有。
+        -->
+        <p class="dim mini" v-if="d.paper" :title="paperDetail">
           {{ d.paper.kind === 'bank' ? '题库随机卷（每人一份）' : '统一卷（全班同一份）' }} ·
           {{ d.paper.fullScore }} 分
-          <template v-if="d.paper.duration"> · 限时 {{ d.paper.duration }} 分钟</template>
-          <template v-if="d.paper.sections.length"> · {{ d.paper.sections.map((s) => s.title + '(' + (s.pick || s.count) + '题)').join('、') }}</template>
+          <template v-if="d.paper.duration"> · {{ d.paper.duration }} 分钟</template>
+          <template v-if="d.paper.sections.length">
+            · {{ d.paper.sections.length }} 段 {{ paperQuestionCount }} 题
+          </template>
         </p>
         <p class="dim mini" v-else>还没装卷子。点下面的「导入这份卷子」，或先用右上角的「⤒ 导入试卷库」批量搬。</p>
       </div>
@@ -56,7 +74,7 @@
           title="只给这一个机试装卷子：支持试卷 JSON 或题库 JSON"
           @click="fileInput.click()"
         >
-          {{ d.paper ? '换这份卷子（JSON）' : '导入这份卷子（JSON）' }}
+          {{ d.paper ? '换卷子' : '导入卷子' }}
         </button>
         <!--
           改时长。已经开始考的人也会立刻生效 ——
@@ -68,7 +86,7 @@
           :title="'现在是 ' + (d.paper.duration || 0) + ' 分钟。改完正在考的人也会立刻按新时长走'"
           @click="changeDuration"
         >
-          改时长（{{ d.paper.duration || 0 }} 分钟）
+          时长 {{ d.paper.duration || 0 }} 分
         </button>
         <button v-if="d.paper" class="btn mini" title="排好版的空白卷，打印或存 PDF" @click="openPaper(false)">试卷</button>
         <button v-if="d.paper" class="btn mini" title="带参考答案与解析，只给老师" @click="openPaper(true)">答案卷</button>
@@ -96,9 +114,12 @@
     <div class="card batchcard">
       <CardHead>
         <template #title>分批开考</template>
-        <template #meta>
-          <span class="dim mini">勾几个人 → 开始这一批；这批做完点「结束这批」，再放下一批</span>
-        </template>
+        <!--
+          这里原来写「勾几个人 → 开始这一批；这批做完点「结束这批」，再放下一批」。
+          按钮上就写着「开始这一批」「结束这批」，再说一遍等于把人当不会点。
+          换成进度：放了几批、还有几人没排 —— 这才是老师每次都要看一眼的数。
+        -->
+        <template #meta><span class="dim mini">{{ batchSummary }}</span></template>
       </CardHead>
 
       <!-- 有批次在放人时给一个「全部结束」—— 原来那个「■ 结束」的替代 -->
@@ -140,7 +161,7 @@
             :title="g.name + '：共 ' + g.total + ' 人，还有 ' + g.left + ' 人没排过批'"
             @click="pickClass(g.id)"
           >
-            {{ g.name }}<em v-if="g.left">{{ g.left }}</em><em v-else class="done">✓</em>
+            {{ shortClass(g.name) }}<em v-if="g.left">{{ g.left }}</em><em v-else class="done">✓</em>
           </button>
         </span>
         <span class="dim mini">已勾 {{ picked.length }} 人</span>
@@ -352,7 +373,8 @@ const rowCols = [
   { key: 'manualScore', label: '主观', num: true },
   { key: 'total', label: '总分', num: true },
   { key: 'score', label: '计分表', num: true },
-  { key: 'actions', label: '', width: '132px' },
+  /* 三个按钮（看进度 / 立即交卷 / 重考）—— 132px 装不下，会挤成两行 */
+  { key: 'actions', label: '', width: '214px' },
 ]
 const loading = ref(false)
 const saving = ref(false)
@@ -391,6 +413,61 @@ const nowTick = ref(Date.now())
 function collectingOf(x) {
   return teacherCollectingOf(x, nowTick.value)
 }
+
+/**
+ * 页头副标题：现在什么情况。
+ *
+ * 例：`3 场机试 · 1 场在放人 · 选中这场 12 人开考 · 已交 9`
+ *
+ * 老师打开这一页想知道的是「有没有人在考、还差几份没交」，
+ * 而不是「导入 → 开始 → 作答」这个流程怎么走。
+ */
+/**
+ * 分批进度：开了几批、还有几人没排过。
+ * 比「勾几个人 → 开始这一批」那句说明有用得多。
+ */
+const batchSummary = computed(() => {
+  const bs = (d.value && d.value.batches) || []
+  const rosterArr = (d.value && d.value.roster) || []
+  const total = rosterArr.length
+  if (!total) return ''
+  const done = rosterArr.filter((s) => s.submitted).length
+  const left = unbatchedLeft.value
+  const parts = []
+  parts.push(bs.length ? '已开 ' + bs.length + ' 批' : '还没开过批')
+  if (done) parts.push('已交 ' + done)
+  if (left) parts.push('还有 ' + left + ' 人没排')
+  else parts.push('全都排过了')
+  return parts.join(' · ')
+})
+
+/** 卷面总题数（题库卷按抽题数算，不是题池大小） */
+const paperQuestionCount = computed(() => {
+  const p = d.value && d.value.paper
+  if (!p || !p.sections) return 0
+  return p.sections.reduce((n, s) => n + (s.pick || s.count || (s.questions || []).length), 0)
+})
+
+/** 分段详情（鼠标停在卷面摘要上才看到） */
+const paperDetail = computed(() => {
+  const p = d.value && d.value.paper
+  if (!p || !p.sections) return ''
+  return p.sections.map((s) => s.title + ' ' + (s.pick || s.count) + ' 题 × ' + s.score + ' 分').join('\n')
+})
+
+const pageSub = computed(() => {
+  const n = list.value.length
+  if (!n) return '还没有机试，点右上角「＋ 新建机试」'
+  const live = list.value.filter((a) => Number(a.openBatches) > 0).length
+  const parts = [n + ' 场机试']
+  if (live) parts.push(live + ' 场在放人')
+  const rows = (d.value && d.value.rows) || []
+  if (rows.length) {
+    const done = rows.filter((r) => r.submittedAt).length
+    parts.push('选中这场 ' + rows.length + ' 人开考 · 已交 ' + done)
+  }
+  return parts.join(' · ')
+})
 
 /**
  * 教师端看到的状态：分批进行中 / 考试中 / 已截止 / 已结束 / 未开始。
@@ -641,6 +718,17 @@ function togglePick(sid) {
 function pickRest() {
   const r = (d.value && d.value.roster) || []
   picked.value = r.filter((s) => !s.submitted && !s.batched).map((s) => s.sid)
+}
+
+/**
+ * 班级简称：`25级软件技术1班` → `1班`。
+ *
+ * 全名前缀都一样（同一门课），一排按钮把选人条挤得没有地方放「开始这一批」。
+ * 鼠标停上去看得到全名。
+ */
+function shortClass(n) {
+  const m = /(\d+)\s*班/.exec(String(n || ''))
+  return m ? m[1] + '班' : String(n || '')
 }
 
 /** 按班快速选：只勾这个班里还没排过批的人 */
