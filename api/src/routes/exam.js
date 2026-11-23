@@ -442,19 +442,10 @@ export default async function examRoutes(app) {
           openBatches: repo.batchesOf(a.id).filter((b) => b.status === 'open' && !repo.batchOverdue(b)).length,
 
           /*
-           * 补考放行名单。这些人**不在 rows 里**（重考会删掉他们的答卷），
-           * 所以要单独给一份，否则老师放行完就再也看不到、也取消不了。
+           * 补考放行名单**没有了** —— 重考改成「从批次里剔除，下一批重新勾他」。
+           * 那个名单存在的唯一理由就是「重考会删掉答卷、老师看不见人」，
+           * 而现在这个人会回到 roster 里（batched=false），在选人面板上看得见。
            */
-          passes: repo.passesOf(a.id).map((p) => ({
-          sid: p.sid,
-          name: p.name || p.sid,
-          classId: p.classId,
-          className: names.get(p.classId) || '',
-          at: p.at,
-          note: p.note,
-          /* 已经重新开考/交卷的，界面上标一下，老师能看出谁已经用掉了这次放行 */
-          used: subs.some((s) => s.sid === p.sid),
-          })),
           }
           })
 
@@ -551,22 +542,27 @@ export default async function examRoutes(app) {
     }
 
     /*
-     * ④ 给他放行。
+     * ④ 把他从**所有批次**里剔除。
      *
-     * 这是「重考」和「整场还开着」解耦的关键：
-     * 老师在考完第二天发现某人需要补考，点完重考就能直接开班，
-     * 不用把整场考试再开一次（那样全班都能进）。
+     * 这是「重考」的新口径：不再单独给一个人开门，而是把他退回到
+     * 「还没排过批」的状态 —— 老师下一批勾人的时候，他就在「剩下的 N 人」里。
      *
-     * 考试还在收的时候放行同样无害 —— start 那条本来就放行所有人，
-     * 记录留着，等他真交完卷子也仍然是一条「放行」，将来取消即可。
+     * 比原来那套「放行」好在：
+     *   · 开放考试的通道只有一个（批次），不会出现「放行」和「批次」两套并存
+     *   · 老师看到的是「他回到队伍里了」，而不是「我给他开了个后门」
+     *   · 学生端口径一致：被剔除 = 还没轮到你（而不是特殊状态）
      */
-    repo.passExam({
-      assignmentId: a.id,
-      classId: sub.classId,
-      sid: sub.sid,
-      name: sub.name,
-      note: '重考',
-    })
+    let removedFrom = 0
+    for (const b of repo.batchesOf(a.id)) {
+      if (!b.sids.some((x) => String(x) === String(sub.sid))) continue
+      const left = b.sids.filter((x) => String(x) !== String(sub.sid))
+      /* 剔空了就把这一批关掉：留着一条 0 人的「进行中」只会让人困惑 */
+      repo.updateBatch(b.id, {
+        sids: left,
+        ...(left.length ? {} : { status: 'closed', closedAt: new Date().toISOString() }),
+      })
+      removedFrom++
+    }
 
     /* ⑤ 通知学生端 */
     const delivered = broadcast({
@@ -583,11 +579,12 @@ export default async function examRoutes(app) {
       sid: sub.sid,
       name: sub.name,
       delivered,
-      /* 整场已经结束的时候要说清楚：他现在仍能开考，是因为被单独放行了 */
+      removedFrom,
       message:
         (sub.name || sub.sid) +
-        ' 已重置，可以重新开考（题库卷会换一套题）' +
-        (a.status === 'open' ? '' : '。这场考试已结束，只有他一个人能进来'),
+        ' 已移出' +
+        (removedFrom ? ' ' + removedFrom + ' 个批次' : '（原本就不在任何批次里）') +
+        '。下一批勾人时他会在「剩下的」名单里',
     }
   })
 
@@ -646,16 +643,6 @@ export default async function examRoutes(app) {
   })
 
   /** 取消某个人的补考放行（整场已结束时，他就进不来了） */
-  app.delete('/api/exams/:id/passes/:sid', { preHandler: requireAuth('teacher') }, async (req) => {
-    const a = repo.getAssignment(req.params.id)
-    if (!a) throw notFound('作业不存在')
-    examItemOf(a)
-    const classId = String(req.query.classId || '')
-    const n = repo.unpassExam(a.id, classId, req.params.sid)
-    if (!n) throw notFound('这个人没有放行记录')
-    broadcast({ t: 'assignment', action: 'exam-reset', id: a.id, sid: req.params.sid })
-    return { ok: true }
-  })
 
   /** 教师看某一份答卷（答案 + 得分） */
   app.get('/api/exams/:id/submissions/:subId', { preHandler: requireAuth('teacher') }, async (req) => {
@@ -752,13 +739,13 @@ export default async function examRoutes(app) {
     /*
      * 能不能进：统一问 lib/phase.js。
      *
-     * 机试比作业多一条「单人放行」（整场结束后让某几个人补考），
-     * 那是 exam_passes 里的事，phaseOf 不认识 —— 所以在这里补一个 or。
-     * 其余的「批次 / 到点 / 结束 / 没开始」全由 phase 决定，不在这里再拼条件。
+     * 机试现在和作业**完全同一条通道** —— 只有批次能放人。
+     * 原来的「单人放行」（exam_passes）已经去掉了：
+     * 重考改成「把人从批次里剔除，下一批重新勾他」，
+     * 补考就是「开一批只放他」。多一套后门只会多一套状态要维护。
      */
-    const passed = !!repo.findPass(a.id, t.classId, t.sid)
     const g = gateOf(a, t.sid)
-    if (!g.ok && !passed) throw forbidden(phaseMessage(g.via, a))
+    if (!g.ok) throw forbidden(phaseMessage(g.via, a))
     const { sub, state } = ensureSubmission(a, t)
     /* 开考即占住学生端屏幕（优先级最高，谁都压不掉）——交卷时释放 */
     lockExamFocus(a, t, state)

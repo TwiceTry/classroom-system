@@ -177,25 +177,10 @@
         <template #meta><span class="dim mini">每 8 秒刷新 · 客观题交卷即得分，主观题等你判</span></template>
       </CardHead>
       <!--
-        补考放行名单。
-        这些人不在下面的答卷表里（重考会删掉他们的答卷），
-        单独列出来，否则放行完就再也看不到、也取消不了。
+        「补考放行名单」没有了。
+        重考改成「把人从批次里剔回去」，他会出现在分批面板的「剩下的 N 人」里，
+        不需要另开一个名单来兜。
       -->
-      <div v-if="d.passes && d.passes.length" class="passes">
-        <span class="pk">补考放行</span>
-        <span
-          v-for="p in d.passes"
-          :key="p.sid"
-          class="pi"
-          :class="{ used: p.used }"
-          :title="(p.used ? '已重新开考 / 已交卷 · ' : '还没进来 · ') + (p.className || '') + ' · ' + (p.at || '').slice(0, 16).replace('T', ' ')"
-        >
-          {{ p.name }}
-          <button class="px" title="取消放行（他就进不来了）" @click="unpass(p)">×</button>
-        </span>
-        <span class="dim mini">这场已经结束，只有名单里的人还能开考</span>
-      </div>
-
       <DataTable
         :columns="rowCols"
         :rows="d.rows"
@@ -578,29 +563,32 @@ async function changeDuration() {
 }
 
 /**
- * 让单个学生重考。
+ * 让单个学生重考 —— 把他从批次里剔回去。
  *
- * 会清掉：这次的答卷（答案 + 那份 md）、记在计分表里的分。
- * 下次他进考试页就是全新的：重新抽题（题库卷换一套）、重新计时、满时长。
+ * 清掉：这次交的答卷（答案 + 那份 md）、记在计分表里的分，
+ * 并**把他从所有批次移除**。于是他回到「还没排过批」，
+ * 老师下一批勾人时他就在「剩下的 N 人」里（题库卷会抽另一套）。
  *
- * 二次确认是必须的 —— 这个操作不可撤销，而「重考」两个字看着不像删除。
+ * 这里不做「单独给他开门」：
+ * 放人只有批次一条通道，补考就是「开一批只放他」。
+ * 多一套后门就多一套状态要维护 —— 那正是之前状态乱成一团的来源。
  */
 async function resetOne(row) {
   /* 答卷 id 在 row.id —— 后端 submissionView 给的就是 id，没有 submissionId 这个字段 */
   if (!row || !row.id) return
   const who = row.name || row.sid
   const ok = window.confirm(
-    '让 ' + who + ' 重考？\n\n' +
+    '把 ' + who + ' 退回重考？\n\n' +
       '· 这次交的答卷和记的分会被清掉，找不回来\n' +
-      '· 他可以重新开考，重新计时（满时长）\n' +
-      '· 题库卷会抽另一套题；统一卷还是同一份'
+      '· 他会从当前批次里移除，回到「还没排过批」\n' +
+      '· 下一批勾人时他就在「剩下的」名单里（题库卷会抽另一套题）'
   )
   if (!ok) return
   try {
     const res = await api.post(
       '/api/exams/' + encodeURIComponent(curId.value) + '/submissions/' + encodeURIComponent(row.id) + '/reset'
     )
-    toast.value = res.message || who + ' 已重置'
+    toast.value = res.message || who + ' 已退回'
     await loadDetail(true)
   } catch (e) {
     toast.value = e.message
@@ -747,18 +735,10 @@ async function stopBatch(b) {
   }
 }
 
-/** 取消某人的补考放行 */
-async function unpass(p) {
-  if (!p) return
-  if (!window.confirm('取消 ' + (p.name || p.sid) + ' 的补考放行？\n\n取消后他就进不来这场考试了（已经交的答卷不受影响）。')) return
-  try {
-    await api.del('/api/exams/' + encodeURIComponent(curId.value) + '/passes/' + encodeURIComponent(p.sid))
-    toast.value = (p.name || p.sid) + ' 的放行已取消'
-    await loadDetail(true)
-  } catch (e) {
-    toast.value = e.message
-  }
-}
+/*
+ * 这里原来有 unpass()（取消某人的补考放行）。
+ * 放行机制已经去掉，函数一并删掉 —— 留着会让人以为还有这么个入口。
+ */
 
 async function start() {
   if (!d.value) return
@@ -1004,57 +984,6 @@ async function saveGrade() {
   color: var(--ok);
 }
 
-/*
- * 补考放行名单：一行小标签，跟在答卷表上面。
- * 不放表格里 —— 这些人恰恰是「没有答卷」的那几个，塞进表格会出现
- * 一行全空、只剩名字的记录，反而看不懂。
- */
-.passes {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-bottom: var(--sp-2);
-  padding: var(--sp-2) var(--sp-3);
-  border-radius: var(--r-md);
-  background: #fff8ec;
-  border: 1px solid #f0dcc0;
-}
-.passes .pk {
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  color: #a15c00;
-  margin-right: 2px;
-}
-.passes .pi {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 1px 4px 1px 8px;
-  border-radius: 999px;
-  background: #fff;
-  border: 1px solid #f0dcc0;
-  font-size: var(--fs-sm);
-  color: #7a4a00;
-}
-/* 已经进来考过 / 交过的：压暗，老师一眼看出这条放行用掉了 */
-.passes .pi.used {
-  opacity: 0.55;
-}
-.passes .px {
-  border: none;
-  background: none;
-  padding: 0 3px;
-  font-size: 13px;
-  line-height: 1;
-  color: #b0b8c2;
-  cursor: pointer;
-  border-radius: 50%;
-}
-.passes .px:hover {
-  color: var(--err);
-  background: rgba(220, 60, 60, 0.1);
-}
 
 .hwbar {
   display: flex;

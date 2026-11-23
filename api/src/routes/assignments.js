@@ -980,13 +980,12 @@ export default async function assignmentRoutes(app) {
          * 应该按「这个人能不能进」算，而不是按「全班还收不收」算。
          * 已经交过卷的不算（他补考完了，卡片该回到「已交卷」）。
          */
-        if (isExamAssignment(a) && !(me.mySubmission && me.mySubmission.submittedAt)) {
-          if (repo.findPass(a.id, t.classId, t.sid)) {
-            me.collecting = true
-            /* 放行也是「对这个人而言已开放」，phase 要跟着改，否则标签还说已结束 */
-            me.phase = 'open'
-          }
-        }
+        /*
+         * 这里原来有一段「机试单人放行」的覆盖（exam_passes）。
+         * 已经去掉了 —— 重考改成「从批次里剔除，下一批重新勾他」，
+         * 补考就是「开一批只放他」。放人只有批次一条通道，
+         * 学生端的状态也就只有 phase 一个来源。
+         */
         return me
       })
       .filter(Boolean)
