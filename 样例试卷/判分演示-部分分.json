@@ -1,0 +1,85 @@
+{
+  "kind": "paper",
+  "title": "判分规则演示卷（多选部分分 / 写法容错）",
+  "duration": 20,
+  "fullScore": 50,
+  "sections": [
+    {
+      "id": "s1",
+      "title": "一、多选 · 开了部分分（漏选按比例给）",
+      "type": "choice",
+      "score": 10,
+      "partial": true,
+      "questions": [
+        {
+          "id": "c1",
+          "stem": "关于 ref 和 reactive，下面说法正确的有（多选）",
+          "options": [
+            "ref 什么类型都能存，对象要通过 .value 访问",
+            "reactive 只能代理对象 / 数组",
+            "reactive 解构出来的字段仍然是响应式的",
+            "ref 在模板里会自动解包"
+          ],
+          "answer": "ABD",
+          "explain": "C 错：reactive 解构会失去响应式，要保留得用 toRefs。"
+        },
+        {
+          "id": "c2",
+          "stem": "下面哪些是 <script setup> 里的编译器宏，不需要 import（多选）",
+          "options": ["defineProps", "defineEmits", "ref", "withDefaults"],
+          "answer": "ABD",
+          "explain": "ref 是运行时 API，要 import；defineProps / defineEmits / withDefaults 是编译器宏。"
+        }
+      ]
+    },
+    {
+      "id": "s2",
+      "title": "二、多选 · 没开部分分（对照：全对才给）",
+      "type": "choice",
+      "score": 10,
+      "questions": [
+        {
+          "id": "c3",
+          "stem": "关于 computed，下面说法正确的有（多选）",
+          "options": [
+            "依赖不变时直接返回缓存值",
+            "可以在里面写异步请求",
+            "只读的 computed 不能手动赋值",
+            "返回值必须是一个函数"
+          ],
+          "answer": "AC",
+          "explain": "B 错：computed 里不能写异步（要异步用 watch 或自己管理状态）。D 错：computed 返回的是值。"
+        }
+      ]
+    },
+    {
+      "id": "s3",
+      "title": "三、判断（√ / ✓ / true / 是 都算对）",
+      "type": "judge",
+      "score": 10,
+      "questions": [
+        {
+          "id": "j1",
+          "stem": "在 onMounted 里注册的 setInterval，应该在 onUnmounted 里清理。",
+          "answer": "对",
+          "explain": "不清理会泄漏：组件销毁了定时器还在跑。"
+        }
+      ]
+    },
+    {
+      "id": "s4",
+      "title": "四、填空（全角 / 空格 / 大小写都容错）",
+      "type": "fill",
+      "score": 10,
+      "questions": [
+        {
+          "id": "f1",
+          "stem": "让基本类型也具备响应式的 API 是 ______。",
+          "answer": "ref",
+          "accepts": ["ref()", "Ref", "vue 的 ref"],
+          "explain": "答案写 ref 就行；带括号、带大写、写中文也认（accepts 里列了）。"
+        }
+      ]
+    }
+  ]
+}
