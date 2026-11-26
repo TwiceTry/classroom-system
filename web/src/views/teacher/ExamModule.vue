@@ -99,10 +99,10 @@
         <button
           v-if="d.paper && d.paper.kind !== 'bank'"
           class="btn mini"
-          title="排好版的空白卷，打印或存 PDF"
+          title="下载空白卷 PDF，可直接打印"
           @click="openPaper(false)"
         >
-          试卷
+          试卷 PDF
         </button>
         <!--
           这里原来有「▶ 开始考试 / ■ 结束」，**去掉了** ——
@@ -285,8 +285,18 @@
           {{ viewing.name }} <span class="dim mono">{{ viewing.sid }}</span>
           <span class="tag" style="margin-left: 6px">{{ viewing.submittedAt ? '已交卷' : '作答中' }}</span>
         </h3>
-        <button v-if="viewing && viewing.submittedAt" class="btn mini" style="margin-left: 8px" @click="openSheet(viewing.submissionId)">
-          打印答卷
+        <!--
+          答卷 id 在 viewing.id —— 后端 submissionView 给的就是 id，
+          原来这里写 submissionId，取到 undefined，点了没反应。
+        -->
+        <button
+          v-if="viewing && viewing.submittedAt"
+          class="btn mini"
+          style="margin-left: 8px"
+          title="A4 版 PDF：学生作答 + 对错 + 得分 + 参考答案"
+          @click="openSheet(viewing.id)"
+        >
+          下载答卷 PDF
         </button>
         <button class="btn mini" style="margin-left: auto" @click="viewing = null">关闭</button>
       </div>
@@ -420,7 +430,7 @@
  * 判卷：客观题自动算，主观题在这里给分，点「判分并记账」→ 总分落进计分表 + 出答卷文件。
  */
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { api, openDoc } from '../../api'
+import { api, download } from '../../api'
 import Toast from '../../components/Toast.vue'
 import { clock, when } from '../../utils/time'
 /* 状态是算出来的 —— 和课堂作业页共用**教师口径**那份，避免两个页面各写一套又分叉。
@@ -734,17 +744,26 @@ async function loadDetail(quiet) {
   }
 }
 
-/** 打开排好版的卷子（HTML，A4 打印版）：answers=true 是答案卷 */
-function openPaper(answers) {
+/**
+ * 下载试卷 PDF（空白卷；answer=true 是答案卷）。
+ *
+ * 用 download 而不是 openDoc：老师要的是**能打印 / 能发给学生的文件**，
+ * 不是浏览器里一张预览。HTML 版还在（把 /pdf 换成 /html），
+ * 需要看排版的人手动改地址即可。
+ *
+ * 参数名是后端读的 `answer`（单数）—— 原来这里写的 `answers`，
+ * 后端永远读不到，等于答案卷从来没打开过。
+ */
+function openPaper(answer) {
   if (!curId.value) return
-  openDoc('/api/exams/' + encodeURIComponent(curId.value) + '/paper-file/html' + (answers ? '?answers=1' : ''))
+  download('/api/exams/' + encodeURIComponent(curId.value) + '/paper-file/pdf' + (answer ? '?answer=1' : ''))
 }
 
-/** 打开某个学生的答卷（判完才有） */
+/** 下载某个学生的答卷 PDF（判完才有） */
 function openSheet(submissionId) {
   if (!curId.value) return
-  openDoc(
-    '/api/exams/' + encodeURIComponent(curId.value) + '/submissions/' + encodeURIComponent(submissionId) + '/paper-file/html'
+  download(
+    '/api/exams/' + encodeURIComponent(curId.value) + '/submissions/' + encodeURIComponent(submissionId) + '/paper-file/pdf'
   )
 }
 

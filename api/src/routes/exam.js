@@ -23,6 +23,8 @@ import { broadcast } from './cast.js'
 import * as examLib from '../lib/exam.js'
 /* 状态判定只有一份：lib/phase.js（学生视角 phaseOf / 教师视角 teacherPhaseOf） */
 import { gateOf, phaseMessage, teacherPhaseOf } from '../lib/phase.js'
+/* HTML → PDF：用系统浏览器的打印引擎，不引额外依赖（详见 lib/pdf.js） */
+import { htmlToPdf, pdfName } from '../lib/pdf.js'
 
 const uid = (p) => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 
@@ -447,13 +449,33 @@ export default async function examRoutes(app) {
           })
 
   /** 下载纸质卷（?answer=1 取答案卷；fmt=md|html） */
+  /**
+   * 空白卷 / 答案卷：md、html、pdf 三种。
+   *
+   * PDF 是拿磁盘上那份 html 现场转的（`lib/pdf.js`），
+   * 所以三种格式的排版一定一致 —— 不会出现「网页上是 A4、PDF 里错版」。
+   */
   app.get('/api/exams/:id/paper-file/:fmt', { preHandler: requireAuth('teacher') }, async (req, reply) => {
     const a = repo.getAssignment(req.params.id)
     if (!a) throw notFound('作业不存在')
     const answer = String(req.query.answer || '') === '1'
-    const fmt = String(req.params.fmt || 'md').toLowerCase() === 'html' ? 'html' : 'md'
-    const file = path.join(paperDirOf(a.id), (answer ? '答案卷.' : '试卷.') + fmt)
+    const want = String(req.params.fmt || 'md').toLowerCase()
+    const fmt = want === 'pdf' ? 'pdf' : want === 'html' ? 'html' : 'md'
+    const baseName = answer ? '答案卷' : '试卷'
+    const file = path.join(paperDirOf(a.id), baseName + '.' + (fmt === 'pdf' ? 'html' : fmt))
     if (!fs.existsSync(file)) throw notFound('还没导入试卷')
+
+    if (fmt === 'pdf') {
+      const pdf = await htmlToPdf(fs.readFileSync(file, 'utf8'))
+      return reply
+        .status(200)
+        .headers({
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent(pdfName([a.title, baseName])),
+        })
+        .send(pdf)
+    }
+
     const st = fs.statSync(file)
     return reply
       .status(200)
@@ -660,7 +682,7 @@ export default async function examRoutes(app) {
     }
   })
 
-  /** 教师下载某份答卷（渲染成 md/html） */
+  /** 教师下载某份答卷（md / html / pdf） */
   app.get('/api/exams/:id/submissions/:subId/paper-file/:fmt', { preHandler: requireAuth('teacher') }, async (req, reply) => {
     const a = repo.getAssignment(req.params.id)
     if (!a) throw notFound('作业不存在')
@@ -677,7 +699,22 @@ export default async function examRoutes(app) {
       state: st,
       graded: st.graded,
     }
-    const fmt = String(req.params.fmt || 'md').toLowerCase() === 'html' ? 'html' : 'md'
+    const want = String(req.params.fmt || 'md').toLowerCase()
+    const fmt = want === 'pdf' ? 'pdf' : want === 'html' ? 'html' : 'md'
+
+    if (fmt === 'pdf') {
+      /* 名字带学号姓名：一屋子人导出后靠文件名分得清谁是谁 */
+      const pdf = await htmlToPdf(examLib.renderHtml(ctx))
+      return reply
+        .status(200)
+        .headers({
+          'Content-Type': 'application/pdf',
+          'Content-Disposition':
+            "attachment; filename*=UTF-8''" + encodeURIComponent(pdfName([sub.sid, sub.name, a.title, '答卷'])),
+        })
+        .send(pdf)
+    }
+
     const body = fmt === 'html' ? examLib.renderHtml(ctx) : examLib.renderReport(ctx)
     return reply
       .status(200)
@@ -690,7 +727,12 @@ export default async function examRoutes(app) {
 
   /* ============================ 学生侧 ============================ */
 
-  /** 学生下载自己的答卷 */
+  /**
+   * 学生下载自己的答卷（md / html / pdf）。
+   *
+   * 只认**自己**的：按 t.sid + t.classId 过滤，拿不到就是「你还没开卷」。
+   * 不需要额外鉴权 —— 查询本来就带了这个条件。
+   */
   app.get('/api/student/exams/:id/paper-file/:fmt', { preHandler: requireAuth('student') }, async (req, reply) => {
     const t = req.user
     const a = repo.getAssignment(req.params.id)
@@ -709,7 +751,21 @@ export default async function examRoutes(app) {
       state: st,
       graded: st.graded,
     }
-    const fmt = String(req.params.fmt || 'md').toLowerCase() === 'html' ? 'html' : 'md'
+    const want = String(req.params.fmt || 'md').toLowerCase()
+    const fmt = want === 'pdf' ? 'pdf' : want === 'html' ? 'html' : 'md'
+
+    if (fmt === 'pdf') {
+      const pdf = await htmlToPdf(examLib.renderHtml(ctx))
+      return reply
+        .status(200)
+        .headers({
+          'Content-Type': 'application/pdf',
+          'Content-Disposition':
+            "attachment; filename*=UTF-8''" + encodeURIComponent(pdfName([sub.name || sub.sid, a.title, '我的答卷'])),
+        })
+        .send(pdf)
+    }
+
     return reply
       .status(200)
       .headers({

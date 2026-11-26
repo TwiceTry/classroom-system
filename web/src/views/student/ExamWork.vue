@@ -56,9 +56,16 @@
       <div v-if="submitted" class="card result">
         <b>已交卷</b>
         <span v-if="score !== null">· 得分 {{ score }} 分</span>
-        <button v-if="state.submitted" class="btn mini" style="margin-left: 8px" @click="openMine">
-          我的答卷（打印版）
-        </button>
+        <!--
+          「我的答卷」= 下载 PDF（判完才有）。
+          旁边留一个「预览」给想先看一眼再存的人，走 HTML。
+        -->
+        <template v-if="state.submitted">
+          <button class="btn mini primary" style="margin-left: 8px" @click="downloadMine">
+            下载我的答卷（PDF）
+          </button>
+          <button class="btn mini" style="margin-left: 6px" @click="openMine">预览</button>
+        </template>
         <span v-else>· 等老师判主观题</span>
         <span v-if="comment" class="dim">· 评语：{{ comment }}</span>
       </div>
@@ -145,7 +152,7 @@
  */
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { api, openDoc } from '../../api'
+import { api, download, openDoc } from '../../api'
 import Toast from '../../components/Toast.vue'
 import { loadScheme, scheme } from '../../utils/scheme'
 import { onPresenceMessage } from '../../utils/presence'
@@ -162,7 +169,19 @@ const itemKey = String(route.params.itemKey || 'exam')
 const state = reactive({ started: false, paper: null, answers: {}, submitted: false })
 const score = ref(null)
 
-/** 看自己那张答过的卷子（判完才有；没判会提示等老师） */
+/**
+ * 下载自己那张答过的卷子（PDF）。
+ *
+ * 判完才有 —— 没判的时候服务端返回「还没交卷」，download 里会 alert 出来。
+ *
+ * 用 PDF 而不是打开 HTML：学生要的是**能存下来、能打印**的东西，
+ * 一张浏览器里关掉就没了的网页没什么用。老师那边导出的也是同一份版式。
+ */
+function downloadMine() {
+  download('/api/student/exams/' + encodeURIComponent(route.params.id) + '/paper-file/pdf')
+}
+
+/** 预览版（HTML，在浏览器里看，不下载）—— 想先看看再存的人用 */
 function openMine() {
   openDoc('/api/student/exams/' + encodeURIComponent(route.params.id) + '/paper-file/html')
 }
