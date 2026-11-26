@@ -75,11 +75,26 @@ function normalize(raw) {
     return sum + n * s.score
   }, 0)
 
+  const declaredFull = num(src.fullScore)
+  /*
+   * 题库卷的卷面分**必须按 pick 重算**，不能信 JSON 里写的数。
+   *
+   * 题库卷里 questions 是题池，每人只抽 pick 道；
+   * 老师写 JSON 时常常照着「题池全上」的念头写个 100，
+   * 实际每人只做 56 分的题 —— 界面上写 100、学生卷面 56，
+   * 按方案折算后全对也拿不到满分，而且看不出为什么。
+   *
+   * 固定卷（paper）仍然用老师声明的值：他可能确实想出 80 分的小卷。
+   */
+  const fullScore = kind === 'bank' ? computedFull : declaredFull || computedFull
+
   return {
     kind,
     title: String(src.title || '机试').trim(),
     duration: Math.max(0, Math.floor(num(src.duration))),
-    fullScore: num(src.fullScore) || computedFull,
+    fullScore,
+    /* 老师写的数和实际算出来的不一致时留个记号，validate 里会提示 */
+    declaredFullScore: declaredFull || 0,
     sections,
   }
 }
@@ -90,6 +105,18 @@ function validate(exam) {
   if (!exam || typeof exam !== 'object') return { errors: ['文件不是合法的 JSON 对象'], warnings }
   if (!exam.sections.length) errors.push('sections 不能为空：至少要有一段题')
   if (exam.kind === 'bank' && exam.duration <= 0) warnings.push('题库随机卷建议设置 duration（分钟），否则学生没有交卷时限')
+
+  /*
+   * 题库卷：老师在 JSON 里写的 fullScore 不作数（按 pick 重算了）。
+   * 不提示的话，他会以为卷面是 100 分，而学生实际只做 56 分的题 ——
+   * 按方案折算后全对也拿不满，却看不出原因。
+   */
+  if (exam.kind === 'bank' && exam.declaredFullScore && Math.abs(exam.declaredFullScore - exam.fullScore) > 0.01) {
+    warnings.push(
+      '题库卷的卷面分按「每段 pick × 每题分」算，是 ' + exam.fullScore + ' 分；' +
+        'JSON 里写的 ' + exam.declaredFullScore + ' 分不作数（那是题池全上的分）。'
+    )
+  }
 
   const seen = new Set()
   exam.sections.forEach((s, i) => {

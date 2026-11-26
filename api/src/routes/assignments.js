@@ -484,6 +484,20 @@ export default async function assignmentRoutes(app) {
       : []
 
     if (sids.length) {
+      /*
+       * 机试没卷子就别开批。
+       *
+       * 放人进来之后，学生点「进入考试」会撞在 loadExam 上（500 或者一句
+       * 「还没导入试卷」）—— 而老师那边看起来一切正常，因为他这边也只显示
+       * 「第 1 批 进行中」。与其让二十个人在机房里发现进不去，不如在这一步拦下。
+       */
+      if (String(a.itemKey) === 'exam') {
+        const src = examLib.readJson(examLib.sourceFile(a.id), null)
+        if (!src || !Array.isArray(src.sections) || !src.sections.length) {
+          throw badRequest('这场机试还没有卷子，先「换卷子 / 导入卷子」再开批')
+        }
+      }
+
       const seq = repo.nextBatchSeq(a.id)
       /*
        * 这一批自己的时限。

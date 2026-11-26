@@ -167,7 +167,8 @@
         <span class="dim mini">已勾 {{ picked.length }} 人</span>
         <label class="minbox" title="这一批每人限时多少分钟（从他点「开考」那刻算）。留空 = 用试卷上的时长">
           限时
-          <input v-model="batchMin" type="number" min="0" max="300" placeholder="试卷" />
+          <!-- placeholder 原来是「试卷」，看着像输入框里要填卷子。留空 = 按卷面时长 -->
+          <input v-model="batchMin" type="number" min="0" max="300" placeholder="按卷面" />
           分钟
         </label>
         <span class="spacer"></span>
