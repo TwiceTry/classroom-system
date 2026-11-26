@@ -88,8 +88,22 @@
         >
           时长 {{ d.paper.duration || 0 }} 分
         </button>
-        <button v-if="d.paper" class="btn mini" title="排好版的空白卷，打印或存 PDF" @click="openPaper(false)">试卷</button>
-        <button v-if="d.paper" class="btn mini" title="带参考答案与解析，只给老师" @click="openPaper(true)">答案卷</button>
+        <!--
+          两个按钮去掉了一个半：
+            · 「答案卷」直接去掉 —— 答案本来就在卷子 JSON 里，判分页每道题
+              都写着「参考答案」，再单独印一份答案卷是重复的。
+            · 「试卷」（空白卷，打印用）只给**固定卷**留。
+              题库卷每人抽到的题不一样，印出来的只是一份「样例」，
+              拿它发下去学生会对不上题号 —— 那种场景该用投影或平台作答。
+        -->
+        <button
+          v-if="d.paper && d.paper.kind !== 'bank'"
+          class="btn mini"
+          title="排好版的空白卷，打印或存 PDF"
+          @click="openPaper(false)"
+        >
+          试卷
+        </button>
         <!--
           这里原来有「▶ 开始考试 / ■ 结束」，**去掉了** ——
           唯一入口是下面的「分批开考」：勾人 → 开始这一批，全选就是全班。
