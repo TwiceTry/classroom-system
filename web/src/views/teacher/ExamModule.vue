@@ -322,11 +322,35 @@
           <span>标题</span>
           <input v-model="form.title" class="input" placeholder="期末机试" />
         </label>
+        <!--
+          卷子在建的时候一起传。
+          两种类型不用选 —— 卷子 JSON 里的 kind 自己说是「固定卷」还是「题库卷」，
+          选完文件这里就把识别结果写出来，老师一眼能确认有没有拿错。
+        -->
+        <label class="field">
+          <span>试卷（JSON）</span>
+          <!-- 点的时候清空 value：同一个文件重选也能触发 change -->
+          <input
+            type="file"
+            accept=".json,application/json"
+            class="input file"
+            @click="(e) => (e.target.value = '')"
+            @change="pickPaper"
+          />
+        </label>
+        <p v-if="paperReadErr" class="mini err">{{ paperReadErr }}</p>
+        <p v-else-if="form.paper" class="mini picked">
+          <b>{{ form.paperName }}</b>
+          <span>{{ paperHint }}</span>
+        </p>
+        <p v-else class="dim mini">
+          还没有卷子。可以先建，之后再「导入卷子」—— 但没有卷子开不了批。
+        </p>
+
         <label class="field">
           <span>说明（学生端显示）</span>
-          <textarea v-model="form.note" class="textarea" rows="4" placeholder="闭卷，90 分钟，交卷后不能再改。"></textarea>
+          <textarea v-model="form.note" class="textarea" rows="3" placeholder="闭卷，交卷后不能再改。"></textarea>
         </label>
-        <p class="dim mini">建好之后导入试卷 / 题库，再点「开始考试」。</p>
       </div>
       <div class="modal-foot">
         <span class="spacer"></span>
@@ -405,7 +429,68 @@ const manual = reactive({})
 const comment = ref('')
 
 const editing = ref(false)
-const form = reactive({ title: '', note: '' })
+/**
+ * 新建表单。
+ *
+ * paper 是**解析后的卷子 JSON**（不是文件对象）：
+ * 选文件时就地读完、当场做一次粗校验，老师能立刻看到「这是固定卷还是题库卷、
+ * 多少分、多少题」，而不是等建完再发现导错了。
+ */
+const form = reactive({ title: '', note: '', paper: null, paperName: '' })
+/** 选文件时的解析错误（格式不对 / 读不出来） */
+const paperReadErr = ref('')
+
+/** 卷子摘要（给弹窗里那行提示用） */
+const paperHint = computed(() => {
+  const p = form.paper
+  if (!p) return ''
+  const isBank = p.kind === 'bank'
+  const parts = []
+  parts.push(isBank ? '题库卷 · 每人按批次随机抽题' : '固定卷 · 全班同一份')
+  if (p.duration) parts.push('限时 ' + p.duration + ' 分钟')
+  if (p.fullScore) parts.push(p.fullScore + ' 分')
+  const n = (p.sections || []).reduce((s, sec) => s + ((sec.questions || []).length), 0)
+  if (n) {
+    /* 固定卷的 sections 就是卷面本身，说「题库」会让人以为还有题没抽 */
+    if (isBank) {
+      const willPick = (p.sections || []).reduce((s, sec) => s + (sec.pick || (sec.questions || []).length), 0)
+      parts.push('题库共 ' + n + ' 题，每人抽 ' + willPick + ' 题')
+    } else {
+      parts.push(n + ' 题')
+    }
+  }
+  return parts.join(' · ')
+})
+
+/**
+ * 选卷子文件：就地读成 JSON 放进 form.paper。
+ *
+ * **不在这里清空 input.value** ——
+ * 清掉的话原生控件会显示「未选择任何文件」，和下面那条绿色摘要自相矛盾。
+ * 「重复选同一个文件不触发 change」这个老问题，改成在 click 时清
+ * （见模板上的 @click），选完保留文件名。
+ */
+async function pickPaper(e) {
+  const file = e.target.files && e.target.files[0]
+  paperReadErr.value = ''
+  form.paper = null
+  form.paperName = ''
+  if (!file) return
+  try {
+    const text = await file.text()
+    const json = JSON.parse(text)
+    const src = json.source && typeof json.source === 'object' ? json.source : json
+    if (!src || !Array.isArray(src.sections) || !src.sections.length) {
+      throw new Error('里面没有 sections（卷子至少要有一段题）')
+    }
+    form.paper = src
+    form.paperName = file.name
+    /* 标题没填就用卷子的标题，省一次输入 */
+    if (!form.title.trim() && src.title) form.title = String(src.title).slice(0, 60)
+  } catch (err) {
+    paperReadErr.value = '这个文件不是有效的试卷 JSON：' + err.message
+  }
+}
 
 const subjective = computed(() => {
   if (!detail.paper) return []
@@ -592,6 +677,9 @@ function select(id) {
 function openEditor() {
   form.title = moduleTitle.value
   form.note = ''
+  form.paper = null
+  form.paperName = ''
+  paperReadErr.value = ''
   editing.value = true
 }
 
@@ -602,11 +690,26 @@ async function create() {
       itemKey: props.itemKey,
       title: form.title,
       note: form.note,
+      /* 有卷子就一起交；没有就建个空的，之后再导 */
+      paper: form.paper || undefined,
     })
     curId.value = res.assignment.id
     editing.value = false
     await loadAll()
-    toast.value = '建好了，接着导入试卷 / 题库'
+    /*
+     * 卷子没被收下时（格式过不了后端校验）作业已经建好了 ——
+     * 说清楚「建好了，但卷子没收下 + 原因」，老师重导一次就行，不用重建。
+     */
+    if (res.paperError) {
+      toast.value = '考试建好了，但卷子没收下：' + res.paperError
+    } else if (res.paper) {
+      toast.value =
+        '已建好并装上卷子（' +
+        (res.paper.kind === 'bank' ? '题库卷，每人随机抽题' : '固定卷，全班同一份') +
+        '）。勾几个人就能开始第一批'
+    } else {
+      toast.value = '建好了，接着导入试卷 / 题库'
+    }
   } catch (e) {
     toast.value = e.message
   } finally {
@@ -953,6 +1056,29 @@ async function saveGrade() {
 </script>
 
 <style scoped>
+/* 选了卷子之后那行摘要：文件名 + 类型/分值/题量 */
+.modal .picked {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
+  background: #eef7ef;
+  font-size: var(--fs-sm);
+  color: #2f6b3a;
+}
+.modal .picked b { font-weight: 600; }
+.modal .picked span { color: #4a7a55; }
+/* 文件选择框：不用 .input 那套边框（它会和原生按钮打架） */
+.modal .input.file {
+  height: auto;
+  padding: 6px var(--sp-2);
+  font-size: var(--fs-sm);
+  background: var(--bg-sub);
+}
+.modal .mini.err { color: var(--err); margin: 0; }
+
 /* 操作列里几个按钮挨着时给点间隙（不然「判分」「重考」挤成一坨） */
 .grid tbody td .btn + .btn {
   margin-left: 6px;

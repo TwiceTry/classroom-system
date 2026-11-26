@@ -324,11 +324,22 @@ export default async function assignmentRoutes(app) {
       requireFile: { type: 'boolean' },
       attachments: { type: 'array', items: { type: 'string', maxLength: 16 }, maxItems: 30 },
           courseId: { type: 'string' },
-        },
-      },
-    },
-    handler: async (req, reply) => {
-      const b = req.body
+          /*
+           * 机试：直接在新建时把卷子带上。
+           *
+           * 原来是「先建空的，再点导入卷子」两步 —— 老师建完一个没有卷子的考试，
+           * 页面上什么都不能做（没卷子开不了批），还得回去找那个「导入卷子」按钮。
+           * 建考试的时候卷子本来就是手上有的东西，一次做完更顺。
+           *
+           * 两种类型都在这个对象里（kind = 'paper' 固定卷 / 'bank' 题库卷），
+           * 由 examLib.normalize 认，不另设开关 —— 卷子自己说它是什么。
+           */
+          paper: { type: 'object' },
+          },
+          },
+          },
+          handler: async (req, reply) => {
+          const b = req.body
       const courseId = String(b.courseId || req.query.courseId || '')
       const course = courseId ? repo.getCourse(courseId) : repo.listCourses().find((c) => !c.archived) || null
       if (courseId && !course) throw notFound('课程不存在：' + courseId)
@@ -375,8 +386,48 @@ export default async function assignmentRoutes(app) {
           starter.ensureStarter(a.id, files)
         }
 
+        /*
+         * 机试：建的时候就把卷子装上。
+         *
+         * 校验失败**不删作业**（作业本身是合法的，只是卷子有问题）——
+         * 返回 200 但带上 paperError，前端提示「建好了，但卷子没收下：原因」，
+         * 老师可以直接在页面上重新导一次，不用重建。
+         */
+        let paperInfo = null
+        let paperError = ''
+        if (b.paper && String(item.key) === 'exam') {
+          try {
+            const norm = examLib.normalize(b.paper)
+            const chk = examLib.validate(norm)
+            if (chk.errors.length) {
+              paperError = chk.errors.join('；')
+            } else {
+              const { paper } = examLib.writePaperFiles(a, norm, (course || {}).name || '')
+              paperInfo = {
+                kind: norm.kind,
+                title: norm.title,
+                duration: norm.duration,
+                fullScore: norm.fullScore,
+                sections: norm.sections.map((s) => ({
+                  id: s.id,
+                  title: s.title,
+                  type: s.type,
+                  typeName: examLib.TYPE_NAME[s.type],
+                  score: s.score,
+                  pick: s.pick,
+                  count: s.questions.length,
+                })),
+                warnings: chk.warnings,
+              }
+              void paper
+            }
+          } catch (e) {
+            paperError = '卷子读不了：' + e.message
+          }
+        }
+
         reply.status(201)
-        return { assignment: view(a) }
+        return { assignment: view(a), paper: paperInfo, paperError }
       })
     },
   })

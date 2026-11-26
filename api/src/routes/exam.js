@@ -214,26 +214,12 @@ export default async function examRoutes(app) {
         }
       }
 
-      const dir = paperDirOf(a.id)
-      fs.mkdirSync(dir, { recursive: true })
-      examLib.writeJson(examLib.sourceFile(a.id), src)
-
-      // 空白卷 + 答案卷（md / html 各一份，老师直接打印）
-      const paper = examLib.printPaper(norm, a.id)
-      const base = {
-        course: (repo.getCourse(a.courseId) || {}).name || '',
-        assignment: a,
-        paper,
-        student: null,
-      }
-      try {
-        fs.writeFileSync(path.join(dir, '试卷.md'), examLib.renderPaperMd(Object.assign({}, base, { withAnswer: false })), 'utf8')
-        fs.writeFileSync(path.join(dir, '答案卷.md'), examLib.renderPaperMd(Object.assign({}, base, { withAnswer: true })), 'utf8')
-        fs.writeFileSync(path.join(dir, '试卷.html'), examLib.renderHtml(Object.assign({}, base, { withAnswer: false })), 'utf8')
-        fs.writeFileSync(path.join(dir, '答案卷.html'), examLib.renderHtml(Object.assign({}, base, { withAnswer: true })), 'utf8')
-      } catch (e) {
-        /* 渲染失败不影响导入 */
-      }
+      /*
+       * 落盘（源文件 + 四份打印稿）交给 lib/exam.js 的 writePaperFiles ——
+       * 「新建时上传」和「事后导入」必须产生一模一样的磁盘结果，
+       * 各写一遍迟早会在打印稿上分叉。
+       */
+      const { dir } = examLib.writePaperFiles(a, norm, (repo.getCourse(a.courseId) || {}).name || '')
 
       return {
         ok: true,

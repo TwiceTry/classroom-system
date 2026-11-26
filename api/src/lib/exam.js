@@ -685,4 +685,34 @@ function sourceFile(assignmentId) {
   return path.join(config.dataDir, 'exams', students.safeSeg(assignmentId) + '.json')
 }
 
-export { TYPES, TYPE_NAME, normalize, validate, paperFor, publicPaper, judgeAnswer, autoGrade, sectionName, printPaper, renderPaperMd, renderReport, renderHtml, examDir, sourceFile, readJson, writeJson, normText }
+/**
+ * 把一份卷子落盘：源文件 + 四份打印稿（空白卷 / 答案卷，md 和 html 各一）。
+ *
+ * **新建考试**和**事后导入**都走这里 —— 两条路必须产生一模一样的磁盘结果，
+ * 否则「新建时传的卷子」和「后来导入的卷子」会在打印时表现不同。
+ *
+ * @param {{id: string, title?: string, courseId?: string}} a  作业（机试）
+ * @param {object} norm  normalize() 之后的卷子
+ * @param {string} courseName  课程名（打印稿抬头用；取不到传空串）
+ * @param {function} mkdir  建目录的函数（这里不 import fs，由调用方注入，方便测试）
+ * @returns {{dir: string, paper: object}}
+ */
+function writePaperFiles(a, norm, courseName) {
+  const dir = path.join(config.dataDir, 'exams', students.safeSeg(a.id))
+  fs.mkdirSync(dir, { recursive: true })
+  writeJson(sourceFile(a.id), norm)
+
+  const paper = printPaper(norm, a.id)
+  const base = { course: courseName || '', assignment: a, paper, student: null }
+  try {
+    fs.writeFileSync(path.join(dir, '试卷.md'), renderPaperMd(Object.assign({}, base, { withAnswer: false })), 'utf8')
+    fs.writeFileSync(path.join(dir, '答案卷.md'), renderPaperMd(Object.assign({}, base, { withAnswer: true })), 'utf8')
+    fs.writeFileSync(path.join(dir, '试卷.html'), renderHtml(Object.assign({}, base, { withAnswer: false })), 'utf8')
+    fs.writeFileSync(path.join(dir, '答案卷.html'), renderHtml(Object.assign({}, base, { withAnswer: true })), 'utf8')
+  } catch (e) {
+    /* 渲染失败不影响卷子本身 —— 老师重开一次「试卷」还会再生成 */
+  }
+  return { dir, paper }
+}
+
+export { TYPES, TYPE_NAME, normalize, validate, paperFor, publicPaper, judgeAnswer, autoGrade, sectionName, printPaper, renderPaperMd, renderReport, renderHtml, examDir, sourceFile, readJson, writeJson, normText, writePaperFiles }
