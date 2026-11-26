@@ -316,6 +316,11 @@
                 学生：<b :class="markOf(q, s.type)">{{ detail.answers[q.id] || '（未作答）' }}</b>
                 <span v-if="s.type !== 'short'" class="dim"> · 参考答案：{{ q.answer }}</span>
                 <span v-if="s.type === 'short'" class="dim"> · 满分 {{ q.score }}</span>
+                <!-- 这一题得了几分、为什么 —— 判分规则在「样例试卷/判分规则.md」 -->
+                <span v-if="itemOf(q.id)" class="gmark" :class="markOf(q, s.type)">
+                  {{ itemOf(q.id).pending ? '' : '· ' + itemOf(q.id).got + ' / ' + q.score }}
+                  <template v-if="itemOf(q.id).why"> · {{ itemOf(q.id).why }}</template>
+                </span>
               </p>
             </article>
           </section>
@@ -1119,9 +1124,29 @@ async function open(r) {
   }
 }
 
+/** 这一题判下来的结论（判分结果里那一行） */
+function itemOf(qid) {
+  const items = detail.graded && detail.graded.items
+  if (!items) return null
+  return items.find((x) => x.qid === qid) || null
+}
+
+/**
+ * 每题「学生：X」那一段的颜色。
+ *
+ * 原来这个函数**两个分支都返回空串** —— 判分页上不管对错都是一个颜色，
+ * 老师得自己对答案。现在按 ok / 部分分 / 错 三档上色。
+ *
+ * 没判分（detail.graded 为空）时不上色，避免学生没交就看到一片红。
+ */
 function markOf(q, type) {
   if (type === 'short') return ''
-  return ''
+  const it = itemOf(q.id)
+  if (!it || it.ok === null || it.ok === undefined) return ''
+  if (it.ok === true) return 'ok'
+  /* 多选漏选：给了部分分但不是全对，用第三种颜色区分 */
+  if (it.got > 0) return 'part'
+  return 'err'
 }
 
 async function saveGrade() {
@@ -1144,6 +1169,19 @@ async function saveGrade() {
 </script>
 
 <style scoped>
+
+/* 判分页每题的对错标记与说明 */
+b.ok   { color: var(--ok); }
+b.err  { color: var(--err); }
+b.part { color: #a15c00; }
+.gmark {
+  margin-left: 6px;
+  font-size: var(--fs-sm);
+}
+.gmark.ok   { color: #2f6b3a; }
+.gmark.err  { color: var(--err); }
+.gmark.part { color: #a15c00; }
+
 
 /* 试卷类型二选一：两张小卡，选中的描蓝边 */
 .kindpick {

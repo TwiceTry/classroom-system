@@ -66,6 +66,17 @@ function normalize(raw) {
       type,
       score: num(s.score) || 0,
       pick: Math.max(0, Math.floor(num(s.pick))),
+      /*
+       * 多选给不给部分分。
+       *
+       * 只有 choice 段有意义，其它题型忽略。
+       * 约定（见 判分规则.md）：
+       *   全部选对            → 满分
+       *   漏选（没选错项）     → 按「选对数 / 正确答案数」比例给
+       *   选了任何错项        → 0 分
+       * 默认 false（全对才给），因为多数随堂测验的习惯是宁严不宽。
+       */
+      partial: type === 'choice' ? !!s.partial : false,
       questions,
     }
   })
@@ -208,6 +219,12 @@ function paperFor(exam, key) {
       title: s.title,
       type: s.type,
       score: s.score,
+      /*
+       * partial 必须带下去 —— 判分时读的是**学生那份 paper 的 section**，
+       * 这里漏了就等于「段上写了 partial，实际全都不给部分分」。
+       * （这个 bug 走查时才暴露：卷子写 partial:true，漏选照样 0 分。）
+       */
+      partial: !!s.partial,
       questions: chosen.map((q) => ({
         id: q.id,
         stem: q.stem,
@@ -268,32 +285,122 @@ function publicPaper(paper) {
 
 /* ---------------- 判分 ---------------- */
 
+/**
+ * 文本答案归一化 —— **填空题的判分完全建立在这上面**。
+ *
+ * 归一掉的东西（顺序有讲究，先全角转半角再做别的）：
+ *   ① 全角英数 → 半角   `ｒｅｆ` → `ref`（中文输入法打英文最常见）
+ *   ② 全角标点 → 半角   `，`→`,` `（`→`(` …
+ *   ③ 去掉所有空白      半角 / 全角空格、制表、换行
+ *   ④ 转小写            `Ref` → `ref`
+ *
+ * **不归一**的（刻意保留，见 判分规则.md）：
+ *   ⑤ 符号本身          `ref()` 和 `ref` 是**两个答案** ——
+ *                      要都算对就在 accepts 里写上，不靠猜
+ */
 const normText = (v) =>
   String(v === undefined || v === null ? '' : v)
+    /* ① 全角字母数字（Ａ-Ｚ ａ-ｚ ０-９）→ 半角 */
+    .replace(/[\uFF01-\uFF5E]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    /* ② 全角标点（上面那段没覆盖到的中文标点）→ 半角 */
+    .replace(/[，。；：、（）【】｛｝“”‘’《》]/g, (m) => ({ '，': ',', '。': '.', '；': ';', '：': ':', '、': ',', '（': '(', '）': ')', '【': '[', '】': ']', '｛': '{', '｝': '}', '“': '"', '”': '"', '‘': "'", '’': "'", '《': '<', '》': '>' }[m] || m))
+    /* ③ 空白（含全角空格 \u3000） */
     .replace(/\s+/g, '')
-    .replace(/[，。；：、（）【】“”‘’]/g, (m) => ({ '，': ',', '。': '.', '；': ';', '：': ':', '、': ',', '（': '(', '）': ')', '【': '[', '】': ']', '“': '"', '”': '"', '‘': "'", '’': "'" }[m] || m))
+    .replace(/\u3000/g, '')
+    /* ④ 小写 */
     .toLowerCase()
 
-function judgeAnswer(q, given) {
-  if (q.type === 'choice') {
-    const g = String(given || '').toUpperCase().replace(/[^A-Z]/g, '').split('').sort().join('')
-    const a = String(q.answer || '').toUpperCase().replace(/[^A-Z]/g, '').split('').sort().join('')
-    return !!g && g === a
+/** 判断题的「真」值表 —— 学生对/错的各种写法都认 */
+const TRUTHY = /^(对|是|正確|正确|真|true|t|yes|y|1|√|✓|∨|right|correct)$/i
+const FALSY = /^(错|否|错误|不正确|假|false|f|no|n|0|×|✗|x|wrong|incorrect)$/i
+
+/** 「对/错」三态：true / false / null（认不出） */
+function judgeTruth(v) {
+  const s = String(v === undefined || v === null ? '' : v).trim()
+  if (!s) return null
+  if (TRUTHY.test(s)) return true
+  if (FALSY.test(s)) return false
+  return null
+}
+
+/** 选择题的字母集合（去重、排序） */
+const lettersOf = (v) =>
+  String(v === undefined || v === null ? '' : v)
+    .toUpperCase()
+    .replace(/[^A-Z]/g, '')
+    .split('')
+    .filter((c, i, a) => a.indexOf(c) === i)
+    .sort()
+    .join('')
+
+/**
+ * 判一道客观题，返回**得分 + 结论 + 一句人话**。
+ *
+ * 比 judgeAnswer 多两样：分数（多选可能给部分分）和 why（为什么这么判）。
+ * why 会进 autoGrade 的 items，老师判卷时能直接看出来是「漏选扣分」
+ * 还是「选错了」，学生申诉时也有依据。
+ *
+ * @returns {{ got: number, ok: boolean|null, pending?: boolean, why: string }}
+ */
+function gradeOne(section, q, given) {
+  const type = section.type
+  const full = num(q.score)
+
+  if (type === 'short') return { got: 0, ok: null, pending: true, why: '主观题，等老师判' }
+
+  const raw = given === undefined || given === null ? '' : given
+  const blank = !String(raw).trim()
+
+  if (type === 'choice') {
+    const g = lettersOf(raw)
+    const a = lettersOf(q.answer)
+    if (!a) return { got: 0, ok: false, why: '这道题没有标准答案，请找老师' }
+    if (!g) return { got: 0, ok: false, why: '未作答' }
+    if (g === a) return { got: full, ok: true, why: '' }
+
+    /*
+     * 多选的部分分。只有段上写了 partial: true 才算，默认全对才给。
+     *
+     * 三种情况：
+     *   选了错项        → 0（不能因为蒙对一部分就抵消错误）
+     *   纯漏选          → 按比例，选对几个给几分
+     *   单选选错        → 走不到这里有任何意义，直接 0
+     */
+    if (!section.partial || a.length < 2) {
+      return { got: 0, ok: false, why: '与正确答案 ' + a.split('').join('') + ' 不一致' }
+    }
+    const wrong = g.split('').filter((ch) => a.indexOf(ch) < 0)
+    if (wrong.length) {
+      return { got: 0, ok: false, why: '选到了错误选项 ' + wrong.sort().join('') + '，多选选错不给分' }
+    }
+    const hit = g.split('').filter((ch) => a.indexOf(ch) >= 0).length
+    const got = Math.round(((full * hit) / a.length) * 10) / 10
+    return { got, ok: false, why: '漏选，选对 ' + hit + '/' + a.length + ' 项，按比例给分' }
   }
-  if (q.type === 'judge') {
-    const truthy = (v) => /^(对|是|true|t|1|正确)$/i.test(String(v).trim())
-    const g = truthy(given)
-    const a = truthy(q.answer)
-    if (!String(given || '').trim()) return false
-    return g === a
+
+  if (type === 'judge') {
+    const g = judgeTruth(raw)
+    const a = judgeTruth(q.answer)
+    if (a === null) return { got: 0, ok: false, why: '这道题的答案不是「对/错」，请查卷子' }
+    if (g === null) return { got: 0, ok: false, why: blank ? '未作答' : '答案认不出（要填对/错）' }
+    return g === a ? { got: full, ok: true, why: '' } : { got: 0, ok: false, why: '正确答案是「' + (a ? '对' : '错') + '」' }
   }
-  if (q.type === 'fill') {
-    const g = normText(given)
-    if (!g) return false
+
+  if (type === 'fill') {
+    const g = normText(raw)
+    if (!g) return { got: 0, ok: false, why: '未作答' }
     const list = [q.answer].concat(q.accepts || []).map(normText).filter(Boolean)
-    return list.indexOf(g) >= 0
+    if (list.indexOf(g) >= 0) return { got: full, ok: true, why: '' }
+    return { got: 0, ok: false, why: '答案不在接受范围内（对照答案与 accepts）' }
   }
-  return false // short：不自动判
+
+  return { got: 0, ok: false, why: '未知题型' }
+}
+
+/** 只要「对/错」的时候用这个（导出给外部调用） */
+function judgeAnswer(q, given) {
+  const r = gradeOne({ type: q.type, partial: false }, q, given)
+  return r.ok === true
 }
 
 /**
@@ -315,19 +422,31 @@ function autoGrade(paper, answers, scores) {
       let got = 0
       let ok = null
       let pending = false
+      let why = ''
+
       if (isShort) {
         subjectiveCount++
         if (manual[q.id] !== undefined && manual[q.id] !== '') {
           got = Math.max(0, Math.min(q.score, num(manual[q.id])))
           manualSum += got
+          why = '老师给了 ' + got + ' 分'
         } else {
           pending = true // 老师还没判这一题
+          why = '主观题，等老师判'
         }
       } else {
-        ok = judgeAnswer(Object.assign({ type: s.type }, q), given)
-        got = ok ? q.score : 0
-        auto += got
+        const r = gradeOne(s, q, given)
+        got = r.got
+        ok = r.ok
+        why = r.why
+        /*
+         * 客观题的分只累加「本题满分」以内 ——
+         * 多选部分分是按比例算的，正常情况下不会超，但答案里如果有
+         * 重复字母之类的脏数据，宁可少给不能多给。
+         */
+        auto += Math.min(got, num(q.score))
       }
+
       items.push({
         qid: q.id,
         section: s.id,
@@ -338,6 +457,8 @@ function autoGrade(paper, answers, scores) {
         explain: q.explain,
         ok,
         pending,
+        /* 为什么是这个分 —— 判卷时直接显示，学生申诉也有依据 */
+        why,
         got: Math.round(got * 10) / 10,
       })
     }
@@ -742,4 +863,4 @@ function writePaperFiles(a, norm, courseName) {
   return { dir, paper }
 }
 
-export { TYPES, TYPE_NAME, normalize, validate, paperFor, publicPaper, judgeAnswer, autoGrade, sectionName, printPaper, renderPaperMd, renderReport, renderHtml, examDir, sourceFile, readJson, writeJson, normText, writePaperFiles }
+export { TYPES, TYPE_NAME, normalize, validate, paperFor, publicPaper, judgeAnswer, gradeOne, autoGrade, sectionName, printPaper, renderPaperMd, renderReport, renderHtml, examDir, sourceFile, readJson, writeJson, normText, writePaperFiles }
