@@ -324,12 +324,36 @@
           <input v-model="form.title" class="input" placeholder="期末机试" />
         </label>
         <!--
-          卷子在建的时候一起传。
-          两种类型不用选 —— 卷子 JSON 里的 kind 自己说是「固定卷」还是「题库卷」，
-          选完文件这里就把识别结果写出来，老师一眼能确认有没有拿错。
+          二选一：固定试卷 / 题库随机卷。
+          这两样在老师脑子里是两件事 ——「我就出这一份」和「我出一批让人抽」，
+          所以要让他先点选，而不是传个文件让我们猜。
         -->
+        <div class="field">
+          <span>试卷类型</span>
+          <div class="kindpick">
+            <button
+              type="button"
+              class="kp"
+              :class="{ on: form.paperKind === 'paper' }"
+              @click="setPaperKind('paper')"
+            >
+              <b>固定试卷</b>
+              <em>全班同一份，一起对答案</em>
+            </button>
+            <button
+              type="button"
+              class="kp"
+              :class="{ on: form.paperKind === 'bank' }"
+              @click="setPaperKind('bank')"
+            >
+              <b>题库随机卷</b>
+              <em>每人从题库里抽题，抽到的不同</em>
+            </button>
+          </div>
+        </div>
+
         <label class="field">
-          <span>试卷（JSON）</span>
+          <span>{{ form.paperKind === 'bank' ? '题库（JSON）' : '试卷（JSON）' }}</span>
           <!-- 点的时候清空 value：同一个文件重选也能触发 change -->
           <input
             type="file"
@@ -343,6 +367,9 @@
         <p v-else-if="form.paper" class="mini picked">
           <b>{{ form.paperName }}</b>
           <span>{{ paperHint }}</span>
+        </p>
+        <p v-else-if="form.paperKind === 'bank'" class="dim mini">
+          还没有题库。文件里每段要有 <code>pick</code>（抽几道）—— 可以先建，之后再导，但没有卷子开不了批。
         </p>
         <p v-else class="dim mini">
           还没有卷子。可以先建，之后再「导入卷子」—— 但没有卷子开不了批。
@@ -433,13 +460,21 @@ const editing = ref(false)
 /**
  * 新建表单。
  *
- * paper 是**解析后的卷子 JSON**（不是文件对象）：
- * 选文件时就地读完、当场做一次粗校验，老师能立刻看到「这是固定卷还是题库卷、
- * 多少分、多少题」，而不是等建完再发现导错了。
+ * paperKind 是**老师选的类型**（固定试卷 / 题库随机卷），
+ * paper 是**解析后的卷子 JSON**。
+ *
+ * 为什么要有 paperKind，而不是靠文件内容自动识别：
+ *   这两样东西在老师脑子里是两件事 ——「我就出这一份」和「我出一批让人抽」。
+ *   只给一个「上传JSON」的框、靠 kind 字段猜，老师没法确认自己传对了没有；
+ *   而且他手上可能同时有两种文件，选错了要等到学生抽题才发现。
+ *   先让他选「这是哪种」，再用文件里的 kind 对一下，对不上就直接说。
  */
-const form = reactive({ title: '', note: '', paper: null, paperName: '' })
+const form = reactive({ title: '', note: '', paperKind: 'paper', paper: null, paperName: '' })
 /** 选文件时的解析错误（格式不对 / 读不出来） */
 const paperReadErr = ref('')
+
+/** 选的是哪一种（文案用） */
+const kindName = (k) => (k === 'bank' ? '题库随机卷' : '固定试卷')
 
 /** 卷子摘要（给弹窗里那行提示用） */
 const paperHint = computed(() => {
@@ -447,29 +482,38 @@ const paperHint = computed(() => {
   if (!p) return ''
   const isBank = p.kind === 'bank'
   const parts = []
-  parts.push(isBank ? '题库卷 · 每人按批次随机抽题' : '固定卷 · 全班同一份')
   if (p.duration) parts.push('限时 ' + p.duration + ' 分钟')
-  if (p.fullScore) parts.push(p.fullScore + ' 分')
-  const n = (p.sections || []).reduce((s, sec) => s + ((sec.questions || []).length), 0)
-  if (n) {
-    /* 固定卷的 sections 就是卷面本身，说「题库」会让人以为还有题没抽 */
-    if (isBank) {
-      const willPick = (p.sections || []).reduce((s, sec) => s + (sec.pick || (sec.questions || []).length), 0)
-      parts.push('题库共 ' + n + ' 题，每人抽 ' + willPick + ' 题')
-    } else {
-      parts.push(n + ' 题')
-    }
+
+  /*
+   * 卷面分：
+   *   固定卷  → 用 JSON 里写的（老师可能故意出 80 分小卷）
+   *   题库卷  → **自己按 pick 算**。JSON 里通常不写（写了也不算数，
+   *             后端 normalize 会按 pick 重算），所以不能照抄 p.fullScore。
+   */
+  const secs = p.sections || []
+  const computed = secs.reduce((sum, sec) => {
+    const n = isBank ? (sec.pick || (sec.questions || []).length) : (sec.questions || []).length
+    return sum + n * (Number(sec.score) || 0)
+  }, 0)
+  const full = isBank ? computed : Number(p.fullScore) || computed
+  if (full) parts.push('卷面 ' + full + ' 分')
+
+  const pool = secs.reduce((s, sec) => s + ((sec.questions || []).length), 0)
+  if (isBank) {
+    const willPick = secs.reduce((s, sec) => s + (sec.pick || (sec.questions || []).length), 0)
+    parts.push('题库 ' + pool + ' 题 · 每人抽 ' + willPick + ' 题')
+  } else if (pool) {
+    parts.push(pool + ' 题')
   }
   return parts.join(' · ')
 })
 
 /**
- * 选卷子文件：就地读成 JSON 放进 form.paper。
+ * 选文件：就地读成 JSON 放进 form.paper，并且**核对类型和上面选的一致**。
  *
- * **不在这里清空 input.value** ——
- * 清掉的话原生控件会显示「未选择任何文件」，和下面那条绿色摘要自相矛盾。
- * 「重复选同一个文件不触发 change」这个老问题，改成在 click 时清
- * （见模板上的 @click），选完保留文件名。
+ * 不一致不直接拒 —— 只是把 selection 纠正到文件实际的类型，并提示一句。
+ * 因为老师很可能只是忘了点上面那一栏，文件本身是对的；
+ * 让他再选一遍文件比再点一下类型按钮更烦。
  */
 async function pickPaper(e) {
   const file = e.target.files && e.target.files[0]
@@ -484,13 +528,30 @@ async function pickPaper(e) {
     if (!src || !Array.isArray(src.sections) || !src.sections.length) {
       throw new Error('里面没有 sections（卷子至少要有一段题）')
     }
+    const realKind = src.kind === 'bank' ? 'bank' : 'paper'
     form.paper = src
     form.paperName = file.name
     /* 标题没填就用卷子的标题，省一次输入 */
     if (!form.title.trim() && src.title) form.title = String(src.title).slice(0, 60)
+
+    if (realKind !== form.paperKind) {
+      /* 以文件为准：它里面写着 kind，那才是真的 */
+      form.paperKind = realKind
+      paperReadErr.value =
+        '这个文件是「' + kindName(realKind) + '」，已经按它改了上面的类型（原来选的是「' + kindName(realKind === 'bank' ? 'paper' : 'bank') + '」）。'
+    }
   } catch (err) {
     paperReadErr.value = '这个文件不是有效的试卷 JSON：' + err.message
   }
+}
+
+/** 换类型时把已选的文件清掉 —— 免得「选了固定卷、传的是题库」这种错配残留 */
+function setPaperKind(k) {
+  if (form.paperKind === k) return
+  form.paperKind = k
+  form.paper = null
+  form.paperName = ''
+  paperReadErr.value = ''
 }
 
 const subjective = computed(() => {
@@ -678,6 +739,7 @@ function select(id) {
 function openEditor() {
   form.title = moduleTitle.value
   form.note = ''
+  form.paperKind = 'paper'
   form.paper = null
   form.paperName = ''
   paperReadErr.value = ''
@@ -685,6 +747,17 @@ function openEditor() {
 }
 
 async function create() {
+  /*
+   * 走之前再对一次类型。
+   * 正常流程下 pickPaper 已经纠正过了，但老师可能是「先传文件、再点类型」——
+   * 那一下 setPaperKind 会把文件清掉，这里兜底说清楚为什么保存不了。
+   */
+  if (form.paper && form.paper.kind !== form.paperKind) {
+    form.paper = null
+    form.paperName = ''
+    paperReadErr.value = '类型和文件对不上，请重新选一次' + kindName(form.paperKind) + '的文件'
+    return
+  }
   saving.value = true
   try {
     const res = await api.post('/api/assignments', {
@@ -1057,6 +1130,45 @@ async function saveGrade() {
 </script>
 
 <style scoped>
+
+/* 试卷类型二选一：两张小卡，选中的描蓝边 */
+.kindpick {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-2);
+}
+.kindpick .kp {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.kindpick .kp b {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: #1f2937;
+}
+.kindpick .kp em {
+  font-style: normal;
+  font-size: var(--fs-xs);
+  color: #8b95a1;
+  line-height: 1.4;
+}
+.kindpick .kp:hover { border-color: #b9c6d3; }
+.kindpick .kp.on {
+  border-color: var(--brand);
+  background: #eef4f9;
+  box-shadow: inset 0 0 0 1px rgba(44, 95, 132, 0.2);
+}
+.kindpick .kp.on b { color: var(--brand); }
+.kindpick .kp.on em { color: #4a6b85; }
+
 /* 选了卷子之后那行摘要：文件名 + 类型/分值/题量 */
 .modal .picked {
   display: flex;
