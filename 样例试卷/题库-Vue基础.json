@@ -1,0 +1,279 @@
+{
+  "kind": "bank",
+  "title": "Web 前端框架开发 · 题库随机卷（样例）",
+  "duration": 45,
+  "sections": [
+    {
+      "id": "s1",
+      "title": "一、单项与多项选择（每题 6 分）",
+      "type": "choice",
+      "score": 6,
+      "pick": 5,
+      "questions": [
+        {
+          "id": "c1",
+          "stem": "v-if 和 v-show 的区别，下面说法正确的是？",
+          "options": [
+            "v-if 只切换 CSS 的 display，v-show 会销毁重建",
+            "v-if 会销毁/重建元素，v-show 只切换 display",
+            "两者完全等价，只是写法不同",
+            "v-show 只能用在组件上，v-if 只能用在元素上"
+          ],
+          "answer": "B",
+          "explain": "v-if 是真实的渲染/销毁（有编译期优化），v-show 只是 display:none。频繁切换用 v-show，条件很少变用 v-if。"
+        },
+        {
+          "id": "c2",
+          "stem": "关于 computed 和 methods，下面说法正确的是？",
+          "options": [
+            "computed 每次渲染都会重新执行，methods 有缓存",
+            "computed 依赖不变时直接返回缓存值，methods 每次调用都执行",
+            "两者都必须返回值",
+            "computed 里可以写异步请求"
+          ],
+          "answer": "B",
+          "explain": "computed 的缓存基于它的响应式依赖；依赖没变就不重算。methods 没有缓存，模板里每次渲染都会调用。"
+        },
+        {
+          "id": "c3",
+          "stem": "想让 watch 监听一个 reactive 对象的嵌套属性变化，需要加什么选项？",
+          "options": ["{ lazy: true }", "{ deep: true }", "{ immediate: true }", "不需要，默认就会监听"],
+          "answer": "B",
+          "explain": "默认只监听对象引用变化；要监听内部属性改动得加 deep。另外 watch 一个 getter 返回 reactive 对象时也需要 deep。"
+        },
+        {
+          "id": "c4",
+          "stem": "子组件直接修改 props 会怎样？",
+          "options": [
+            "正常生效，Vue 不做限制",
+            "Vue 会警告，并且父组件的值不会跟着变（单向数据流）",
+            "直接报错，页面白屏",
+            "会自动同步回父组件"
+          ],
+          "answer": "B",
+          "explain": "props 是单向数据流。要改应该 emit 事件让父组件改，或者用本地 data 复制一份。"
+        },
+        {
+          "id": "c5",
+          "stem": "子组件向父组件传值，正确做法是？",
+          "options": [
+            "子组件直接给父组件的 data 赋值",
+            "子组件用 defineEmits 声明事件，父组件用 @事件名 接收",
+            "父组件用 ref 拿到子组件实例后读它的变量",
+            "只能通过 Vuex / Pinia"
+          ],
+          "answer": "B",
+          "explain": "自定义事件是标准做法。第三种（ref 读实例）虽然可行但耦合太紧，不适合当常规通信方式。"
+        },
+        {
+          "id": "c6",
+          "stem": "v-for 里为什么推荐写 :key？",
+          "options": [
+            "不写会编译报错",
+            "帮助 Vue 复用/移动 DOM，避免用错节点的状态（比如输入框里的内容串位）",
+            "只影响性能，不影响正确性",
+            "key 会渲染成 HTML 属性，给 CSS 用"
+          ],
+          "answer": "B",
+          "explain": "diff 靠 key 判断「这还是不是同一个节点」。用 index 当 key 在列表增删时会导致状态错位。"
+        },
+        {
+          "id": "c7",
+          "stem": "ref 和 reactive 的区别，下面说法正确的是？",
+          "options": [
+            "ref 只能存基本类型，reactive 只能存对象",
+            "ref 什么都能存（对象要通过 .value 访问），reactive 只能代理对象/数组",
+            "两者完全等价",
+            "reactive 也能代理基本类型"
+          ],
+          "answer": "B",
+          "explain": "ref 内部用 RefImpl 包了一层，模板里自动解包、脚本里要 .value；reactive 基于 Proxy，只能代理对象。"
+        },
+        {
+          "id": "c8",
+          "stem": "onMounted 在什么时候执行？",
+          "options": [
+            "组件实例创建后、挂载到 DOM 之前",
+            "组件挂载到 DOM 之后",
+            "每次数据变化后",
+            "组件销毁时"
+          ],
+          "answer": "B",
+          "explain": "挂载后才拿得到真实 DOM，所以初始化第三方库、量元素尺寸都放这里。"
+        },
+        {
+          "id": "c9",
+          "stem": "关于 <script setup>，下面说法正确的有（多选）",
+          "options": [
+            "顶层声明的变量和函数自动暴露给模板",
+            "组件和指令会自动注册，不用写在 components 里",
+            "必须写 export default {}",
+            "可以用 defineProps / defineEmits，且不需要 import"
+          ],
+          "answer": "ABD",
+          "explain": "<script setup> 是编译时语法糖，不需要 export default；defineProps/defineEmits/defineExpose 是编译器宏，不用 import。"
+        },
+        {
+          "id": "c10",
+          "stem": "相比选项式 API，组合式 API 的优势有（多选）",
+          "options": [
+            "同一功能的逻辑可以写在一起，不用分散到 data / methods / computed",
+            "逻辑可以抽成函数复用（composable），比 mixin 更清晰",
+            "对 TypeScript 的类型推导更友好",
+            "运行速度比选项式 API 快很多"
+          ],
+          "answer": "ABC",
+          "explain": "组合式 API 主要解决的是「逻辑组织」和「类型推导」，不是性能。底层渲染是同一套。"
+        }
+      ]
+    },
+    {
+      "id": "s2",
+      "title": "二、判断（每题 5 分）",
+      "type": "judge",
+      "score": 5,
+      "pick": 4,
+      "questions": [
+        {
+          "id": "j1",
+          "stem": "const num = ref(0) 之后，在脚本里要给 num 赋值必须写 num.value。",
+          "answer": "对",
+          "explain": "模板里 Vue 自动解包，脚本里必须 .value。这是 ref 最容易忘的一点。"
+        },
+        {
+          "id": "j2",
+          "stem": "computed 的结果不能手动赋值（除非写了 getter/setter）。",
+          "answer": "对",
+          "explain": "只读的 computed 赋值会警告。要可写就用 computed({ get, set })。"
+        },
+        {
+          "id": "j3",
+          "stem": "为了让子组件能改值，可以把 props 解构后再修改。",
+          "answer": "错",
+          "explain": "解构 props 不仅改不了（还是单向数据流），在 Vue 3.5 之前还会丢掉响应式。"
+        },
+        {
+          "id": "j4",
+          "stem": "v-model 在 input 上等价于 :value + @input 的组合。",
+          "answer": "对",
+          "explain": "Vue 3 里是 :modelValue + @update:modelValue（表单元素上是 value/input）。本质是「绑定值 + 监听变化」。"
+        },
+        {
+          "id": "j5",
+          "stem": "在 onMounted 里 setInterval，应该在 onUnmounted 里 clearInterval。",
+          "answer": "对",
+          "explain": "不清会泄漏：组件销毁了定时器还在跑，回调里访问的响应式数据也还留着。"
+        },
+        {
+          "id": "j6",
+          "stem": "使用 <script setup> 时，defineProps 需要先 import 才能用。",
+          "answer": "错",
+          "explain": "defineProps / defineEmits / defineExpose / withDefaults 都是编译器宏，直接用，import 反而会报错。"
+        },
+        {
+          "id": "j7",
+          "stem": "模板里访问 ref 时不需要写 .value。",
+          "answer": "对",
+          "explain": "模板编译时会自动解包顶层 ref。注意：数组/对象里的 ref 不会自动解包。"
+        },
+        {
+          "id": "j8",
+          "stem": "const { count } = reactive({ count: 0 }) 之后，count 仍然是响应式的。",
+          "answer": "错",
+          "explain": "解构出来的是普通数字，和原对象断了联系。要保留响应式用 toRefs。"
+        }
+      ]
+    },
+    {
+      "id": "s3",
+      "title": "三、填空（每题 4 分）",
+      "type": "fill",
+      "score": 4,
+      "pick": 5,
+      "questions": [
+        {
+          "id": "f1",
+          "stem": "让基本类型（数字、字符串）也能具备响应式的 API 叫 ______。",
+          "answer": "ref",
+          "accepts": ["ref()", "Ref", "vue 的 ref"]
+        },
+        {
+          "id": "f2",
+          "stem": "Vue 3 里整块组合式 API 的代码通常写在 <script ______> 里。",
+          "answer": "setup",
+          "accepts": ["setup", "Setup"]
+        },
+        {
+          "id": "f3",
+          "stem": "组件挂载到 DOM 之后执行的生命周期钩子叫 ______。",
+          "answer": "onMounted",
+          "accepts": ["onMounted()", "mounted", "onmounted"]
+        },
+        {
+          "id": "f4",
+          "stem": "子组件向父组件通信，用 defineEmits 声明事件，父组件用 @事件名 监听，这种机制叫自定义 ______。",
+          "answer": "事件",
+          "accepts": ["事件", "event", "events", "自定义事件"]
+        },
+        {
+          "id": "f5",
+          "stem": "计算属性在依赖没变时会直接返回上次的结果，这个特性叫 ______。",
+          "answer": "缓存",
+          "accepts": ["缓存", "cache", "caching"]
+        },
+        {
+          "id": "f6",
+          "stem": "v-model.trim 里的 trim 是 ______（修饰符 / 指令 / 过滤器）。",
+          "answer": "修饰符",
+          "accepts": ["修饰符", "modifier"]
+        },
+        {
+          "id": "f7",
+          "stem": "具名插槽的写法是 <template v-slot:名字>，其中 v-slot 可以简写成 ______。",
+          "answer": "#",
+          "accepts": ["#", "＃", "井号"]
+        },
+        {
+          "id": "f8",
+          "stem": "要动态切换渲染哪个组件，用 <component :______=\"当前组件\">。",
+          "answer": "is",
+          "accepts": ["is", "Is"]
+        }
+      ]
+    },
+    {
+      "id": "s4",
+      "title": "四、简答（每题 10 分）",
+      "type": "short",
+      "score": 10,
+      "pick": 3,
+      "questions": [
+        {
+          "id": "q1",
+          "stem": "ref 和 reactive 的区别是什么？实际写代码时该怎么选？",
+          "answer": "参考要点：① ref 什么类型都能存，脚本里要 .value，模板自动解包；reactive 只能代理对象/数组，属性直接访问。② reactive 解构会失去响应式（要用 toRefs）。③ 整体替换对象时 ref 更省事（.value = 新对象），reactive 会丢掉代理。④ 实践：统一用 ref 最省心；一组强相关的字段用 reactive 更简洁。"
+        },
+        {
+          "id": "q2",
+          "stem": "Vue 里父子组件之间、以及跨层级组件之间，各有哪些通信方式？各自适合什么场景？",
+          "answer": "参考要点：父传子 props；子传父 emit 自定义事件；双向 v-model（modelValue + update:modelValue）；跨层级 provide/inject；任意组件 Pinia（或事件总线）；父拿子实例用模板 ref。场景：简单父子用 props/emit，深层传递用 provide/inject，全局状态用 Pinia。"
+        },
+        {
+          "id": "q3",
+          "stem": "v-for 里为什么推荐用唯一的 key，而不是用 index？举一个用 index 会出错的例子。",
+          "answer": "参考要点：key 是 diff 时判断「还是不是同一个节点」的依据。用 index 时，列表头部插入一条会让所有下标后移，Vue 认为节点没变只更新了内容，于是节点上绑定的非响应式状态（输入框内容、组件内部 state、动画进度）会串到别的行。例：待办列表每行一个输入框，在顶部插入新行后，原来第 1 行输入的内容跑到了第 2 行。"
+        },
+        {
+          "id": "q4",
+          "stem": "onMounted 和 onUnmounted 分别适合放什么代码？为什么清理动作必须放在 onUnmounted？",
+          "answer": "参考要点：onMounted 放需要真实 DOM 的初始化（第三方库实例化、量尺寸、注册监听、发起首屏请求）；onUnmounted 放清理（clearInterval/clearTimeout、removeEventListener、取消订阅、销毁图表实例）。不清理会造成内存泄漏，且回调里访问的响应式数据无法被回收；定时器还会在组件销毁后继续触发。"
+        },
+        {
+          "id": "q5",
+          "stem": "computed 和 watch 都能「跟着数据变」，它们的区别是什么？什么时候该用哪个？",
+          "answer": "参考要点：computed 是派生值——必须有返回值，有缓存，依赖不变不重算，用在模板里当数据用；watch 是副作用——不返回值，值变了去做一件事（发请求、写 localStorage、改另一个状态）。选法：要「算出一个新值」用 computed；要「变化后做事」用 watch。能用 computed 表达的不要用 watch 再赋一个变量。"
+        }
+      ]
+    }
+  ]
+}
