@@ -17,7 +17,6 @@
   },
   "dependencies": {
     "exceljs": "^4.4.0",
-    "pdfkit": "^0.21.0",
     "yauzl": "^3.4.0"
   }
 }

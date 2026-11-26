@@ -99,10 +99,10 @@
         <button
           v-if="d.paper && d.paper.kind !== 'bank'"
           class="btn mini"
-          title="下载空白卷 PDF，可直接打印"
+          title="打开 A4 打印页；在打印对话框里选「另存为 PDF」就是 PDF"
           @click="openPaper(false)"
         >
-          试卷 PDF
+          打印试卷
         </button>
         <!--
           这里原来有「▶ 开始考试 / ■ 结束」，**去掉了** ——
@@ -293,10 +293,10 @@
           v-if="viewing && viewing.submittedAt"
           class="btn mini"
           style="margin-left: 8px"
-          title="A4 版 PDF：学生作答 + 对错 + 得分 + 参考答案"
+          title="A4 打印页：学生作答 + 对错 + 得分 + 参考答案，可另存为 PDF"
           @click="openSheet(viewing.id)"
         >
-          下载答卷 PDF
+          打印答卷
         </button>
         <button class="btn mini" style="margin-left: auto" @click="viewing = null">关闭</button>
       </div>
@@ -430,7 +430,7 @@
  * 判卷：客观题自动算，主观题在这里给分，点「判分并记账」→ 总分落进计分表 + 出答卷文件。
  */
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { api, download } from '../../api'
+import { api, printDoc } from '../../api'
 import Toast from '../../components/Toast.vue'
 import { clock, when } from '../../utils/time'
 /* 状态是算出来的 —— 和课堂作业页共用**教师口径**那份，避免两个页面各写一套又分叉。
@@ -745,25 +745,21 @@ async function loadDetail(quiet) {
 }
 
 /**
- * 下载试卷 PDF（空白卷；answer=true 是答案卷）。
+ * 打印试卷（空白卷；answer=true 是答案卷）。
  *
- * 用 download 而不是 openDoc：老师要的是**能打印 / 能发给学生的文件**，
- * 不是浏览器里一张预览。HTML 版还在（把 /pdf 换成 /html），
- * 需要看排版的人手动改地址即可。
- *
- * 参数名是后端读的 `answer`（单数）—— 原来这里写的 `answers`，
- * 后端永远读不到，等于答案卷从来没打开过。
+ * 打开 A4 排版的打印页并直接调起打印对话框，
+ * 在对话框里选「另存为 PDF」就是 PDF —— 浏览器自带，后端不插手。
  */
 function openPaper(answer) {
   if (!curId.value) return
-  download('/api/exams/' + encodeURIComponent(curId.value) + '/paper-file/pdf' + (answer ? '?answer=1' : ''))
+  printDoc('/api/exams/' + encodeURIComponent(curId.value) + '/paper-file/html' + (answer ? '?answer=1' : ''))
 }
 
-/** 下载某个学生的答卷 PDF（判完才有） */
+/** 打印某个学生的答卷（判完才有） */
 function openSheet(submissionId) {
   if (!curId.value) return
-  download(
-    '/api/exams/' + encodeURIComponent(curId.value) + '/submissions/' + encodeURIComponent(submissionId) + '/paper-file/pdf'
+  printDoc(
+    '/api/exams/' + encodeURIComponent(curId.value) + '/submissions/' + encodeURIComponent(submissionId) + '/paper-file/html'
   )
 }
 

@@ -60,12 +60,16 @@
           「我的答卷」= 下载 PDF（判完才有）。
           旁边留一个「预览」给想先看一眼再存的人，走 HTML。
         -->
-        <template v-if="state.submitted">
-          <button class="btn mini primary" style="margin-left: 8px" @click="downloadMine">
-            下载我的答卷（PDF）
-          </button>
-          <button class="btn mini" style="margin-left: 6px" @click="openMine">预览</button>
-        </template>
+        <!-- 一个按钮两种用途：打印 / 另存为 PDF，都在浏览器的打印对话框里 -->
+        <button
+          v-if="state.submitted"
+          class="btn mini"
+          style="margin-left: 8px"
+          title="打开 A4 打印页；想存 PDF 就在打印对话框里选「另存为 PDF」"
+          @click="printMine"
+        >
+          打印我的答卷
+        </button>
         <span v-else>· 等老师判主观题</span>
         <span v-if="comment" class="dim">· 评语：{{ comment }}</span>
       </div>
@@ -152,7 +156,7 @@
  */
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { api, download, openDoc } from '../../api'
+import { api, printDoc } from '../../api'
 import Toast from '../../components/Toast.vue'
 import { loadScheme, scheme } from '../../utils/scheme'
 import { onPresenceMessage } from '../../utils/presence'
@@ -170,20 +174,16 @@ const state = reactive({ started: false, paper: null, answers: {}, submitted: fa
 const score = ref(null)
 
 /**
- * 下载自己那张答过的卷子（PDF）。
+ * 打印自己那张答过的卷子。
  *
- * 判完才有 —— 没判的时候服务端返回「还没交卷」，download 里会 alert 出来。
+ * 打开 A4 排版页并直接调起打印对话框 —— 学生想存 PDF 就在对话框里选「另存为 PDF」，
+ * 想打印就选打印机。一个入口两种用途，不用给「预览」另开一个按钮
+ * （取消打印就能看，页面留着）。
  *
- * 用 PDF 而不是打开 HTML：学生要的是**能存下来、能打印**的东西，
- * 一张浏览器里关掉就没了的网页没什么用。老师那边导出的也是同一份版式。
+ * 判完才有：没判时服务端返回「还没交卷」，printDoc 会 alert 出来。
  */
-function downloadMine() {
-  download('/api/student/exams/' + encodeURIComponent(route.params.id) + '/paper-file/pdf')
-}
-
-/** 预览版（HTML，在浏览器里看，不下载）—— 想先看看再存的人用 */
-function openMine() {
-  openDoc('/api/student/exams/' + encodeURIComponent(route.params.id) + '/paper-file/html')
+function printMine() {
+  printDoc('/api/student/exams/' + encodeURIComponent(route.params.id) + '/paper-file/html')
 }
 const comment = ref('')
 const err = ref('')

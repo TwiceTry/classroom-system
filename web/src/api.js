@@ -160,6 +160,58 @@ export function openDoc(path) {
     .catch((e) => alert(e.message))
 }
 
+/**
+ * 打开打印版并**直接调起打印对话框**。
+ *
+ * PDF 不在后端生成：浏览器自带打印引擎，还认 CSS 的 @page A4，
+ * 用户在对话框里选「另存为 PDF」就是 PDF —— 零依赖、零字体、版式永远和网页一致。
+ *
+ * 为什么用 document.write 而不是 openDoc 那种 blob URL：
+ *   blob: 页面是独立文档，跨源限制下 w.print() 可能被拦；
+ *   write 进来的内容同源，print() 稳，而且不会在「另存为」时丢掉标题。
+ *
+ * 打印后窗口**不关**：老师经常要连打几份，关了他还得重新点一遍。
+ */
+export function printDoc(path) {
+  const token = getToken()
+  fetch(path, { headers: token ? { Authorization: 'Bearer ' + token } : {} })
+    .then(async (res) => {
+      if (!res.ok) {
+        let msg = '打开失败（' + res.status + '）'
+        try {
+          msg = errorMessage(await res.json(), res.status)
+        } catch (e) {
+          /* 不是 JSON 就算了 */
+        }
+        throw new Error(msg)
+      }
+      return res.text()
+    })
+    .then((html) => {
+      const w = window.open('', '_blank')
+      if (!w) {
+        alert('浏览器拦了新窗口，允许弹出窗口再试一次')
+        return
+      }
+      w.document.open()
+      w.document.write(html)
+      w.document.close()
+
+      /* 等页面里的字体 / 图片就位再打印 —— 早一秒可能印出空白或回退字体 */
+      const go = () => {
+        try {
+          w.focus()
+          w.print()
+        } catch (e) {
+          /* 用户提前关了窗口：不算错误 */
+        }
+      }
+      if (w.document.readyState === 'complete') setTimeout(go, 250)
+      else w.onload = () => setTimeout(go, 250)
+    })
+    .catch((e) => alert(e.message))
+}
+
 export function download(path, fallbackName) {
   const token = getToken()
   fetch(path, { headers: token ? { Authorization: 'Bearer ' + token } : {} })

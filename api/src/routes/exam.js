@@ -23,60 +23,28 @@ import { broadcast } from './cast.js'
 import * as examLib from '../lib/exam.js'
 /* 状态判定只有一份：lib/phase.js（学生视角 phaseOf / 教师视角 teacherPhaseOf） */
 import { gateOf, phaseMessage, teacherPhaseOf } from '../lib/phase.js'
-/* HTML → PDF：用系统浏览器的打印引擎，不引额外依赖（详见 lib/pdf.js） */
-import { findBrowser, htmlToPdf, pdfName } from '../lib/pdf.js'
-/* 纯 Node 的兜底渲染：机器上没有 Chrome / Edge 时用它，只要有中文字体就能出 */
-import { renderPdf } from '../lib/pdf-kit.js'
+/*
+ * PDF 不在后端生成。
+ *
+ * 试过两条路都不划算：
+ *   ① 调系统 Chrome --print-to-pdf：版式最好，但要求服务器装浏览器，
+ *      而机房那台恰恰常装不上。
+ *   ② pdfkit 在 Node 里排：零浏览器依赖，但要多嵌一个 10MB 中文字体，
+ *      还要把卷头 / 选项 / 分页 / 换行重新实现一遍（HTML 那套版式用不了）。
+ *
+ * 而浏览器**本来就自带打印引擎**，还认 CSS 的 @page A4。
+ * 所以后端只出打印版 HTML（md/html 两档，早就有了），
+ * 前端打开后调 window.print()，用户在打印对话框里选「另存为 PDF」。
+ *
+ * 好处：零依赖、零字体、版式永远和网页一致。
+ * 代价：多一步「确定」—— 但存 PDF 本来就要选目录和页码范围。
+ */
 
 const uid = (p) => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 
 /** 试卷目录 */
 function paperDirOf(assignmentId) {
   return path.join(config.dataDir, 'exams', String(assignmentId).replace(/[^A-Za-z0-9_.-]/g, '_'))
-}
-
-/**
- * 出一份 PDF 并发回去 —— **双引擎**。
- *
- *   有 Chrome / Edge  → 走 htmlToPdf（版式完全复用打印版网页，带密封线、精细排版）
- *   没有              → 落到 renderPdf（pdfkit 在 Node 里直接排，朴素但能出）
- *
- * 为什么要有兜底：机房那台服务器常常没装浏览器，
- * 但那正是「老师要从这儿导卷子」的机器。宁可版式简单点，也不能点不动。
- *
- * 响应头带 X-Pdf-Engine，排查「为什么这两台机器导出来的长得不一样」时有用。
- */
-async function sendPdf(reply, ctx, nameParts) {
-  let buf = null
-  let engine = 'browser'
-  /*
-   * PDF_ENGINE 环境变量可以强制选引擎：
-   *   PDF_ENGINE=node    不管有没有浏览器都用 pdfkit（版式朴素但更快）
-   *   PDF_ENGINE=browser 只用浏览器（没有就报错，不兜底）
-   * 不设 = 自动（有浏览器用浏览器，没有退到 node）。
-   */
-  const force = String(process.env.PDF_ENGINE || '').toLowerCase()
-  const canBrowser = force === 'node' ? false : !!findBrowser()
-  if (canBrowser) {
-    try {
-      buf = await htmlToPdf(examLib.renderHtml(ctx))
-    } catch (e) {
-      /* 浏览器在但渲染失败（超时 / 版式太复杂）：静默降到 Node 那条路 */
-      buf = null
-    }
-  }
-  if (!buf) {
-    engine = 'node'
-    buf = await renderPdf(ctx)
-  }
-  return reply
-    .status(200)
-    .headers({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent(pdfName(nameParts)),
-      'X-Pdf-Engine': engine,
-    })
-    .send(buf)
 }
 
 /** 这次作业必须是「试卷」形态的考核项 */
@@ -496,37 +464,17 @@ export default async function examRoutes(app) {
 
   /** 下载纸质卷（?answer=1 取答案卷；fmt=md|html） */
   /**
-   * 空白卷 / 答案卷：md、html、pdf 三种。
+   * 空白卷 / 答案卷：md 或 html。
    *
-   * PDF 走 sendPdf（双引擎）：有浏览器就现场渲染打印版网页，
-   * 没有就 pdfkit 直接排。两条路的**内容**一样，只是精细程度不同。
+   * 前端拿到 html 之后自己调 window.print() ——
+   * 浏览器打印对话框里可以「另存为 PDF」，那是浏览器自带的，比后端造轮子省事。
    */
   app.get('/api/exams/:id/paper-file/:fmt', { preHandler: requireAuth('teacher') }, async (req, reply) => {
     const a = repo.getAssignment(req.params.id)
     if (!a) throw notFound('作业不存在')
     const answer = String(req.query.answer || '') === '1'
-    const want = String(req.params.fmt || 'md').toLowerCase()
-    const fmt = want === 'pdf' ? 'pdf' : want === 'html' ? 'html' : 'md'
+    const fmt = String(req.params.fmt || 'md').toLowerCase() === 'html' ? 'html' : 'md'
     const baseName = answer ? '答案卷' : '试卷'
-
-    if (fmt === 'pdf') {
-      /*
-       * 不读磁盘上那份 html —— 现场重新渲染更省心：
-       * 老作业的打印稿可能是几个版本前的（改过卷子但没重导），
-       * 读磁盘会和界面上的卷面不一致。printPaper 是按当前卷子排的。
-       */
-      const norm = loadExam(a)
-      const paper = examLib.printPaper(norm, a.id)
-      const ctx = {
-        course: (repo.getCourse(a.courseId) || {}).name || '',
-        assignment: a,
-        paper,
-        student: null,
-        withAnswer: answer,
-      }
-      return sendPdf(reply, ctx, [a.title, baseName])
-    }
-
     const file = path.join(paperDirOf(a.id), baseName + '.' + fmt)
     if (!fs.existsSync(file)) throw notFound('还没导入试卷')
     const st = fs.statSync(file)
@@ -752,12 +700,7 @@ export default async function examRoutes(app) {
       state: st,
       graded: st.graded,
     }
-    const want = String(req.params.fmt || 'md').toLowerCase()
-    const fmt = want === 'pdf' ? 'pdf' : want === 'html' ? 'html' : 'md'
-
-    /* 名字带学号姓名：一屋子人导出后靠文件名分得清谁是谁 */
-    if (fmt === 'pdf') return sendPdf(reply, ctx, [sub.sid, sub.name, a.title, '答卷'])
-
+    const fmt = String(req.params.fmt || 'md').toLowerCase() === 'html' ? 'html' : 'md'
     const body = fmt === 'html' ? examLib.renderHtml(ctx) : examLib.renderReport(ctx)
     return reply
       .status(200)
@@ -794,10 +737,7 @@ export default async function examRoutes(app) {
       state: st,
       graded: st.graded,
     }
-    const want = String(req.params.fmt || 'md').toLowerCase()
-    const fmt = want === 'pdf' ? 'pdf' : want === 'html' ? 'html' : 'md'
-
-    if (fmt === 'pdf') return sendPdf(reply, ctx, [sub.name || sub.sid, a.title, '我的答卷'])
+    const fmt = String(req.params.fmt || 'md').toLowerCase() === 'html' ? 'html' : 'md'
 
     return reply
       .status(200)
